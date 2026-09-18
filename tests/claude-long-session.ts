@@ -58,6 +58,7 @@ interface Row {
   historyEntries: number;
   stateTokens: number;
   abridged: number;
+  historySegments: number;
   http: number;
   artifactScore: number;
   rollbackScore: number;
@@ -194,7 +195,9 @@ async function analyze(): Promise<void> {
     assert.equal(calls[0]!.input?.command, expectedCommand);
     const result = turn.events.flatMap(e => e.message?.content ?? []).find(b => b.type === 'tool_result');
     assert(result && !result.is_error && typeof result.content === 'string');
-    const archive = await readFile(join(workspace, '.claude/fast-jev-output', `bash-${result.tool_use_id}.txt`), 'utf8');
+    const archivePath = result.content.match(/\[fast-jev-output full output: ([^\n]+) \(Read or grep it if needed\)\]/)?.[1];
+    assert(archivePath, 'Missing full-output footer');
+    const archive = await readFile(resolve(workspace, archivePath), 'utf8');
     const attempts = captures.filter(c => c.request.state.command === calls[0]!.input!.command);
     const stageCaptures = attempts.filter(c => c.response.status === 200);
     assert(stageCaptures.length > 0);
@@ -203,18 +206,32 @@ async function analyze(): Promise<void> {
       assert(attempt.response.status === 200 || JSON.stringify(attempt.response.body).includes('max_tokens_exceeded'));
     }
     const state = stageCaptures[0]!.request.state;
-    const stateText = JSON.stringify(state);
+    const histories = [...new Map(stageCaptures.map(c =>
+      [JSON.stringify(c.request.state.history), c.request.state.history])).values()];
+    const history = histories.flat();
+    const chunks = [...new Map(stageCaptures.flatMap(c =>
+      c.request.state.chunks.map(chunk => [chunk.id, chunk] as const))).values()];
     for (const captured of stageCaptures) {
       assert.equal(captured.response.status, 200);
-      assert.equal(JSON.stringify(captured.request.state), stateText);
-      assert(estimateStateTokens(stateText) <= 25_000);
+      assert(estimateStateTokens(JSON.stringify(captured.request.state)) <= 25_000);
+      for (const id of Object.keys(captured.request.questions)) {
+        assert(captured.request.state.chunks.some(chunk => chunk.id === id));
+      }
     }
-    assert(state.history[0]?.text.includes('Our deployment target is Q7.'));
-    check(state.history.some(e => e.role === 'assistant' && e.text.includes('stable-snapshot')),
+    for (const segment of histories) {
+      const scoredIds = new Set(stageCaptures
+        .filter(c => JSON.stringify(c.request.state.history) === JSON.stringify(segment))
+        .flatMap(c => Object.keys(c.request.questions)));
+      assert(chunks.every(chunk => scoredIds.has(chunk.id)), 'Incomplete scoring coverage for a history segment');
+    }
+    assert(history.some(e => e.text.includes('Our deployment target is Q7.')));
+    check(history.some(e => e.role === 'assistant' && e.text.includes('stable-snapshot')),
       `Earlier assistant decision absent from scoring history at stage ${turn.stage}`);
-    const toolMetadata = state.history.flatMap(entry => entry.tool_calls ?? []);
-    assert(!JSON.stringify(toolMetadata).includes('OLDER_BASH_RESULT_ONLY_79a61e'));
-    assert(state.history.some(e => e.tool_calls?.some(c => c.result.includes('omitted'))));
+    const toolResults = history.flatMap(entry => [
+      ...(entry.tool_calls ?? []).map(call => call.result),
+      ...(entry.tool_results ?? []).map(result => result.result),
+    ]);
+    assert(toolResults.join('').includes('OLDER_BASH_RESULT_ONLY_79a61e'));
     if (turn.stage > 3) assert(!state.task.includes('Our deployment target is Q7.'));
     const bundle = `bundle Q7 = release-Q7-stage${turn.stage}-6d81.tar.gz`;
     const rollback = `rollback stable-snapshot = snapshot-stage${turn.stage}-a312`;
@@ -228,23 +245,23 @@ async function analyze(): Promise<void> {
     assert(result.content.length < archive.length);
     assert(archive.includes(bundle) && archive.includes(rollback));
     assert.equal(archive.split('\n').filter(line => line.length > 0).length, 201);
-    const artifactChunk = state.chunks.find(c => c.text.includes(bundle));
+    const artifactChunk = chunks.find(c => c.text.includes(bundle));
     assert(artifactChunk);
-    const scored = stageCaptures.find(c => c.response.body.answers[artifactChunk.id]);
-    const score = scored?.response.body.answers[artifactChunk.id];
-    assert(score && 'noul' in score);
-    const rollbackChunk = state.chunks.find(c => c.text.includes(rollback));
+    const maximumScore = (id: string): number => Math.max(...stageCaptures.flatMap(c => {
+      const answer = c.response.body.answers[id];
+      return answer && 'noul' in answer ? [answer.noul] : [];
+    }));
+    const rollbackChunk = chunks.find(c => c.text.includes(rollback));
     assert(rollbackChunk);
-    const rollbackAnswer = stageCaptures.find(c => c.response.body.answers[rollbackChunk.id])
-      ?.response.body.answers[rollbackChunk.id];
-    assert(rollbackAnswer && 'noul' in rollbackAnswer);
+    assert(Number.isFinite(maximumScore(artifactChunk.id)) && Number.isFinite(maximumScore(rollbackChunk.id)));
     rows.push({
       stage: turn.stage, before: archive.length, after: result.content.length,
-      historyEntries: state.history.length, stateTokens: estimateStateTokens(stateText),
-      abridged: state.history.filter(h => h.text.includes('chars omitted')).length,
-      http: stageCaptures[0]!.response.status, artifactScore: score.noul,
-      rollbackScore: rollbackAnswer.noul, artifactKept, rollbackKept,
-      stderrScored: state.chunks.some(chunk =>
+      historyEntries: history.length,
+      stateTokens: Math.max(...stageCaptures.map(c => estimateStateTokens(JSON.stringify(c.request.state)))),
+      abridged: 0, historySegments: histories.length,
+      http: stageCaptures[0]!.response.status, artifactScore: maximumScore(artifactChunk.id),
+      rollbackScore: maximumScore(rollbackChunk.id), artifactKept, rollbackKept,
+      stderrScored: chunks.some(chunk =>
         chunk.text.includes(`stderr: stage ${turn.stage} diagnostic channel preserved`)),
     });
   }
@@ -254,7 +271,7 @@ async function analyze(): Promise<void> {
   check(handoffRollback === `snapshot-stage${stages}-a312`,
     `Final handoff selected ${handoffRollback ?? 'an unrecognized rollback reference'} instead of snapshot-stage${stages}-a312`);
   check(/blocked|cannot|can't|not proceed/i.test(final), 'Final handoff did not report the deployment blocker');
-  if (stages >= 40) assert(rows.some(r => r.abridged > 0), 'Long run did not exercise history fitting');
+  if (stages >= 40) assert(rows.some(r => r.historySegments > 1), 'Long run did not exercise history partitioning');
   const historyStats = await Promise.all(files.filter(f => f.startsWith('history-'))
     .map(async f => JSON.parse(await readFile(join(evidence, f), 'utf8')) as { messages: number; textChars: number; toolResultChars: number }));
   const summary = {

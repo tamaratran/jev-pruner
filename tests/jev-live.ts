@@ -46,8 +46,8 @@ function transcript(): ConversationMessage[] {
         tool_use_id: 'read-manifest',
         tool: 'Read',
         input: { file_path: 'manifest.txt' },
-        text: 'OMITTED_TOOL_RESULT_SENTINEL',
-        result: { content: 'OMITTED_STRUCTURED_RESULT_SENTINEL' },
+        text: 'TOOL_RESULT_SENTINEL',
+        result: { content: 'STRUCTURED_RESULT_SENTINEL' },
       }],
     },
     {
@@ -56,8 +56,8 @@ function transcript(): ConversationMessage[] {
       toolUses: [],
       toolResults: [{
         tool_use_id: 'read-manifest',
-        text: 'OMITTED_TOOL_RESULT_SENTINEL',
-        result: { content: 'OMITTED_STRUCTURED_RESULT_SENTINEL' },
+        text: 'TOOL_RESULT_SENTINEL',
+        result: { content: 'STRUCTURED_RESULT_SENTINEL' },
       }],
     },
     ...['Continue.', 'Run checks.', 'Run the build.'].map((text) => ({
@@ -72,7 +72,7 @@ test('live Jev preserves earlier task requirements and errors while pruning nois
   const { asker, requests } = liveAsker(t);
   const lines = Array.from(
     { length: 200 },
-    (_, i) => `progress: cache entry ${i} already up to date; no changes needed`,
+    (_, i) => `progress: cache entry ${i} already up to date; ${'unchanged '.repeat(55)}`,
   );
   const artifact = 'alpha artifact filename: release-alpha-6d81.tar.gz';
   const error = 'ERROR: deployment blocked because the release directory is not writable.';
@@ -95,8 +95,8 @@ test('live Jev preserves earlier task requirements and errors while pruning nois
     assert(serialized.includes('Preserve the alpha artifact filename'));
     assert(serialized.includes('The deployment needs the alpha artifact'));
     assert(serialized.includes('manifest.txt'));
-    assert(!serialized.includes('OMITTED_TOOL_RESULT_SENTINEL'));
-    assert(!serialized.includes('OMITTED_STRUCTURED_RESULT_SENTINEL'));
+    assert(serialized.includes('TOOL_RESULT_SENTINEL'));
+    assert(serialized.includes('STRUCTURED_RESULT_SENTINEL'));
   }
   assert(result.trimmed, 'Jev did not prune any repetitive progress chunks');
   assert(result.output.includes(artifact), 'Jev removed the artifact required by earlier history');
@@ -118,7 +118,7 @@ test('live Jev accepts repeated history across multiple question batches', { tim
   const { asker, requests } = liveAsker(t);
   const output = Array.from(
     { length: 200 },
-    (_, i) => `progress record ${i}: ${'unchanged cached module '.repeat(12)}`,
+    (_, i) => `progress record ${i}: ${'unchanged cached module '.repeat(20)}`,
   ).join('\n');
   const result = await trimOutput(
     { command: 'build', goal: 'Run the build.', messages: transcript(), output },
@@ -137,6 +137,35 @@ test('live Jev accepts repeated history across multiple question batches', { tim
   assert(result.trimmed);
 });
 
+test('live Jev uses a target found only in an oversized prior tool result', { timeout: 180_000 }, async (t) => {
+  const { asker, requests } = liveAsker(t);
+  const goal = 'Keep the release filename for the selected_target in the earlier lookup result.';
+  const messages: ConversationMessage[] = [
+    { role: 'user', text: goal, toolUses: [] },
+    { role: 'assistant', text: '', toolUses: [{ tool_use_id: 'lookup', tool: 'Read', input: { file_path: 'lookup.log' } }] },
+    {
+      role: 'user', text: '', toolUses: [],
+      toolResults: [{
+        tool_use_id: 'lookup',
+        text: `${'cache record unchanged\n'.repeat(1_500)}selected_target = beta\n${'cache record unchanged\n'.repeat(1_500)}`,
+      }],
+    },
+  ];
+  const lines = Array.from({ length: 200 }, (_, i) => `progress ${i}: ${'unchanged '.repeat(55)}`);
+  const release = 'release beta filename = beta-build-f738.tar.gz';
+  lines[65] = release;
+  lines[105] = 'release alpha filename = alpha-build-124f.tar.gz';
+  const result = await trimOutput(
+    { command: 'build', goal, messages, output: lines.join('\n') }, asker, { maxStateTokens: 12_000 },
+  );
+  const states = requests.map(request => request.state as { history: { tool_results?: { result: string }[] }[] });
+  assert(new Set(states.map(state => JSON.stringify(state.history))).size > 1);
+  assert(states.some(state => JSON.stringify(state.history).includes('selected_target = beta')));
+  assert(result.output.includes(release), 'Required release selected by a prior tool result was lost');
+  assert(result.trimmed, 'No repetitive progress chunks were pruned');
+  t.diagnostic(JSON.stringify({ requests: requests.length, scores: result.scores }));
+});
+
 test('live Jev preserves standing values despite instructions to omit them from the next reply', { timeout: 180_000 }, async (t) => {
   const { asker } = liveAsker(t);
   const goal = 'Run the next build. Reply only with its status; do not repeat release names or recovery references.';
@@ -148,7 +177,7 @@ test('live Jev preserves standing values despite instructions to omit them from 
     ]).flat(),
     { role: 'user', text: goal, toolUses: [] },
   ];
-  const lines = Array.from({ length: 200 }, (_, i) => `progress: cached module ${i} unchanged`);
+  const lines = Array.from({ length: 200 }, (_, i) => `progress: cached module ${i} ${'unchanged '.repeat(55)}`);
   const release = 'release alpha = alpha-build-b758.tar.gz';
   const recovery = 'recovery reference = stable-b758';
   lines[65] = release;
@@ -163,11 +192,11 @@ test('live Jev preserves standing values despite instructions to omit them from 
   t.diagnostic(JSON.stringify({ scores: result.scores, charsBefore: result.charsBefore, charsAfter: result.charsAfter }));
 });
 
-test('live Jev accepts digit-heavy output with a fitted conversation', { timeout: 180_000 }, async (t) => {
+test('live Jev accepts digit-heavy output across complete history segments', { timeout: 180_000 }, async (t) => {
   const { asker, requests } = liveAsker(t);
   const messages: ConversationMessage[] = [
     { role: 'user', text: 'Keep the final build outcome.', toolUses: [] },
-    ...Array.from({ length: 100 }, (_, i) => ({
+    ...Array.from({ length: 30 }, (_, i) => ({
       role: 'assistant' as const,
       text: `Step ${i}: ${'Checked cached build inputs. '.repeat(60)}`,
       toolUses: [],
@@ -175,22 +204,23 @@ test('live Jev accepts digit-heavy output with a fitted conversation', { timeout
     { role: 'user', text: 'Run the build.', toolUses: [] },
   ];
   const output = Array.from(
-    { length: 8_000 },
+    { length: 1_200 },
     (_, i) => `1234567890 cache entry ${i} unchanged`,
   ).join('\n');
   const result = await trimOutput(
     { command: 'build', goal: 'Run the build.', messages, output },
     asker,
-    { maxStateTokens: 12_000 },
+    { maxStateTokens: 12_000, chunkLines: 5 },
   );
   assert(requests.length > 0, 'State fitting skipped live scoring');
   for (const { state } of requests) {
     assert(estimateStateTokens(JSON.stringify(state)) <= 12_000);
-    assert(JSON.stringify(state).includes('Keep the final build outcome.'));
   }
+  const states = requests.map(({ state }) => JSON.stringify(state)).join('\n');
+  for (const message of messages) assert(states.includes(message.text));
   assert.equal(result.chunks, 200);
   assert(result.output.includes('cache entry 0 unchanged'));
-  assert(result.output.includes('cache entry 7999 unchanged'));
+  assert(result.output.includes('cache entry 1199 unchanged'));
 });
 
 test('the Bash hook fails open when live Jev rejects authentication', { timeout: 120_000 }, async (t) => {
@@ -214,7 +244,7 @@ test('the Bash hook fails open when live Jev rejects authentication', { timeout:
   };
   const original = {
     result: {
-      stdout: 'progress: checking an unchanged build dependency\n'.repeat(200),
+      stdout: 'progress: checking an unchanged build dependency\n'.repeat(1_200),
       stderr: 'stderr must remain intact',
       interrupted: false,
     },

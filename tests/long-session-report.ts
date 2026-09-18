@@ -25,6 +25,7 @@ interface Summary {
     historyEntries: number;
     stateTokens: number;
     abridged: number;
+    historySegments?: number;
     http: number;
     artifactScore: number;
     rollbackScore: number;
@@ -78,6 +79,7 @@ const escape = (value: string): string => value.replace(/[&<>"']/g, char => ({
 const number = (value: number): string => Math.round(value).toLocaleString('en-US');
 const reduction = (before: number, after: number): string => `${(100 * (1 - after / before)).toFixed(1)}%`;
 const firstFitted = summary.rows.find(row => row.abridged > 0);
+const firstPartitioned = summary.rows.find(row => (row.historySegments ?? 1) > 1);
 const minutes = ((Date.parse(summary.finished) - Date.parse(summary.started)) / 60_000).toFixed(1);
 const points = summary.rows.map((row, i) =>
   `${30 + i * 740 / Math.max(summary.rows.length - 1, 1)},${190 - row.stateTokens / 25_000 * 160}`).join(' ');
@@ -137,7 +139,7 @@ ${summary.errors.length ? `<section><h2>Observed failures</h2><p>${summary.rows.
 <div class="legend"><span class="swatch"></span>Visible output<span class="swatch original"></span>Original output</div><div class="bars">${bars}</div>
 <p class="muted">Each bar is one stage, normalized to that stage’s original output. Savings are measured in characters, not billable model tokens.</p></section>
 <section><h2>History grew; scoring state stayed bounded</h2>
-<p>Conversation text reached ${number(summary.rawHistoryTextChars)} characters. ${firstFitted ? `History abridgment began at stage ${firstFitted.stage}; the final request abridged ${summary.rows.at(-1)!.abridged} older entries.` : 'This run did not need history abridgment.'} Successful scoring states stayed within the configured 25,000-token estimate.</p>
+<p>Conversation text reached ${number(summary.rawHistoryTextChars)} characters. ${firstPartitioned ? `History partitioning began at stage ${firstPartitioned.stage}; the final stage used ${summary.rows.at(-1)!.historySegments} history segments without discarding history.` : firstFitted ? `History abridgment began at stage ${firstFitted.stage}; the final request abridged ${summary.rows.at(-1)!.abridged} older entries.` : 'This run used a single complete history segment.'} Successful scoring states stayed within the configured 25,000-token estimate.</p>
 <svg viewBox="0 0 800 220" role="img" aria-label="Estimated Jev state tokens by stage" style="width:100%">
 <line x1="30" y1="30" x2="770" y2="30" stroke="#b27a20" stroke-dasharray="5 5"/><text x="30" y="20" fill="#795722" font-size="12">25,000 estimated-token limit</text>
 <line x1="30" y1="190" x2="770" y2="190" stroke="#d4e1e3"/><polyline points="${points}" fill="none" stroke="#14694f" stroke-width="3"/>
@@ -155,7 +157,7 @@ ${chunkReplays.length ? `<section><h2>Chunk size versus scoring wording</h2><p>T
 npm run test:long-session
 npm run report:long-session -- &lt;evidence-directory&gt;</pre>
 <p>The harness uses the installed, authenticated Claude CLI, the production plugin, and a separate observer plugin that records Jev request bodies and responses. It never records HTTP headers. Prompts and command output are synthetic, with repetitive progress, selected bundle names, a rollback reference, and a simulated deployment error.</p>
-<p class="note">This is a controlled long-session integration test, not a guarantee across all workloads. History is deliberately abridged under budget pressure. Jev scores remain probabilistic. Secret-like output forwarding remains unresolved.</p></section>
+<p class="note">This is a controlled long-session integration test, not a guarantee across all workloads. Jev scores remain probabilistic, and separate history segments may hide relationships between distant facts. Secret-like output forwarding remains unresolved.</p></section>
 <footer>Claude session ${escape(summary.sessionId)}<br>Started ${escape(summary.started)} · Finished ${escape(summary.finished)}<br>Generated from captured request bodies, API responses, CLI events, and output archives.</footer>
 </main></body></html>`;
 await writeFile(join(directory, 'report.html'), html);

@@ -19,7 +19,7 @@ function askerFor(score: (id: string) => number, calls: { count: number }): JevA
 }
 
 function outputLines(): string[] {
-  return Array.from({ length: 200 }, (_, index) => `line-${index + 1}`);
+  return Array.from({ length: 200 }, (_, index) => `line-${index + 1} ${'cache '.repeat(55)}`);
 }
 
 function estimateOutputTokens(text: string): number {
@@ -59,7 +59,7 @@ describe('trimOutput', () => {
         fullOutputPath: '.claude/full.txt',
       },
       askerFor((id) => (id === 'c1' || id === 'c3' ? 0.9 : 0.1), calls),
-      { minChars: 1, chunkLines: 20, keepThreshold: 0.5 },
+      { chunkLines: 20, keepThreshold: 0.5 },
     );
 
     const chunk = (number: number): string =>
@@ -92,7 +92,7 @@ describe('trimOutput', () => {
     const result = await trimOutput(
       { command: 'run command', goal: 'test', output },
       askerFor(() => 0.9, { count: 0 }),
-      { minChars: 1, chunkLines: 20 },
+      { chunkLines: 20 },
     );
     expect(result.trimmed).toBe(false);
     expect(result.output).toBe(output);
@@ -110,7 +110,7 @@ describe('trimOutput', () => {
       trimOutput(
         { command: 'run command', goal: 'test', output: outputLines().join('\n') },
         asker,
-        { minChars: 1, chunkLines: 20 },
+        { chunkLines: 20 },
       ),
     ).rejects.toThrow('network unavailable');
   });
@@ -138,17 +138,17 @@ describe('trimOutput', () => {
     const result = await trimOutput(
       { command: 'run command', goal: 'test', output: outputLines().join('\n') },
       asker,
-      { minChars: 1, chunkLines: 20 },
+      { chunkLines: 20 },
     );
     expect(result.trimmed).toBe(true);
     expect(calls).toBeGreaterThanOrEqual(2);
   });
 
   it('bounds retries when max_tokens_exceeded persists', async () => {
-    let calls = 0;
+    const attempts = new Map<string, number>();
     const asker: JevAsker = {
-      async ask() {
-        calls += 1;
+      async ask(_state, questions) {
+        Object.keys(questions).forEach(id => attempts.set(id, (attempts.get(id) ?? 0) + 1));
         throw new Error(
           'Jev request failed (400): {"detail":{"error_type":"max_tokens_exceeded"}}',
         );
@@ -158,10 +158,10 @@ describe('trimOutput', () => {
       trimOutput(
         { command: 'run command', goal: 'test', output: outputLines().join('\n') },
         asker,
-        { minChars: 1, chunkLines: 20 },
+        { chunkLines: 20 },
       ),
     ).rejects.toThrow('max_tokens_exceeded');
-    expect(calls).toBe(3);
+    expect([...attempts.values()]).toEqual(Array(10).fill(3));
   });
 
   it('fits digit-heavy output to the state budget', async () => {
@@ -228,7 +228,7 @@ describe('trimOutput safety', () => {
   });
 
   it('keeps a chunk that looks like an error even when Jev says drop', async () => {
-    const out = lines(400, (i) => (i === 200 ? 'ERROR: boom' : `[${i}] compiled module ${i} fine`));
+    const out = lines(400, (i) => (i === 200 ? 'ERROR: boom' : `[${i}] compiled module ${i} fine ${'cache '.repeat(30)}`));
     const r = await trimOutput({ command: 'npm run build', goal: 'g', output: out }, asker(0));
     expect(r.trimmed).toBe(true);
     expect(r.output).toContain('ERROR: boom');
@@ -246,7 +246,7 @@ describe('trimOutput safety', () => {
 
   it('splits one enormous line so it can still be trimmed', async () => {
     const r = await trimOutput(
-      { command: 'run', goal: 'g', output: 'x'.repeat(60_000) },
+      { command: 'run', goal: 'g', output: 'x'.repeat(60_006) },
       asker(0),
       { chunkLines: 5 },
     );

@@ -10,48 +10,65 @@ verbatim — nothing is rewritten or summarized.
 ## How it works
 
 1. A `tool.call` hook wraps the Bash tool's `next()` result.
-2. Output at or below `minChars`, errors, JSON/XML/YAML/diff/binary output,
+2. Stdout of **10,000 estimated tokens or fewer** passes through untouched,
+   without reading history, writing an archive, or calling Jev. The gate uses
+   `estimateTokens` on raw stdout, not a character count or an exact model tokenizer.
+   `minTokens` can raise this threshold but cannot lower it. If Claude already saved
+   the output to a file, the hook reads and counts that full output instead of its
+   short preview. Errors, JSON/XML/YAML/diff/binary output,
    whole-document commands (`cat`, `jq`, `git diff`, `git show`, `base64`, and
-   `openssl`), and results Claude Code already persisted are left untouched.
+   `openssl`) are left untouched.
 3. Output is split into chunks of `chunkLines` lines, capped at 200 chunks;
    lines longer than 2,000 characters are split first.
 4. Jev receives `{ context, task, history, command, chunks }` and one noul question
    per chunk: “does any line in this chunk need to remain available?”. A single
    needed line protects the chunk, including values required by earlier
-   instructions even when the next reply must not repeat them. `history` follows the
-   fast-jev-compaction approach: user and assistant text in conversation order,
-   with tool names and inputs; result bodies are replaced by status/length notes.
+   instructions even when the next reply must not repeat them. `history` includes
+   user/assistant text, complete tool inputs, and tool-result text and structured
+   data from the current session. Identical results attached to both a tool call
+   and a result message are sent once, linked by their tool-use ID.
    Questions are batched so each request stays under 30,000 estimated tokens.
 5. History and output share `maxStateTokens`, using a digit-aware estimate.
    History gets at least half the budget, with more available when the current
-   output is small. Tool inputs are capped at 1,000, then 200, then 60 characters;
-   long texts are abridged to head + tail, oldest first (the first and newest six
-   messages last). Older text is then collapsed to omission notes, longest first
-   to favor concise earlier messages, and only when the note saves tokens. Older
-   text-only entries are left out if necessary. Every batch receives the same
-   fitted history; the actual conversation is never edited by this fitting. A
-   `max_tokens_exceeded` response retries twice with a halved state budget.
-6. A chunk stays when its noul is at least `keepThreshold`, it is first or
+   output is small. Oversized history is partitioned in order across requests,
+   without truncating or omitting message text, tool arguments, or results.
+   Individual oversized fields become continuations labeled with their field
+   name and character offset. Complete output chunks are grouped to fit alongside
+   each history segment. All scoring requests run in parallel; each scored chunk
+   is evaluated against every history segment. A `max_tokens_exceeded` response
+   retries twice with a halved state budget and repartitions the original history.
+6. A chunk stays when **any query** gives it a noul of at least `keepThreshold`, it is first or
    last, it matches an error or warning pattern, or its complete text was not
-   present in the scoring state (omitted or shortened while fitting).
+   scored against every history segment (for example, a single chunk that cannot
+   fit beside a segment). No partially shown chunk can be discarded.
 7. Each dropped run becomes a marker such as:
    `[fast-jev-output trimmed N lines (M chars); full output: .claude/fast-jev-output/bash-<id>.txt (Read or grep it if needed)]`
 8. Before the first scoring request, the complete stdout and stderr are saved
    under the project's `.claude/fast-jev-output/` directory (self-gitignored).
+   When Claude already persisted the complete output, that file is reused as the
+   archive. Successful pruning replaces Claude's file-preview metadata with the
+   retained text and archive footer. Read or scoring failures preserve the original
+   result and its file reference.
    A final `[fast-jev-output full output: <path> (Read or grep it if needed)]`
    footer follows the trimmed stdout. Archives persist for later recovery,
    including when scoring ultimately keeps everything or fails.
-   Credential-like commands or output are never archived; their omission
+   Credential-like commands or output are not archived by the plugin; their omission
    markers instruct the agent to re-run the command instead.
 9. Any archive write failure, Jev failure, or state that cannot fit leaves the original output untouched.
-   Stderr is never modified.
+   Separate inline stderr is left unchanged. Host-persisted output is scored as
+   the combined stream supplied by Claude.
 
 The hook reads the current transcript for each command; it does not maintain a
 separate history store. Claude Code's `session.messages()` returns the main
 conversation's user/assistant messages (up to the newest 4,096), not the system
 prompt or a subagent's own transcript. `task` is still a short extract of the
 last three user prompts; `history` supplies the earlier instructions and
-assistant decisions. Library callers can pass the same transcript shape through
+assistant decisions and tool results as returned by the host, including any
+pruning already applied to earlier results. Archived originals are not reloaded.
+Partitioning preserves coverage, but a query sees only its own history segment;
+facts that require combining distant segments are not guaranteed to be recognized.
+More segments and output groups mean more Jev requests.
+Library callers can pass the same transcript shape through
 `trimOutput({ command, goal, output, messages }, asker)`.
 
 ## Install
@@ -87,7 +104,7 @@ Configure values with `/plugin configure fast-jev-output`, or use a
 {
   "pluginConfigs": {
     "fast-jev-output@fast-jev-output": {
-      "options": { "minChars": 4000, "chunkLines": 20, "keepThreshold": 0.5 }
+      "options": { "minTokens": 10000, "chunkLines": 20, "keepThreshold": 0.5 }
     }
   }
 }
@@ -98,7 +115,7 @@ Configure values with `/plugin configure fast-jev-output`, or use a
 | Option | Default | Description |
 | --- | ---: | --- |
 | `apiKey` | `TYPESAFE_API_KEY` | TypeSafe API key |
-| `minChars` | `4000` | Output length at or below which trimming is skipped |
+| `minTokens` | `10000` | Estimated stdout token threshold; minimum 10,000; equality skips pruning |
 | `chunkLines` | `20` | Lines grouped into each Jev decision chunk |
 | `keepThreshold` | `0.5` | Minimum Jev probability for a chunk to remain |
 | `maxStateTokens` | `25000` | Estimated token budget for the Jev state |
@@ -106,6 +123,7 @@ Configure values with `/plugin configure fast-jev-output`, or use a
 
 Function hooks are early access and may change between Claude Code releases.
 The checked-in declarations were generated by Claude Code 2.1.274.
+The old `minChars` option is no longer used; replace it with `minTokens`.
 
 ## Tests
 
@@ -114,8 +132,8 @@ Run the offline checks with `npm test`, `npm run typecheck`, and `npm run build`
 
 For live Jev checks, provide `TYPESAFE_API_KEY` in the environment and run
 `npm run test:live`. This makes billable requests using synthetic conversation
-and output fixtures. It checks task-dependent retention, tool-result filtering,
-question batching, digit-heavy state fitting, and the hook's behavior when Jev
+and output fixtures. It checks task-dependent retention, tool-result inclusion,
+parallel history/output batching, digit-heavy state budgets, and the hook's behavior when Jev
 rejects authentication. It runs separately from `npm test` and does not exercise
 the Claude Code host itself.
 
@@ -141,15 +159,15 @@ Claude to recover it using `Read` and the archive footer. Each CLI invocation
 has a $2 Claude cap; this billable test requires the same authentication as the
 long-session test.
 
-The test checks early requirements, result-body omission from tool metadata,
-target bundle and rollback retention, archives, stderr, history fitting, and
+The test checks early requirements, tool-result inclusion,
+target bundle and rollback retention, archives, stderr, history partitioning, and
 the final answer. Conversation text that quotes tool output is preserved.
 Raw events and header-free Jev request/response captures are saved under
 `~/jev-long-sessions/`. The path is printed when the run starts.
 
 Run `npm run report:long-session -- <evidence-directory>` to generate a
 self-contained HTML evidence report. For a quick harness smoke check,
-set `JEV_LONG_SESSION_TURNS=2`; history-fitting coverage requires at least 40.
+set `JEV_LONG_SESSION_TURNS=2`; runs of at least 40 stages require history-partitioning coverage.
 Use `JEV_LONG_SESSION_DIR` to choose a different persistent output directory.
 The long test is separate from the offline suite and `test:live`.
 Retention failures produce a failing exit status and a summary containing all
