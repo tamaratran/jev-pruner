@@ -263,8 +263,11 @@ even after evidence failures. There is one creation attempt, up to two explicitl
 logged file-transfer/termination attempts for I/O timeouts, and no scored retries.
 Modal SDK internal RPC retries are not observable as counters and are disclosed.
 
-The SDK cannot request task storage capacity: preflight checks available space,
-while recording the unmapped 10,240 MiB declaration. QEMU guest boot, VNC,
+The SDK cannot request task storage capacity. Preflight records filesystem
+statistics and verifies creation plus random read/write of a 32 GiB truncated
+file, alongside the unmapped 10,240 MiB declaration. Modal's virtual filesystem
+reported placeholder-sized capacity and full-size block counts in a real probe;
+these statistics cannot prove physical free space or sparse allocation. QEMU guest boot, VNC,
 Valgrind/ptrace and actual task behavior remain runtime checks; version probes do
 not certify them. Subscription model access and hook activation require inference.
 Missing/corrupt evidence or unconfirmed termination prevents a completed score.

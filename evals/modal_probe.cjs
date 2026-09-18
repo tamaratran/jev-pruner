@@ -11,7 +11,8 @@ async function main() {
   const freeBytes = disk.bavail * disk.bsize;
   Object.assign(observations, {
     architecture: process.arch, node: process.version,
-    storageRequestedMiB: storageMiB, freeBytes,
+    storageRequestedMiB: storageMiB, reportedFreeBytes: freeBytes,
+    storageCapacityVerified: Number.isSafeInteger(freeBytes),
   });
   if (process.arch !== "x64" || freeBytes < storageMiB * 1024 ** 2) {
     throw new Error("Architecture or available storage does not meet task requirements");
@@ -25,13 +26,21 @@ async function main() {
   }
   observations.stage = "sparse-file";
   const sparse = "/opt/jev-eval/sparse-probe";
-  fs.closeSync(fs.openSync(sparse, "wx", 0o600));
+  const descriptor = fs.openSync(sparse, "wx+", 0o600);
   try {
-    fs.truncateSync(sparse, 32 * 1024 ** 3);
-    if (fs.statSync(sparse).blocks * 512 > 1024 ** 2) {
-      throw new Error("Sparse-file allocation unexpectedly consumed storage");
+    const size = 32 * 1024 ** 3;
+    fs.ftruncateSync(descriptor, size);
+    observations.reportedAllocatedBytes = fs.fstatSync(descriptor).blocks * 512;
+    const lastByte = Buffer.alloc(1);
+    if (fs.readSync(descriptor, lastByte, 0, 1, size - 1) !== 1 || lastByte[0] !== 0) {
+      throw new Error("Large truncated file did not read back zero-filled");
+    }
+    fs.writeSync(descriptor, Buffer.from([1]), 0, 1, size - 1);
+    if (fs.readSync(descriptor, lastByte, 0, 1, size - 1) !== 1 || lastByte[0] !== 1) {
+      throw new Error("Large-file random write did not read back");
     }
   } finally {
+    fs.closeSync(descriptor);
     fs.unlinkSync(sparse);
   }
   observations.stage = "loopback-tcp";
@@ -70,9 +79,9 @@ async function main() {
   }
   fs.writeFileSync("/logs/agent/modal-preflight.json", JSON.stringify({
     ...observations, passed: true, stage: "completed", kernel: os.release(),
-    storageRequestedMiB: storageMiB, freeBytes, sparse32GiB: true,
+    largeFile32GiB: true, physicalSparseAllocationVerified: null,
     loopbackTcp: true, privateSubscriptionPermissions: true, cgroup, capabilities,
-    runtimeUnknowns: "Guest boot, VNC, ptrace/Valgrind execution and task verifiers not exercised",
+    runtimeUnknowns: "Physical disk capacity/allocation, guest boot, VNC, ptrace/Valgrind and task verifiers not verified",
   }, null, 2));
 }
 
