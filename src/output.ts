@@ -451,6 +451,42 @@ async function assemble(
       keptIndexes.delete(index);
     }
   }
+  // Hard fit: shrinking and dropping are both best-effort, so when the kept
+  // chunks still exceed the budget (a grep where nearly every line is wanted),
+  // fill the budget by priority — reported failures first, then the highest
+  // scores — and cut the chunk that straddles the line.
+  if (maxChars > 0) {
+    const textOf = (index: number) => shrunk.get(index) ?? chunks[index]!.text;
+    const size = () =>
+      [...keptIndexes].reduce((sum, index) => sum + textOf(index).length + 1, 0);
+    if (size() > maxChars) {
+      const priority = [...keptIndexes].sort((a, b) => {
+        const errors =
+          Number(ERROR_PATTERN.test(chunks[b]!.text)) - Number(ERROR_PATTERN.test(chunks[a]!.text));
+        if (errors) return errors;
+        const edges = Number(b === 0 || b === chunks.length - 1) - Number(a === 0 || a === chunks.length - 1);
+        if (edges) return edges;
+        return (scores[b] ?? 0) - (scores[a] ?? 0);
+      });
+      const fitted = new Set<number>();
+      let used = 0;
+      for (const index of priority) {
+        const text = textOf(index);
+        if (used + text.length + 1 <= maxChars) {
+          fitted.add(index);
+          used += text.length + 1;
+          continue;
+        }
+        const room = maxChars - used - 80;
+        if (room > 200 && fitted.size === 0) {
+          shrunk.set(index, `${text.slice(0, room)}\n[fast-jev-output cut this section to fit]`);
+          fitted.add(index);
+          used = maxChars;
+        }
+      }
+      for (const index of [...keptIndexes]) if (!fitted.has(index)) keptIndexes.delete(index);
+    }
+  }
   const droppedIndexes = chunks
     .map((_, index) => index)
     .filter((index) => !keptIndexes.has(index));

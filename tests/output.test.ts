@@ -402,3 +402,25 @@ describe('error floor is narrow', () => {
     }
   });
 });
+
+describe('the budget is a hard cap', () => {
+  const wantEverything = {
+    ask: async (_s: unknown, q: Record<string, unknown>) => ({
+      answers: Object.fromEntries(Object.keys(q).map((id) => [id, { type: 'noul' as const, noul: 0.99 }])),
+    }),
+  };
+
+  it('fits the budget even when Jev wants every chunk', async () => {
+    const output = Array.from({ length: 2_000 }, (_, i) => `src/module_${i}/index.ts:${i}:export const thing${i} = ${i};`).join('\n');
+    const r = await trimOutput({ command: 'grep -rn export src/', goal: 'list the exports', output }, wantEverything, { maxChars: 6_000 });
+    expect(r.charsAfter).toBeLessThanOrEqual(6_200);
+  });
+
+  it('spends the budget on the failure first', async () => {
+    const rows = Array.from({ length: 2_000 }, (_, i) => `src/module_${i}/index.ts:${i}:export const thing${i} = ${i};`);
+    rows[1_500] = 'src/checkout/parser.ts:88: error: Cannot read properties of undefined (reading discount)';
+    const r = await trimOutput({ command: 'grep -rn export src/', goal: 'list the exports', output: rows.join('\n') }, wantEverything, { maxChars: 6_000 });
+    expect(r.output).toContain('reading discount');
+    expect(r.charsAfter).toBeLessThanOrEqual(6_200);
+  });
+});
