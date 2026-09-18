@@ -1,0 +1,44 @@
+{
+  "name": "fast-jev-output",
+  "version": "0.1.0",
+  "description": "Trim long Bash output with Jev before the model sees it (Claude Code plugin)",
+  "license": "MIT",
+  "userConfig": {
+    "apiKey": {
+      "type": "string",
+      "title": "TypeSafe API key",
+      "description": "TypeSafe API key. Leave unset to use TYPESAFE_API_KEY.",
+      "sensitive": true
+    },
+    "minChars": {
+      "type": "number",
+      "title": "Minimum Bash output characters",
+      "description": "Bash output at or below this length passes through untouched.",
+      "default": 4000
+    },
+    "chunkLines": {
+      "type": "number",
+      "title": "Bash output chunk lines",
+      "description": "Number of Bash output lines grouped into each Jev chunk.",
+      "default": 20
+    },
+    "keepThreshold": {
+      "type": "number",
+      "title": "Keep threshold",
+      "description": "Minimum Jev probability for a Bash output chunk to stay visible.",
+      "default": 0.5
+    },
+    "maxStateTokens": {
+      "type": "number",
+      "title": "Maximum Jev state tokens",
+      "description": "Estimated token budget for the Bash output state sent to Jev.",
+      "default": 25000
+    },
+    "model": {
+      "type": "string",
+      "title": "Jev model",
+      "description": "TypeSafe Jev model name.",
+      "default": "jev-latest"
+    }
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "name": "fast-jev-output",
+  "version": "0.1.0",
+  "description": "Trim long Bash output with Jev before it reaches the model.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit && npm run typecheck:hooks",
+    "test": "vitest run",
+    "typecheck:hooks": "tsc -p tsconfig.hooks.json",
+    "validate:plugin": "claude plugin validate .claude-plugin/plugin.json"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

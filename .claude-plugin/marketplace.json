@@ -1,0 +1,16 @@
+{
+  "name": "fast-jev-output",
+  "owner": {
+    "name": "tamaratran",
+    "url": "https://github.com/tamaratran"
+  },
+  "plugins": [
+    {
+      "name": "fast-jev-output",
+      "source": "./",
+      "description": "Trim long Bash output with Jev before the model sees it (Claude Code plugin)",
+      "version": "0.1.0",
+      "license": "MIT"
+    }
+  ]
+}
