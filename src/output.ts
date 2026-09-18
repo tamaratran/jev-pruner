@@ -27,6 +27,8 @@ export interface TrimOutputOptions {
    * head-of-file preview stays visible. 0 means no cap.
    */
   maxChars?: number;
+  /** Cap on extra Jev requests when the state cannot hold every chunk at full text. */
+  maxScoringRequests?: number;
 }
 
 export interface TrimOutputInput {
@@ -219,6 +221,10 @@ async function trimOutputAttempt(
     Math.floor(finite(options.chunkLines, DEFAULT_CHUNK_LINES)),
   );
   const keepThreshold = finite(options.keepThreshold, DEFAULT_KEEP_THRESHOLD);
+  const maxScoringRequests = Math.max(
+    1,
+    Math.floor(finite(options.maxScoringRequests, DEFAULT_MAX_SCORING_REQUESTS)),
+  );
   const maxStateTokens = Math.max(
     1,
     finite(options.maxStateTokens, DEFAULT_MAX_STATE_TOKENS),
@@ -244,34 +250,6 @@ async function trimOutputAttempt(
   let state = stateFor(input, stateChunks, history);
   let stateTokens = estimateStateTokens(JSON.stringify(state));
   let omitted = new Set<number>();
-  if (stateTokens > maxStateTokens) {
-    stateChunks = chunks.map((chunk) => ({
-      ...chunk,
-      text: chunk.text
-        .split('\n')
-        .map((line) => line.slice(0, 200))
-        .join('\n'),
-    }));
-    state = stateFor(input, stateChunks, history);
-    stateTokens = estimateStateTokens(JSON.stringify(state));
-  }
-  if (stateTokens > maxStateTokens) {
-    // Chunks left out of the state are never scored, so they are KEPT, not
-    // dropped: an error in the middle of a long output must not disappear
-    // because the state did not fit.
-    omitted = new Set(
-      chunks
-        .map((_, index) => index)
-        .filter(
-          (index) =>
-            index >= 40 && index < chunks.length - 40 && !ERROR_PATTERN.test(chunks[index]!.text),
-        ),
-    );
-    stateChunks = chunks.filter((_, index) => !omitted.has(index));
-    state = stateFor(input, stateChunks, history);
-    stateTokens = estimateStateTokens(JSON.stringify(state));
-  }
-
   if (stateTokens > maxStateTokens) {
     let perChunkChars = 400;
     while (stateTokens > maxStateTokens) {
@@ -344,6 +322,60 @@ async function trimOutputAttempt(
     throw error;
   }
 
+  // Chunks the state could not hold are scored in their own passes, over a
+  // state carrying just them: unscored chunks used to be kept blind and then
+  // dropped first by the budget, which lost a quiet line the task needed.
+  if (omitted.size > 0) {
+    const leftovers = chunks.filter((_, index) => omitted.has(index));
+    const scored = new Set<number>();
+    for (let start = 0; start < leftovers.length; start += LEFTOVER_PASS_CHUNKS) {
+      const slice = leftovers.slice(start, start + LEFTOVER_PASS_CHUNKS);
+      const sliceState = stateFor(input, slice, history);
+      const sliceTokens = estimateStateTokens(JSON.stringify(sliceState));
+      if (sliceTokens > maxStateTokens) continue;
+      try {
+        const answered = await Promise.all(
+          batches(slice, sliceTokens).map(async (batch) => {
+            const questions = Object.assign({}, ...batch.map(questionFor));
+            const response = await asker.ask(sliceState, questions);
+            return batch.map((chunk) => [chunk, noulAnswer(response.answers, chunk.id)] as const);
+          }),
+        );
+        for (const [chunk, score] of answered.flat()) {
+          const index = chunks.indexOf(chunk);
+          scores[index] = score;
+          scored.add(index);
+        }
+      } catch {
+        // Leave this slice unscored; it stays kept, as before.
+      }
+    }
+    for (const index of scored) omitted.delete(index);
+  }
+
+  return assemble(input, chunks, scores, omitted, {
+    keepThreshold,
+    maxChars: Math.max(0, finite(options.maxChars, 0)),
+    history,
+    asker,
+    maxStateTokens,
+  });
+}
+
+async function assemble(
+  input: TrimOutputInput,
+  chunks: readonly OutputChunk[],
+  scores: number[],
+  omitted: Set<number>,
+  opts: {
+    keepThreshold: number;
+    maxChars: number;
+    history: HistoryEntry[];
+    asker: JevAsker;
+    maxStateTokens: number;
+  },
+): Promise<TrimOutputResult> {
+  const { keepThreshold, maxChars, history, asker, maxStateTokens } = opts;
   const keptIndexes = new Set<number>();
   for (let index = 0; index < chunks.length; index += 1) {
     if (
@@ -356,10 +388,37 @@ async function trimOutputAttempt(
       keptIndexes.add(index);
     }
   }
-  const maxChars = Math.max(0, finite(options.maxChars, 0));
+  const shrunk = new Map<number, string>();
+  if (maxChars > 0) {
+    const kept = [...keptIndexes].sort((a, b) => a - b);
+    const size = () =>
+      kept.reduce((sum, index) => sum + (shrunk.get(index) ?? chunks[index]!.text).length + 1, 0);
+    for (const index of [...kept].sort(
+      (a, b) => chunks[b]!.chars - chunks[a]!.chars,
+    )) {
+      if (size() <= maxChars) break;
+      let text: string;
+      try {
+        text = await shrinkChunkWithJev(
+          chunks[index]!,
+          input,
+          history,
+          asker,
+          keepThreshold,
+          maxStateTokens,
+        );
+      } catch {
+        text = shrinkChunkText(chunks[index]!.text);
+      }
+      if (text.length < chunks[index]!.chars) shrunk.set(index, text);
+    }
+  }
   if (maxChars > 0) {
     const size = () =>
-      [...keptIndexes].reduce((sum, index) => sum + chunks[index]!.chars + 1, 0);
+      [...keptIndexes].reduce(
+        (sum, index) => sum + (shrunk.get(index) ?? chunks[index]!.text).length + 1,
+        0,
+      );
     // First and last stay, and so does anything that looks like an error or a
     // failure: a budget must never be the reason the one line the agent needs
     // disappears. The rest goes lowest score first, and the budget is missed
@@ -375,25 +434,6 @@ async function trimOutputAttempt(
     for (const index of droppable) {
       if (size() <= maxChars) break;
       keptIndexes.delete(index);
-    }
-  }
-  const shrunk = new Map<number, string>();
-  if (maxChars > 0) {
-    const kept = [...keptIndexes].sort((a, b) => a - b);
-    const size = () =>
-      kept.reduce((sum, index) => sum + (shrunk.get(index) ?? chunks[index]!.text).length + 1, 0);
-    for (const index of [...kept].sort(
-      (a, b) => chunks[b]!.chars - chunks[a]!.chars,
-    )) {
-      if (size() <= maxChars) break;
-      const text = await shrinkChunkWithJev(
-        chunks[index]!,
-        input,
-        history,
-        asker,
-        keepThreshold,
-      );
-      if (text.length < chunks[index]!.chars) shrunk.set(index, text);
     }
   }
   const droppedIndexes = chunks
@@ -459,6 +499,9 @@ function shrinkChunkText(text: string, keepEdge = 2): string {
 }
 
 const REFINE_GROUP_LINES = 5;
+const LEFTOVER_PASS_CHUNKS = 40;
+const DEFAULT_MAX_SCORING_REQUESTS = 40;
+const SLICE_CONCURRENCY = 4;
 
 /**
  * Asks Jev, line group by line group, what to keep inside one oversized chunk —
@@ -472,6 +515,7 @@ async function shrinkChunkWithJev(
   history: HistoryEntry[],
   asker: JevAsker,
   keepThreshold: number,
+  maxStateTokens: number,
 ): Promise<string> {
   const lines = chunk.text.split('\n');
   if (lines.length <= REFINE_GROUP_LINES * 2) return chunk.text;
@@ -481,6 +525,9 @@ async function shrinkChunkWithJev(
     groups.push({ id: `g${groups.length + 1}`, text, lines: Math.min(REFINE_GROUP_LINES, lines.length - start), chars: text.length });
   }
   const state = stateFor({ ...input, output: chunk.text }, groups, history);
+  if (estimateStateTokens(JSON.stringify(state)) > maxStateTokens) {
+    return shrinkChunkText(chunk.text);
+  }
   let scores: number[];
   try {
     const answered = await Promise.all(

@@ -332,11 +332,10 @@ describe('line-level second pass', () => {
   });
 
   it('falls back to the pattern shrink when the second pass fails', async () => {
-    let first = true;
+    // Fails only the line-group pass (ids g1, g2, …), not the chunk pass.
     const flaky = {
       ask: async (_s: unknown, q: Record<string, unknown>) => {
-        if (!first) throw new Error('jev down');
-        first = false;
+        if (Object.keys(q).some((id) => id.startsWith('g'))) throw new Error('jev down');
         return { answers: Object.fromEntries(Object.keys(q).map((id) => [id, { type: 'noul' as const, noul: 0.01 }])) };
       },
     };
@@ -347,5 +346,29 @@ describe('line-level second pass', () => {
     );
     expect(r.output).toContain('ORD-77341');
     expect(r.output).toMatch(/trimmed \d+ more lines from this section/);
+  });
+});
+
+describe('budget ordering', () => {
+  it('shrinks the biggest chunks before dropping anything, so a wanted chunk survives a tight budget', async () => {
+    const lines = Array.from({ length: 12_000 }, (_, i) =>
+      i === 6_840 ? 'item-4821 qty=13 bin=Z9 serial=SN-88431-XQ status=quarantined' : `INFO request ${i} served in ${i % 400}ms`,
+    ).join('\n');
+    // Only the needle's chunk scores high; the first and last chunks alone are
+    // larger than the budget, which used to force every other chunk out.
+    const asker = {
+      ask: async (_state: unknown, questions: Record<string, unknown>) => ({
+        answers: Object.fromEntries(
+          Object.keys(questions).map((id) => [id, { type: 'noul' as const, noul: id === 'c115' ? 0.97 : 0.02 }]),
+        ),
+      }),
+    };
+    const r = await trimOutput(
+      { command: 'tail -n +1 app.log', goal: 'Find the serial number of the quarantined item.', output: lines },
+      asker,
+      { maxChars: 8_000 },
+    );
+    expect(r.output).toContain('SN-88431-XQ');
+    expect(r.charsAfter).toBeLessThanOrEqual(8_000);
   });
 });
