@@ -77,6 +77,29 @@ describe('output categories', () => {
 
 describe('category scoring state', () => {
   it.each([
+    ['npm run build', 'build'],
+    ['rg auth src', 'search'],
+  ])('preserves %s guidance when refining oversized chunks', async (command, category) => {
+    const ask = vi.fn(async (_state: JevState, questions: JevQuestions) => ({
+      answers: Object.fromEntries(Object.keys(questions).map(id => [
+        id, { noul: id.startsWith('c') ? 0.9 : 0.1 },
+      ])),
+    }));
+    const result = await trimOutput(
+      { command, goal: 'Keep relevant evidence.', output: noise },
+      { ask },
+      { maxChars: 8_000 },
+    );
+    expect(ask.mock.calls.some(([, questions]) => Object.keys(questions).some(id => id.startsWith('g')))).toBe(true);
+    for (const [state] of ask.mock.calls) {
+      expect(state).toMatchObject({ category, categoryGuidance: expect.any(String) });
+      expect(estimateStateTokens(JSON.stringify(state))).toBeLessThanOrEqual(25_000);
+    }
+    expect(result.trimmed).toBe(true);
+    expect(result.output.length).toBeLessThanOrEqual(8_000);
+  });
+
+  it.each([
     ['npm run build', 'build', 'artifact paths'],
     ['rg auth src', 'search', 'repetition alone does not make a match disposable'],
   ])('sends %s guidance in every bounded history/output request', async (command, category, guidance) => {
@@ -88,8 +111,9 @@ describe('category scoring state', () => {
         role: 'user', text: '', toolUses: [],
         toolResults: [{ tool_use_id: 'prior', text: 'prior evidence '.repeat(2_000) }],
       }],
-    }, { ask }, { maxStateTokens: 4_000, chunkLines: 10 });
+    }, { ask }, { maxStateTokens: 4_000, chunkLines: 10, maxScoringRequests: 200 });
     expect(ask.mock.calls.length).toBeGreaterThan(1);
+    expect(ask.mock.calls.length).toBeLessThanOrEqual(201);
     const histories = new Set<string>();
     for (const [state, questions] of ask.mock.calls) {
       expect(state).toMatchObject({ category, categoryGuidance: expect.stringContaining(guidance) });

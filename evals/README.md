@@ -1,3 +1,116 @@
+# Eval suite
+
+The plugin and manual sweeps below predate the 10,000-token minimum. Their
+recorded results are historical; cases at or below the current threshold pass
+through without scoring. The Terminal-Bench harness is documented separately below.
+
+Five cases run a noisy shell command and ask for a fact that is somewhere in its
+output, so the score measures whether pruning loses information:
+
+| Case | Output | The fact |
+| --- | --- | --- |
+| `needle-error` | 320 build lines, ~19k chars | the link failure and its undefined symbol |
+| `needle-detail` | 300 inventory lines | a serial number on one line |
+| `all-noise` | 300 latency lines | the two highest latencies |
+| `summary-line` | 260 npm fetch lines + summary | packages added, install time |
+| `structured-json` | a 120-service JSON document | one service's owner |
+
+Each case also carries a `with-only` regex grader over the trace: `pruned`
+asserts the pruning marker appears, and `not-pruned` (structured-json) asserts
+it does not. These are indicators, not part of the score.
+
+Run it:
+
+```sh
+claude plugin eval . --trust-plugin --allow-tools Bash Read Grep --runs 2
+```
+
+**Known limitation: the suite cannot exercise pruning.** An eval run disables
+non-essential network traffic, so the hook's `$.http.fetch` to Jev is refused:
+
+```
+bash output trim skipped (fast-jev-output: $.http.fetch: refused: nonessential
+network traffic is disabled for this session)
+```
+
+The hook itself does run — a probe that prefixes the tool result fires and sees
+the full output — and the key does reach it, since `getApiKey` also reads
+`EVAL_TYPESAFE_API_KEY` (an eval run gets a fresh HOME and a scrubbed
+environment, so `TYPESAFE_API_KEY` and `pluginConfigs` do not):
+
+```sh
+EVAL_TYPESAFE_API_KEY="$TYPESAFE_API_KEY" claude plugin eval . --trust-plugin --allow-tools Bash Read Grep
+```
+
+But with the Jev call refused, the hook falls back to the original output, the
+`pruned` indicators fail, and the scores only show that the plugin does no harm
+when it cannot reach Jev. Use the manual eval below to exercise the real path.
+
+## Manual eval
+
+`evals/manual/run.mts` calls `trimOutput` directly against live Jev, so a sweep
+costs cents and runs in seconds — the loop to use while tuning thresholds. Each
+scenario carries the text an agent would need afterwards, and the run reports
+whether it survived, how much went away, and how long a decision took.
+
+```sh
+TYPESAFE_API_KEY=... npm run eval:manual      # RUNS=3 by default
+```
+
+Twelve scenarios: eight that should trim (build error, pytest summary, npm
+install, a serial number among 300 lines, two latency outliers, a stack trace,
+grep hits, a Docker failure) and four that should pass through whole (a git log
+where every line matters, a JSON document, binary data, short output).
+
+Sweep on 2026-09-18, 3 runs per scenario, `jev-latest`:
+
+| Measure | Result |
+| --- | --- |
+| Needles kept | 24/24 |
+| Mean reduction | 83% (71–92%) on scenarios meant to trim |
+| Wrongly trimmed | 0/12 pass-through runs |
+| Mean latency | 240 ms |
+
+Unlike the `claude plugin eval` cases above, this exercises the real pruning
+path, because it does not go through the eval harness.
+
+## Accuracy sweeps
+
+Two more manual sweeps, same idea as above but wider:
+
+```sh
+TYPESAFE_API_KEY=... npm run eval:accuracy   # 12 output shapes x 3 needle positions
+evals/manual/capture-real.sh /tmp/real       # capture real command output
+REAL_DIR=/tmp/real TYPESAFE_API_KEY=... npm run eval:real
+```
+
+`accuracy.mts` is synthetic but varied: pytest failures, npm audit counts,
+Docker build errors, Java stack traces, terraform replacements, CrashLoopBackOff
+pods, git log, grep hits, `ps aux`, curl 500s, `du`, tar listings, and one case
+where every line matters and nothing should go.
+
+`real.mts` runs the same measure over output captured from real commands on the
+machine, each with a specific needle: the failing pytest case, the test count,
+a `TS2322` error among `--listFiles` noise, an express version in `npm ls`, a
+commit subject in `git log --stat`, a `.d.ts` path in `find`, the largest
+directory in `du`, `ls -laR`, a rate-limit header among 60 responses, and
+`docker images`.
+
+Results on 2026-09-18:
+
+| Sweep | Retention | Mean reduction |
+| --- | --- | --- |
+| Standard (12 scenarios) | 8/8 | 83% |
+| Accuracy (36 runs) | 36/36 | 87% |
+| Real output (10 captures) | 10/10 | 54% |
+| Needle matrix (sizes to 2.8 MB) | 9/9 | — |
+
+Real output reduces less because three captures are correctly left whole:
+pytest and vitest output below the threshold, and `docker images`, where Jev
+wanted every line.
+
+---
+
 # Terminal-Bench paired pilot
 
 Requires Linux, Docker, Python 3.12+, Claude access to `claude-sonnet-5`, and Jev API access.
@@ -34,7 +147,31 @@ Ordering alternates between arms. Do not replace tasks after observing results.
 The six runs are an integration pilot, not a full benchmark or significance test.
 Full Terminal-Bench 2.0 has 89 tasks, hence 178 trials for a single paired run.
 
+### Missing Debian mirror packages
+
+An optional `JEV_EVAL_APT_CACHE_DIR` can supply archived `.deb` files when a
+task image's live mirror no longer serves versions listed in its signed indexes.
+Its `manifest.json` contains `distribution`, `codename`, and a `packages` array
+of `filename`/`sha256` entries. Obtain checksums from APT's authenticated package
+metadata and retrieve the exact package versions from an official archive.
+
+The adapter verifies each local checksum, seeds only matching distributions, and
+records the manifest in agent evidence. For matching images, it refreshes APT
+indexes before staging the cache, then installs Harbor's required packages.
+This ordering supports Docker images whose post-update hooks clear downloaded
+archives. APT still selects and verifies packages; repository signatures and
+package validation remain enabled. Record the cache manifest and setup change
+in the evaluation protocol before resuming. Never repeat completed inference.
+
 ## Activation smoke
+
+To evaluate another revision without changing the harness, set
+`JEV_EVAL_PLUGIN_DIR` to an absolute, clean Git checkout of that revision.
+The smoke and Harbor adapter load `.claude-plugin`, `hooks`, and `src` from
+that checkout; the observer and orchestration remain in this repository.
+The full runner hashes the selected production files, records both commits,
+and rejects a resume with different production hashes. Keep both checkouts
+unchanged while running.
 
 Build a separate Docker image with Claude Code 2.1.274 installed from npm,
 record its base digest, set `SMOKE_IMAGE` to that image, and run
@@ -173,7 +310,7 @@ validated; this is not an enforceable account cap. Report Modal, Jev and Claude
 accounting separately. Coordinate any other run using the same subscription
 before starting live validation.
 
-### Full serial comparison
+### Full comparison
 
 `python -m evals.full EVIDENCE --benchmark-source PINNED_TASK_CHECKOUT` executes
 a predeclared `EVIDENCE/manifest.json` with 178 rows across all 89 tasks. Each row
@@ -198,19 +335,36 @@ image. The private runtime copy and source staging files disappear on sandbox
 teardown. Docker keeps its read-only bind mount. Modal's agent logs are downloaded
 at trial boundaries, so account-error inspection may occur after a trial ends.
 
-The launcher runs serially with the pilot's model, version, limits, and zero
-Harbor retries. It refuses reused run directories by default and checks source hashes before
+The launcher defaults to one active trial. Set `--concurrency 4` to run up to four
+independent task sandboxes at once. Both arms of a task retain their manifest order
+and never overlap. Each Harbor subprocess still uses one trial and zero retries;
+the pilot's model, version, and limits stay fixed. Subscription rate limits and
+Modal capacity constrain useful concurrency. It refuses reused run directories
+by default and checks source hashes before
 each trial. Results checkpoint after every trial, preserving missing rewards and
 unstarted tasks. Subscription/account/model errors and instrumentation/Jev failures
-pause further execution and create `blocker.json`; ordinary task failures remain
+pause new launches and create `blocker.json`; other already-running trials finish
+and checkpoint before the launcher exits. Ordinary task failures remain
 in the results. A paused run must be inspected before any separate continuation.
+For a live coordinator handoff on Linux, suspend the old coordinator without
+signaling its Harbor process groups. Construct an `evals.process.AdoptedProcess`
+for each live child using its PID, the old coordinator PID, and its checkpointed
+command; then call `run(..., resume=True, concurrency=32, inflight={job_name:
+process, ...})`. The process wrapper verifies the parent, process group, and
+command, and tracks process start time to avoid following a reused PID. Keep the
+old coordinator stopped until it is terminated; only the replacement may write
+checkpoints. It counts adopted jobs toward the concurrency limit and retains
+their launch commit and concurrency, recording the handoff separately. Exit codes
+of adopted children remain unavailable; Harbor result files determine outcomes.
 After inspecting and resolving a pause, stop the previous launcher and pass
 `--resume` with the same evidence directory. Completed trials are retained, never
 retried; only pending manifest rows execute. A checkpoint interrupted after Harbor
 finished can be reconstructed from its saved result. An unfinished Harbor trial
 blocks resumption. Flags, manifest order, and production source hashes must match.
 Instrumentation fixes are permitted and recorded in `execution-segments.json`;
-each trial records its execution commit. The initial provenance is preserved.
+each trial records its execution commit and concurrency. The initial provenance is
+preserved. Changing concurrency on resume is permitted; record the protocol
+amendment and account for overlapping workloads when interpreting runtime.
 The launcher stops before another trial when less than 20 GiB disk is free.
 CLI-native request retries, if any, are not additional Harbor trial attempts.
 

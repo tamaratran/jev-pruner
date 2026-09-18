@@ -110,6 +110,28 @@ describe('Bash hook conversation state', () => {
 });
 
 describe('Bash output archives', () => {
+  it('counts the archive footer in the saved-output budget', async () => {
+    const h = harness({ persistedMaxChars: 8_000 });
+    const complete = h.original.result.stdout;
+    const path = `/project/${'nested-dir/'.repeat(20)}output.txt`;
+    h.original.result.persistedOutputPath = path;
+    h.original.result.stdout = 'short host preview';
+    h.read.mockResolvedValue(complete);
+    const result = await h.run();
+    expect(result).not.toBe(h.original);
+    expect(result.result?.stdout.length).toBeLessThanOrEqual(8_000);
+    expect(result.result?.stdout).toContain(`full output: ${path}`);
+    expect(result.result).not.toHaveProperty('persistedOutputPath');
+  });
+
+  it('leaves saved output alone when persisted-output pruning is disabled', async () => {
+    const h = harness({ persistedOutputs: false });
+    h.original.result.persistedOutputPath = '/project/output.txt';
+    expect(await h.run()).toBe(h.original);
+    expect(h.read).not.toHaveBeenCalled();
+    expect(h.fetch).not.toHaveBeenCalled();
+  });
+
   it('scores complete host-persisted output and reuses its archive', async () => {
     const h = harness();
     const complete = `${h.original.result.stdout}\n${h.original.result.stderr}`;

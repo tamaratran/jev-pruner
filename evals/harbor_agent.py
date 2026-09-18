@@ -1,5 +1,6 @@
 """Harbor 0.22.0 Claude Code adapter; task prompts and verifiers stay upstream."""
 
+import hashlib
 import json
 import os
 import shlex
@@ -17,6 +18,7 @@ from evals.auth import (
     prepare_subscription,
     subscription_mounts,
 )
+from evals.sources import PRODUCTION, production_root
 
 CLAUDE_VERSION = "2.1.274"
 REPO = Path(__file__).resolve().parents[1]
@@ -55,9 +57,9 @@ class JevClaudeCode(ClaudeCode):
         )
         if self.parse_version(version.stdout or "") != CLAUDE_VERSION:
             raise RuntimeError("Installed Claude version does not match pin")
-        for directory in (".claude-plugin", "hooks", "src"):
+        for directory in PRODUCTION:
             await environment.upload_dir(
-                REPO / directory, f"{REMOTE}/production/{directory}"
+                production_root(REPO) / directory, f"{REMOTE}/production/{directory}"
             )
         await environment.upload_dir(REPO / "evals/observer", f"{REMOTE}/observer")
         await environment.upload_file(
@@ -79,6 +81,59 @@ class JevClaudeCode(ClaudeCode):
                 indent=2,
             )
         )
+
+    async def ensure_system_dependencies(
+        self, environment: BaseEnvironment, dependencies: tuple[str, ...]
+    ) -> None:
+        if not dependencies:
+            return
+        if not await self.seed_apt_cache(environment):
+            await super().ensure_system_dependencies(environment, dependencies)
+            return
+        packages = dict.fromkeys(
+            package
+            for dependency in dependencies
+            for package in self.SYSTEM_PACKAGES[dependency].packages["apt-get"]
+        )
+        await self.exec_as_root(
+            environment,
+            command=f"apt-get install -y {shlex.join(packages)}",
+            env={"DEBIAN_FRONTEND": "noninteractive"},
+        )
+
+    async def seed_apt_cache(self, environment: BaseEnvironment) -> bool:
+        directory = os.environ.get("JEV_EVAL_APT_CACHE_DIR")
+        if not directory:
+            return False
+        source = Path(directory)
+        manifest = json.loads((source / "manifest.json").read_text())
+        distribution = f"{manifest['distribution']}:{manifest['codename']}"
+        matches = await environment.exec(
+            command=(
+                ". /etc/os-release && "
+                f'test "$ID:$VERSION_CODENAME" = {shlex.quote(distribution)} && '
+                "test -d /var/cache/apt/archives"
+            ),
+            user="root",
+        )
+        if matches.return_code != 0:
+            return False
+        await self.exec_as_root(environment, command="apt-get update")
+        for package in manifest["packages"]:
+            name = package["filename"]
+            if Path(name).name != name or not name.endswith(".deb"):
+                raise ValueError("Invalid cached package filename")
+            path = source / name
+            if (
+                path.is_symlink()
+                or hashlib.sha256(path.read_bytes()).hexdigest() != package["sha256"]
+            ):
+                raise ValueError("Cached package checksum mismatch")
+            await environment.upload_file(path, f"/var/cache/apt/archives/{name}")
+        (self.logs_dir / "apt-cache-manifest.json").write_text(
+            json.dumps(manifest, indent=2)
+        )
+        return True
 
     async def upload_subscription(self, environment: BaseEnvironment) -> None:
         source = Path(subscription_mounts()[0]["source"])

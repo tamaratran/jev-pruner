@@ -10,7 +10,8 @@ from statistics import median
 TRIM_LOG = re.compile(r"kept (\d+)/(\d+) chunks \((\d+)→(\d+) chars\)")
 TRIM_MARKER = re.compile(r"\[fast-jev-output trimmed (\d+) lines \((\d+) chars\)")
 ARCHIVE_FOOTER = re.compile(
-    r"\[fast-jev-output full output: ([^\n]+) \(Read or grep it if needed\)\]"
+    r"\[fast-jev-output (?:trimmed \d+ lines \(\d+ chars\); )?"
+    r"full output: ([^\n]+) \(Read or grep it if needed\)\]"
 )
 
 
@@ -226,6 +227,8 @@ def summarize_trial(path: Path) -> dict:
         "task_checksum": trial["task_checksum"],
         "reward": (trial.get("verifier_result") or {}).get("rewards", {}).get("reward"),
         "exception": exception,
+        "agent_setup": trial.get("agent_setup"),
+        "agent_execution": trial.get("agent_execution"),
         "wall_seconds": elapsed(trial),
         "agent_seconds": elapsed(trial.get("agent_execution") or {}),
         "verifier_seconds": elapsed(trial.get("verifier") or {}),

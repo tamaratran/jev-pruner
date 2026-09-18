@@ -183,7 +183,8 @@ describe('history in output scoring', () => {
       },
     };
     const pending = trimOutput(
-      { command: 'build', goal: 'Build now.', output, messages }, asker, { maxStateTokens: 4_000 },
+      { command: 'build', goal: 'Build now.', output, messages }, asker,
+      { maxStateTokens: 4_000, maxScoringRequests: 200 },
     );
     expect(seen.size).toBeGreaterThan(2);
     expect(releases.length).toBeGreaterThan(seen.size);

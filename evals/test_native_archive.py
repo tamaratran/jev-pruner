@@ -6,6 +6,21 @@ from evals.summarize import native_archive_exists
 
 
 class NativeArchiveTests(unittest.TestCase):
+    def test_original_pruning_marker_recognizes_downloaded_native_archive(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            agent = Path(directory) / "agent"
+            original = agent / "sessions/projects/project/session/tool-results/out.txt"
+            original.parent.mkdir(parents=True)
+            original.write_text("original output")
+            marker = (
+                "[fast-jev-output trimmed 100 lines (10000 chars); full output: "
+                "/opt/jev-eval/auth/projects/project/session/tool-results/out.txt"
+                " (Read or grep it if needed)]"
+            )
+            self.assertTrue(native_archive_exists(agent, marker))
+            original.unlink()
+            self.assertFalse(native_archive_exists(agent, marker))
+
     def test_only_existing_downloaded_originals_are_recognized(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             agent = Path(directory) / "agent"

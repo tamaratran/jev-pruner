@@ -1,4 +1,4 @@
-const { spawnSync } = require("node:child_process");
+const { spawnSync } = require("child_process");
 
 const result = spawnSync(
   "claude",
@@ -19,7 +19,8 @@ try {
 }
 if (
   result.status !== 0 ||
-  status?.loggedIn !== true ||
+  !status ||
+  status.loggedIn !== true ||
   status.authMethod !== "claude.ai" ||
   status.apiProvider !== "firstParty"
 ) {

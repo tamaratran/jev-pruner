@@ -253,3 +253,180 @@ describe('trimOutput safety', () => {
     expect(r.chunks).toBeGreaterThan(2);
   });
 });
+
+describe('budget for engine-saved output', () => {
+  const asker = (score: number) => ({
+    ask: async (_state: unknown, questions: Record<string, unknown>) => ({
+      answers: Object.fromEntries(Object.keys(questions).map((id) => [id, { type: 'noul' as const, noul: score }])),
+    }),
+  });
+  const withNeedle = (n: number, at: number) =>
+    Array.from({ length: n }, (_, i) => (i === at ? 'ERROR worker-4 KeyError discount order=ORD-77341' : `INFO request ${i} ok`)).join('\n');
+
+  it('keeps the output within the budget', async () => {
+    const r = await trimOutput(
+      { command: 'tail -n +1 big.log', goal: 'g', output: withNeedle(3000, 1700) },
+      asker(0.9),
+      { maxChars: 4_000 },
+    );
+    expect(r.charsAfter).toBeLessThanOrEqual(4_000);
+  });
+
+  it('never drops an error line to meet the budget', async () => {
+    for (const lines of [2000, 3000, 12000]) {
+      const output = withNeedle(lines, Math.floor(lines * 0.57));
+      expect(estimateTokens(output)).toBeGreaterThan(10_000);
+      const r = await trimOutput(
+        { command: 'tail -n +1 big.log', goal: 'g', output },
+        asker(0.01),
+        { maxChars: 2_000 },
+      );
+      expect(r.output).toContain('ORD-77341');
+    }
+  });
+
+  it('shrinks an oversized chunk instead of dropping it, and says how many lines went', async () => {
+    const r = await trimOutput(
+      { command: 'tail -n +1 big.log', goal: 'g', output: withNeedle(40_000, 22_800) },
+      asker(0.01),
+      { maxChars: 8_000 },
+    );
+    expect(r.output).toContain('ORD-77341');
+    expect(r.output).toMatch(/trimmed \d+ more lines from this section/);
+    expect(r.charsAfter).toBeLessThanOrEqual(8_000);
+  });
+
+  it('leaves output alone when no budget is set', async () => {
+    const output = withNeedle(3000, 1700);
+    expect(estimateTokens(output)).toBeGreaterThan(10_000);
+    const r = await trimOutput({ command: 'x', goal: 'g', output }, asker(0.9));
+    expect(r.trimmed).toBe(false);
+  });
+});
+
+describe('line-level second pass', () => {
+  const withNeedle = (n: number, at: number) =>
+    Array.from({ length: n }, (_, i) => (i === at ? 'ERROR worker-4 KeyError discount order=ORD-77341' : `INFO request ${i} ok`)).join('\n');
+  const counting = (score: number, calls: { n: number }) => ({
+    ask: async (_state: unknown, questions: Record<string, unknown>) => {
+      calls.n += 1;
+      return { answers: Object.fromEntries(Object.keys(questions).map((id) => [id, { type: 'noul' as const, noul: score }])) };
+    },
+  });
+
+  it('asks Jev again inside an oversized chunk', async () => {
+    const calls = { n: 0 };
+    const r = await trimOutput(
+      { command: 'tail -n +1 big.log', goal: 'g', output: withNeedle(40_000, 22_800) },
+      counting(0.01, calls),
+      { maxChars: 8_000 },
+    );
+    expect(calls.n).toBeGreaterThan(1);
+    expect(r.charsAfter).toBeLessThanOrEqual(8_000);
+    expect(r.output).toContain('ORD-77341');
+  });
+
+  it('keeps an error line even when Jev drops its group', async () => {
+    const r = await trimOutput(
+      { command: 'tail -n +1 big.log', goal: 'g', output: withNeedle(40_000, 22_800) },
+      { ask: async (_s: unknown, q: Record<string, unknown>) => ({ answers: Object.fromEntries(Object.keys(q).map((id) => [id, { type: 'noul' as const, noul: 0 }])) }) },
+      { maxChars: 4_000 },
+    );
+    expect(r.output).toContain('ORD-77341');
+  });
+
+  it('falls back to the pattern shrink when the second pass fails', async () => {
+    // Fails only the line-group pass (ids g1, g2, …), not the chunk pass.
+    const flaky = {
+      ask: async (_s: unknown, q: Record<string, unknown>) => {
+        if (Object.keys(q).some((id) => id.startsWith('g'))) throw new Error('jev down');
+        return { answers: Object.fromEntries(Object.keys(q).map((id) => [id, { type: 'noul' as const, noul: 0.01 }])) };
+      },
+    };
+    const r = await trimOutput(
+      { command: 'tail -n +1 big.log', goal: 'g', output: withNeedle(40_000, 22_800) },
+      flaky,
+      { maxChars: 8_000 },
+    );
+    expect(r.output).toContain('ORD-77341');
+    expect(r.output).toMatch(/trimmed \d+ more lines from this section/);
+  });
+});
+
+describe('budget ordering', () => {
+  it('shrinks the biggest chunks before dropping anything, so a wanted chunk survives a tight budget', async () => {
+    const lines = Array.from({ length: 12_000 }, (_, i) =>
+      i === 6_840 ? 'item-4821 qty=13 bin=Z9 serial=SN-88431-XQ status=quarantined' : `INFO request ${i} served in ${i % 400}ms`,
+    ).join('\n');
+    // Only the needle's chunk scores high; the first and last chunks alone are
+    // larger than the budget, which used to force every other chunk out.
+    const asker = {
+      ask: async (_state: unknown, questions: Record<string, unknown>) => ({
+        answers: Object.fromEntries(
+          Object.keys(questions).map((id) => [id, { type: 'noul' as const, noul: id === 'c115' ? 0.97 : 0.02 }]),
+        ),
+      }),
+    };
+    const r = await trimOutput(
+      { command: 'tail -n +1 app.log', goal: 'Find the serial number of the quarantined item.', output: lines },
+      asker,
+      { maxChars: 8_000 },
+    );
+    expect(r.output).toContain('SN-88431-XQ');
+    expect(r.charsAfter).toBeLessThanOrEqual(8_000);
+  });
+});
+
+describe('error floor is narrow', () => {
+  const asker = {
+    ask: async (_s: unknown, q: Record<string, unknown>) => ({
+      answers: Object.fromEntries(Object.keys(q).map((id) => [id, { type: 'noul' as const, noul: 0.01 }])),
+    }),
+  };
+
+  it('does not treat a file listing full of error-named files as errors', async () => {
+    const listing = Array.from({ length: 400 }, (_, i) => `-rw-r--r--  1 me staff  ${i} Sep 18 node_modules/serialize-error/error-${i}.js`).join('\n');
+    const r = await trimOutput({ command: 'ls -laR node_modules', goal: 'check the tree', output: listing }, asker, { maxChars: 4_000 });
+    expect(r.charsAfter).toBeLessThanOrEqual(4_000);
+  });
+
+  it('still protects a reported failure', async () => {
+    const noise = Array.from({ length: 400 }, (_, i) => `[${i}] compiled module ${i} ${'cache '.repeat(30)}`);
+    for (const line of [
+      'ERROR worker-3 failed to link checkout_v2',
+      'TypeError: Cannot read properties of undefined',
+      'error: could not find a version satisfying pandas==99.9',
+      '7 high severity vulnerabilities found',
+      'payments checkout-77 0/1 CrashLoopBackOff 14 22m',
+    ]) {
+      const rows = [...noise];
+      rows[200] = line;
+      expect(estimateTokens(rows.join('\n'))).toBeGreaterThan(10_000);
+      const r = await trimOutput({ command: 'build', goal: 'fix the build', output: rows.join('\n') }, asker, { maxChars: 2_000 });
+      expect(r.trimmed).toBe(true);
+      expect(r.output).toContain(line);
+    }
+  });
+});
+
+describe('the budget is a hard cap', () => {
+  const wantEverything = {
+    ask: async (_s: unknown, q: Record<string, unknown>) => ({
+      answers: Object.fromEntries(Object.keys(q).map((id) => [id, { type: 'noul' as const, noul: 0.99 }])),
+    }),
+  };
+
+  it('fits the budget even when Jev wants every chunk', async () => {
+    const output = Array.from({ length: 2_000 }, (_, i) => `src/module_${i}/index.ts:${i}:export const thing${i} = ${i};`).join('\n');
+    const r = await trimOutput({ command: 'grep -rn export src/', goal: 'list the exports', output }, wantEverything, { maxChars: 6_000 });
+    expect(r.charsAfter).toBeLessThanOrEqual(6_200);
+  });
+
+  it('spends the budget on the failure first', async () => {
+    const rows = Array.from({ length: 2_000 }, (_, i) => `src/module_${i}/index.ts:${i}:export const thing${i} = ${i};`);
+    rows[1_500] = 'src/checkout/parser.ts:88: error: Cannot read properties of undefined (reading discount)';
+    const r = await trimOutput({ command: 'grep -rn export src/', goal: 'list the exports', output: rows.join('\n') }, wantEverything, { maxChars: 6_000 });
+    expect(r.output).toContain('reading discount');
+    expect(r.charsAfter).toBeLessThanOrEqual(6_200);
+  });
+});

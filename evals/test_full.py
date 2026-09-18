@@ -7,6 +7,32 @@ from evals.full import access_blocker, aggregate, failure_category, trial_blocke
 
 
 class FullTests(unittest.TestCase):
+    def test_install_exit_errors_are_setup_failures_only_before_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            job = Path(directory)
+            trial = job / "trial"
+            trial.mkdir()
+            exception = {"exception_type": "NonZeroAgentExitCodeError"}
+            for execution, expected in (
+                (None, "agent_setup"),
+                ({"started_at": "2026-01-01T00:01:00Z"}, "agent"),
+            ):
+                with self.subTest(execution=execution):
+                    timings = {
+                        "agent_setup": {"started_at": "2026-01-01T00:00:00Z"},
+                        "agent_execution": execution,
+                    }
+                    (trial / "result.json").write_text(
+                        json.dumps({**timings, "exception_info": exception})
+                    )
+                    self.assertEqual(
+                        failure_category({**timings, "exception": exception}), expected
+                    )
+                    if expected == "agent_setup":
+                        self.assertIn("agent_setup", trial_blocker(job) or "")
+                    else:
+                        self.assertIsNone(trial_blocker(job))
+
     def test_setup_and_environment_errors_stop_subsequent_trials(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             job = Path(directory)
