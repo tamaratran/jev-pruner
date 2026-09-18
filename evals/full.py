@@ -49,8 +49,16 @@ FLAGS = [
 
 def save(path: Path, value: object) -> None:
     temporary = path.with_suffix(".new")
-    temporary.write_text(json.dumps(value, indent=2) + "\n")
+    with temporary.open("w") as stream:
+        stream.write(json.dumps(value, indent=2) + "\n")
+        stream.flush()
+        os.fsync(stream.fileno())
     temporary.replace(path)
+    directory = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
 
 
 def source_hashes() -> dict[str, str]:

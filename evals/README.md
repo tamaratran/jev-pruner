@@ -186,6 +186,93 @@ separate preflight provenance can refer to the preceding adapter commit when
 only orchestration was added after the smoke; production and observer hashes must
 match across preflight and execution. Never edit sources while a run is active.
 
+### Modal: pinned preflight and serial execution
+
+Use `evals.modal_runner` to select the bounded Modal provider. It uses Harbor's
+`Trial.create` and `install_only` APIs, not the Docker subprocess launcher.
+Requires Python 3.12, Harbor 0.22.0, Modal 1.5.1, dockerfile-parse 2.0.1 and
+official Modal profile authentication. Keep the feature checkout committed:
+production files must match `907353b80f159bd3d693d6fbb310b1f6bf10c2d3`.
+The dataset must be a clean checkout of
+`69671fbaac6d67a7ef0dfec016cc38a64ef7a77c`.
+
+Offline planning constructs all 89 provider configurations without SDK calls:
+
+```sh
+export PYTHONPATH=/home/ubuntu/repos/jev-pruner
+export BENCHMARK=/home/ubuntu/jev-eval/benchmark-source
+export PLAN=/home/ubuntu/jev-modal-execution-plan
+/home/ubuntu/harbor-venv/bin/python -m evals.modal_runner plan \
+  --benchmark-source "$BENCHMARK" --plan "$PLAN"
+```
+
+Only after explicit compute approval, the following starts **one** real image/
+resource/auth preflight. It installs Claude Code, uploads allowlisted subscription
+files privately, checks `claude auth status`, storage, sparse files, loopback TCP
+and tool availability, then downloads and hashes evidence before termination.
+It does not run Claude inference, Jev requests, or task verifiers.
+
+```sh
+export MODAL_PROFILE=jev-terminal-bench
+export JEV_EVAL_AUTH_MODE=subscription
+export JEV_EVAL_CLAUDE_AUTH_DIR=/home/ubuntu/.jev-claude-auth/.claude
+/home/ubuntu/harbor-venv/bin/python -m evals.modal_runner preflight \
+  --benchmark-source "$BENCHMARK" --plan "$PLAN" \
+  --evidence /home/ubuntu/jev-modal-preflight \
+  --budget-usd 30 --build-reserve-usd 1 --approve-modal-compute
+```
+
+The first task requests 1 physical core and 2 GiB. At the quoted Sandbox rates,
+60–300 seconds costs approximately $0.0032–$0.0158, excluding image import/build
+costs. Its 810-second sandbox deadline reserves about $0.0427; the launcher also
+reserves the task's build allowance plus $1 for unmetered image import work.
+The build reserve is an explicit planning margin, **not a known price or cap**.
+
+After each image, read attributable cumulative compute usage (including credits)
+at https://modal.com/settings/tranjtamara/usage. Resume with the identical command
+plus `--resume --observed-total-usd VALUE`. This checkpoints one image at a time.
+The ledger never reduces accounted spend on a potentially delayed observation:
+it retains each import margin and charges runtime estimates after confirmed
+termination. Consequently it may stop before all images fit within the budget;
+do not reset the ledger to work around that stop. Image-builder charges can be
+delayed, and local reservations cannot enforce a provider spending cap.
+
+After all 89 preflights pass and their final usage is reconciled, use the following
+**separately inference-approved** command (the current user has approved both
+preflight and inference within $30 total). Inject `TYPESAFE_API_KEY` securely in the
+process environment first; never put its value in commands or files:
+
+```sh
+/home/ubuntu/harbor-venv/bin/python -m evals.modal_runner run \
+  --benchmark-source "$BENCHMARK" --plan "$PLAN" \
+  --preflight /home/ubuntu/jev-modal-preflight \
+  --evidence /home/ubuntu/jev-modal-full \
+  --budget-usd 30 --approve-modal-compute --approve-inference
+```
+
+This budget includes the preflight ledger. Both arms reuse the preflight's same
+Modal image ID and Linux/amd64 OCI manifest digest; mutable tag drift, registry
+authorization/rate limits, layer/import failures, or failed evidence downloads
+stop scheduling. Each scored row uses one fresh sandbox. Sources/tasks and the
+plan identity must match on resume; failed/interrupted attempts require explicit
+inspection and cannot silently rerun. The 178 planned rows and null rewards remain.
+
+Sandbox lifetimes include setup (360 seconds), transfer (300), cleanup (90), a
+60-second allowance, and original agent/verifier timeouts for full trials. The
+task build timeout also bounds environment startup. Cleanup waits are bounded
+even after evidence failures. There is one creation attempt, up to two explicitly
+logged file-transfer/termination attempts for I/O timeouts, and no scored retries.
+Modal SDK internal RPC retries are not observable as counters and are disclosed.
+
+The SDK cannot request task storage capacity: preflight checks available space,
+while recording the unmapped 10,240 MiB declaration. QEMU guest boot, VNC,
+Valgrind/ptrace and actual task behavior remain runtime checks; version probes do
+not certify them. Subscription model access and hook activation require inference.
+Missing/corrupt evidence or unconfirmed termination prevents a completed score.
+All downloaded evidence is private and must be sanitized before sharing, as below.
+No credentials are put in image layers, Modal Secrets or Volumes. SDK exec uses
+direct environment values for the Jev key rather than Harbor's ephemeral Secrets.
+
 The observer adapts `tests/fixtures/long-session-observer`. It never modifies
 requests/results and never captures HTTP headers. It captures activation,
 started/completed Jev requests with response usage/latency, production log

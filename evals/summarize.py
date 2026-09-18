@@ -195,7 +195,7 @@ def summarize_trial(path: Path) -> dict:
             else "CLI dollar amounts are estimates, not independently verified billing"
         ),
         "trial_name": trial["trial_name"],
-        "task_revision": trial["task_id"]["git_commit_id"],
+        "task_revision": trial["task_id"].get("git_commit_id"),
         "task_checksum": trial["task_checksum"],
         "reward": (trial.get("verifier_result") or {}).get("rewards", {}).get("reward"),
         "exception": exception,
