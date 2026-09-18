@@ -4,6 +4,8 @@ import hashlib
 import json
 import tempfile
 import unittest
+from datetime import date, datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -11,10 +13,17 @@ from harbor.environments.base import ExecResult
 from harbor.models.task.config import EnvironmentConfig as TaskEnvironment
 from harbor.models.trial.config import ResourceMode
 from harbor.models.trial.paths import TrialPaths
+from modal.billing import BillingReportItem
 
 from evals.modal_images import checked_digest, resolve_image
 from evals.modal_provider import PinnedModalEnvironment, verify_downloads
-from evals.modal_runner import budget_reservation, ensure_budget, execute, trial_config
+from evals.modal_runner import (
+    budget_reservation,
+    ensure_budget,
+    execute,
+    refresh_budget,
+    trial_config,
+)
 
 
 def provider(root: Path, approved: bool = False) -> PinnedModalEnvironment:
@@ -42,6 +51,35 @@ def provider(root: Path, approved: bool = False) -> PinnedModalEnvironment:
 
 
 class ModalTests(unittest.IsolatedAsyncioTestCase):
+    async def test_provider_usage_retains_build_margin_and_cannot_lower_budget(
+        self,
+    ) -> None:
+        reconciliations: list[dict] = []
+        ledger = {
+            "accounted_usd": 1,
+            "held_build_reserve_usd": 0.25,
+            "unreconciled_import": True,
+            "reconciliations": reconciliations,
+        }
+        item = BillingReportItem(
+            object_id="ap-fixture",
+            description="fixture",
+            environment_name="main",
+            interval_start=datetime(2026, 9, 18, tzinfo=timezone.utc),
+            cost=Decimal("2"),
+            cost_by_resource={"CPU": Decimal("2")},
+            tags={},
+        )
+        with patch("evals.modal_runner.Workspace.from_context") as workspace:
+            report = workspace.return_value.billing.report.aio
+            report.side_effect = AsyncMock(side_effect=[[item], []])
+            await refresh_budget(ledger, date(2026, 9, 18))
+            self.assertEqual(ledger["accounted_usd"], 2.25)
+            self.assertFalse(ledger["unreconciled_import"])
+            await refresh_budget(ledger, date(2026, 9, 18))
+            self.assertEqual(ledger["accounted_usd"], 2.25)
+            self.assertEqual(len(reconciliations), 2)
+
     async def test_no_remote_calls_without_approval(self) -> None:
         with (
             tempfile.TemporaryDirectory() as directory,

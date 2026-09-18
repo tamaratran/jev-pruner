@@ -201,14 +201,14 @@ Offline planning constructs all 89 provider configurations without SDK calls:
 ```sh
 export PYTHONPATH=/home/ubuntu/repos/jev-pruner
 export BENCHMARK=/home/ubuntu/jev-eval/benchmark-source
-export PLAN=/home/ubuntu/jev-modal-execution-plan
+export PLAN=/home/ubuntu/jev-modal-execution-plan-v4
 /home/ubuntu/harbor-venv/bin/python -m evals.modal_runner plan \
   --benchmark-source "$BENCHMARK" --plan "$PLAN"
 ```
 
-Only after explicit compute approval, the following starts **one** real image/
-resource/auth preflight. It installs Claude Code, uploads allowlisted subscription
-files privately, checks `claude auth status`, storage, sparse files, loopback TCP
+Only after explicit compute approval, the following runs serial image/resource/
+auth preflights. It installs Claude Code, uploads allowlisted subscription
+files privately, checks `claude auth status`, large-file read/write, loopback TCP
 and tool availability, then downloads and hashes evidence before termination.
 It does not run Claude inference, Jev requests, or task verifiers.
 
@@ -216,26 +216,36 @@ It does not run Claude inference, Jev requests, or task verifiers.
 export MODAL_PROFILE=jev-terminal-bench
 export JEV_EVAL_AUTH_MODE=subscription
 export JEV_EVAL_CLAUDE_AUTH_DIR=/home/ubuntu/.jev-claude-auth/.claude
+export MODAL_BUDGET_USD=28.26
+export MODAL_BILLING_START=2026-09-18
 /home/ubuntu/harbor-venv/bin/python -m evals.modal_runner preflight \
   --benchmark-source "$BENCHMARK" --plan "$PLAN" \
-  --evidence /home/ubuntu/jev-modal-preflight \
-  --budget-usd 30 --build-reserve-usd 1 --approve-modal-compute
+  --evidence /home/ubuntu/jev-modal-preflight-v4 \
+  --budget-usd "$MODAL_BUDGET_USD" --build-reserve-usd 0.25 \
+  --billing-start-date "$MODAL_BILLING_START" --approve-modal-compute
 ```
+
+These example values preserve $1.74 for this session's earlier setup attempts
+within the single $30 authorization. For a new experiment, use its authorized
+remaining budget, billing start date and fresh evidence/plan directories.
 
 The first task requests 1 physical core and 2 GiB. At the quoted Sandbox rates,
 60–300 seconds costs approximately $0.0032–$0.0158, excluding image import/build
 costs. Its 810-second sandbox deadline reserves about $0.0427; the launcher also
-reserves the task's build allowance plus $1 for unmetered image import work.
+reserves the task's build allowance plus $0.25 for unmetered image import work.
 The build reserve is an explicit planning margin, **not a known price or cap**.
 
-After each image, read attributable cumulative compute usage (including credits)
-at https://modal.com/settings/tranjtamara/usage. Resume with the identical command
-plus `--resume --observed-total-usd VALUE`. This checkpoints one image at a time.
-The ledger never reduces accounted spend on a potentially delayed observation:
-it retains each import margin and charges runtime estimates after confirmed
-termination. Consequently it may stop before all images fit within the budget;
+With `--billing-start-date`, the runner reads `Workspace.billing.report` before
+each sandbox and at completion. The date is pinned across midnight and resume;
+the report includes the current hourly interval and all workspace usage before
+credits. It checkpoints every image/row and stops if billing cannot be read.
+Accounted spend is the greater of cumulative runtime/build reservations or
+observed provider usage **plus retained build margins**. Lower delayed
+observations cannot reduce the ledger. Consequently it may stop before all images fit within the budget;
 do not reset the ledger to work around that stop. Image-builder charges can be
 delayed, and local reservations cannot enforce a provider spending cap.
+Without the billing option, preflight stops after each image for manual
+reconciliation via `--resume --observed-total-usd VALUE`.
 
 After all 89 preflights pass and their final usage is reconciled, use the following
 **separately inference-approved** command. Inject `TYPESAFE_API_KEY` securely in the
@@ -244,9 +254,10 @@ process environment first; never put its value in commands or files:
 ```sh
 /home/ubuntu/harbor-venv/bin/python -m evals.modal_runner run \
   --benchmark-source "$BENCHMARK" --plan "$PLAN" \
-  --preflight /home/ubuntu/jev-modal-preflight \
-  --evidence /home/ubuntu/jev-modal-full \
-  --budget-usd 30 --approve-modal-compute --approve-inference
+  --preflight /home/ubuntu/jev-modal-preflight-v4 \
+  --evidence /home/ubuntu/jev-modal-full-v4 \
+  --budget-usd "$MODAL_BUDGET_USD" --billing-start-date "$MODAL_BILLING_START" \
+  --approve-modal-compute --approve-inference
 ```
 
 This budget includes the preflight ledger. Both arms reuse the preflight's same
@@ -267,7 +278,8 @@ The SDK cannot request task storage capacity. Preflight records filesystem
 statistics and verifies creation plus random read/write of a 32 GiB truncated
 file, alongside the unmapped 10,240 MiB declaration. Modal's virtual filesystem
 reported placeholder-sized capacity and full-size block counts in a real probe;
-these statistics cannot prove physical free space or sparse allocation. QEMU guest boot, VNC,
+these statistics cannot prove physical free space or sparse allocation.
+QEMU guest boot, VNC,
 Valgrind/ptrace and actual task behavior remain runtime checks; version probes do
 not certify them. Subscription model access and hook activation require inference.
 Missing/corrupt evidence or unconfirmed termination prevents a completed score.

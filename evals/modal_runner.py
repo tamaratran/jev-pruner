@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import time
 import tomllib
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from harbor.models.task.config import TaskConfig
@@ -23,6 +24,7 @@ from harbor.models.trial.config import (
 )
 from harbor.models.trial.paths import TrialPaths
 from harbor.trial.trial import Trial
+from modal import Workspace
 
 from evals.auth import AUTH_OVERRIDES, subscription_source
 from evals.full import (
@@ -254,6 +256,47 @@ def load(path: Path) -> dict:
     return json.loads(path.read_text())
 
 
+async def refresh_budget(ledger: dict, start: date) -> None:
+    now = datetime.now(timezone.utc)
+    end = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+    report = await asyncio.wait_for(
+        Workspace.from_context().billing.report.aio(
+            start=datetime(start.year, start.month, start.day, tzinfo=timezone.utc),
+            end=end,
+            resolution="h",
+        ),
+        timeout=90,
+    )
+    observed = sum(float(item.cost) for item in report)
+    if not math.isfinite(observed) or observed < 0:
+        raise ValueError("Invalid provider billing observation")
+    ledger["reconciliations"].append(
+        {
+            "time": now.isoformat(),
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+            "source": "Modal Workspace.billing.report; entire workspace, before credits",
+            "observed_total_usd": observed,
+            "items": [
+                {
+                    "object_id": item.object_id,
+                    "description": item.description,
+                    "interval_start": item.interval_start.isoformat(),
+                    "cost": str(item.cost),
+                    "cost_by_resource": {
+                        key: str(value) for key, value in item.cost_by_resource.items()
+                    },
+                }
+                for item in report
+            ],
+        }
+    )
+    ledger["accounted_usd"] = max(
+        observed + ledger["held_build_reserve_usd"], ledger["accounted_usd"]
+    )
+    ledger["unreconciled_import"] = False
+
+
 async def execute(args: argparse.Namespace) -> None:
     preflight = args.command == "preflight"
     if not args.approve_modal_compute or (not preflight and not args.approve_inference):
@@ -293,6 +336,9 @@ async def execute(args: argparse.Namespace) -> None:
         "mode": args.command,
         "budget_usd": args.budget_usd,
         "build_reserve_usd": args.build_reserve_usd if preflight else 0,
+        "billing_start_date": (
+            args.billing_start_date.isoformat() if args.billing_start_date else None
+        ),
     }
     if root.exists():
         if not args.resume or load(root / "identity.json") != identity:
@@ -316,7 +362,9 @@ async def execute(args: argparse.Namespace) -> None:
                     "source": "Operator reading of attributable Modal compute usage including credits",
                 }
             )
-            ledger["accounted_usd"] = max(observed, ledger["accounted_usd"])
+            ledger["accounted_usd"] = max(
+                observed + ledger["held_build_reserve_usd"], ledger["accounted_usd"]
+            )
             ledger["unreconciled_import"] = False
             save(root / "budget.json", ledger)
     else:
@@ -342,20 +390,24 @@ async def execute(args: argparse.Namespace) -> None:
         ledger = {
             "budget_usd": args.budget_usd,
             "accounted_usd": 0.0,
+            "held_build_reserve_usd": 0.0,
             "unreconciled_import": False,
             "reconciliations": [],
             "entries": [],
             "actual_image_build_usd": None,
             "actual_subscription_billing_usd": None,
             "jev_cost_usd": None,
-            "note": "Reservations are estimates, not a billing cap. Image import/build spend is unknown until observed; SDK billing is not metered here.",
+            "note": "Estimates, not a billing cap. Provider observations may be delayed; import/build margins remain held even after reading metered usage.",
         }
         save(root / "budget.json", ledger)
     if preflight:
         images = load(root / "images.json") if (root / "images.json").exists() else {}
     else:
         previous = load(args.preflight / "identity.json")
-        if previous["plan_sha256"] != identity["plan_sha256"]:
+        if any(
+            previous[key] != identity[key]
+            for key in ("plan_sha256", "billing_start_date")
+        ):
             raise ValueError("Preflight uses another plan")
         preflight_rows = json.loads((args.preflight / "progress.json").read_text())
         if len(preflight_rows) != 89 or any(
@@ -371,6 +423,9 @@ async def execute(args: argparse.Namespace) -> None:
         if "preflight_accounted_usd" not in ledger:
             ledger["preflight_accounted_usd"] = preflight_spend
             ledger["accounted_usd"] += preflight_spend
+            ledger["held_build_reserve_usd"] += load(args.preflight / "budget.json")[
+                "held_build_reserve_usd"
+            ]
     specs = {spec["task"]: spec for spec in document["tasks"]}
 
     def persist() -> None:
@@ -385,6 +440,9 @@ async def execute(args: argparse.Namespace) -> None:
     for row in rows:
         if row["state"] == "finished":
             continue
+        if args.billing_start_date:
+            await refresh_budget(ledger, args.billing_start_date)
+            persist()
         spec = specs[row["task"]]
         reserve = budget_reservation(spec, preflight, identity["build_reserve_usd"])
         ensure_budget(ledger, reserve)
@@ -414,6 +472,8 @@ async def execute(args: argparse.Namespace) -> None:
         row.update(state="running", agent_attempts=0)
         ledger["accounted_usd"] += reserve
         ledger["unreconciled_import"] = preflight
+        if preflight:
+            ledger["held_build_reserve_usd"] += identity["build_reserve_usd"]
         ledger["entries"].append(
             {
                 "task": row["task"],
@@ -498,7 +558,7 @@ async def execute(args: argparse.Namespace) -> None:
             ledger["entries"][-1]["runtime_estimate_usd"] = estimate
         persist()
         print(f"{row['task']} {row['arm']}: {row['state']}", flush=True)
-        if preflight:
+        if preflight and not args.billing_start_date:
             print(
                 "Stopped after one image. Reconcile observed Modal usage before resuming.",
                 flush=True,
@@ -510,7 +570,13 @@ async def execute(args: argparse.Namespace) -> None:
             in {"infrastructure", "agent_setup", "instrumentation"}
             or access_blocker(read_events(location / "agent/claude-code.txt"))
         ):
+            if args.billing_start_date:
+                await refresh_budget(ledger, args.billing_start_date)
+                persist()
             return
+    if args.billing_start_date:
+        await refresh_budget(ledger, args.billing_start_date)
+        persist()
 
 
 def main() -> None:
@@ -526,6 +592,7 @@ def main() -> None:
     parser.add_argument("--approve-inference", action="store_true")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--observed-total-usd", type=float)
+    parser.add_argument("--billing-start-date", type=date.fromisoformat)
     args = parser.parse_args()
     if args.command == "plan":
         plan(args.plan.resolve(), args.benchmark_source.resolve())
