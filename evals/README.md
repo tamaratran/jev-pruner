@@ -444,6 +444,28 @@ task output or debug logs could contain credentials. Never commit transcripts,
 settings caches, or bulky reports. Keep the dependency lock, task locks/image
 digests, exact commands, and separate infra errors with the delivered artifacts.
 
+## Continuing after audited task or evidence failures
+
+Wait for every active trial to finish before creating another campaign. A new
+campaign can explicitly use `--retain-failed-attempts` to preserve terminated
+attempts with unverified evidence as errors with null rewards. It never retries
+their agents. Verified verifier rewards from agent errors are retained, while
+their incomplete Claude measurements remain flagged. Shared subscription access
+is rechecked alone before new inference; new authentication or evidence failures
+still halt scheduling and drain active work.
+
+Use `--defer-task TASK` only for an audited task-specific preflight failure.
+Its prior preflight, confirmed termination, and source campaign are retained.
+Both unattempted arms receive setup-error rows rather than model losses, and
+independent tasks can proceed. This does not change the frozen task image,
+dependencies, verifier, or production plugin.
+
+Evidence hashes and downloads use one remote snapshot to avoid comparing live
+files at different times. Role-log transfers have 90-second deadlines; sandbox
+lifetime and cost reservations include this overhead without changing task
+agent or verifier limits. Subscription refresh state is checkpointed before
+agent-log downloads and again before sandbox termination.
+
 ## Checks
 
 ```sh

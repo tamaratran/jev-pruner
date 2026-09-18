@@ -65,6 +65,8 @@ class SubscriptionCheckpoint:
         data, expires_at = credential_state(downloaded)
         if expires_at <= time.time() * 1000:
             raise ValueError("Runtime subscription state is expired")
+        if expires_at < self.expires_at:
+            raise ValueError("Controller subscription changed during trial")
         current, _ = credential_state(self.path)
         if hashlib.sha256(current).digest() != self.digest:
             raise ValueError("Controller subscription changed during trial")
@@ -79,6 +81,8 @@ class SubscriptionCheckpoint:
                 os.fsync(descriptor)
             finally:
                 os.close(descriptor)
+        self.digest = hashlib.sha256(data).digest()
+        self.expires_at = expires_at
         return {"changed": changed, "expires_at": expires_at}
 
 
