@@ -35,6 +35,8 @@ interface Summary {
   final: string;
   firstHistory: HistoryEntry[];
   compactions: number;
+  userTurns?: number;
+  confirmations?: number[];
 }
 
 interface SavedTurn {
@@ -117,7 +119,8 @@ summary{cursor:pointer;font-weight:650;padding:12px 0}.note{border-left:4px soli
 <header><div class="eyebrow">Jev pruner / live integration evidence</div><h1>${summary.passed ? `Earlier requirements survived<br>a ${summary.stages}-stage session.` : `The long session exposed<br>required output being dropped.`}</h1>
 <p><span class="badge ${summary.passed ? '' : 'failed'}">${summary.passed ? 'Assertions passed' : 'Retention checks failed'}</span></p>
 <p>One continuous Claude Code process executed a bootstrap command followed by ${summary.stages} noisy Bash commands. The production plugin used live Jev scoring throughout. ${summary.passed ? 'The final answer retained the target bundle, rollback reference, and deployment blocker.' : 'Earlier requirements reached Jev, but some required chunks scored below the 0.5 keep threshold. This run does not establish reliable retention.'}</p>
-<p class="muted">${escape(summary.models.join(', '))} · ${minutes} minutes · ${summary.stages + 1} user turns · ${number(summary.messages)} transcript messages observed</p></header>
+<p class="muted">${escape(summary.models.join(', '))} · ${minutes} minutes · ${summary.userTurns ?? summary.stages + 1} user turns · ${number(summary.messages)} transcript messages observed</p></header>
+${summary.confirmations?.length ? `<p class="note">The runner sent one direct confirmation after Claude declined stages ${summary.confirmations.join(', ')}. Each stage still required exactly one Bash call.</p>` : ''}
 ${runNotes ? `<section><h2>Run provenance</h2><pre>${escape(runNotes)}</pre></section>` : ''}
 <div class="metrics">
 <div class="metric"><strong>${reduction(summary.before, summary.after)}</strong><span>less output shown to Claude</span></div>

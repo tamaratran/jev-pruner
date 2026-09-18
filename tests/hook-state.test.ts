@@ -99,8 +99,17 @@ describe('Bash hook conversation state', () => {
 describe('Bash output archives', () => {
   it('saves complete output before scoring and appends its reference after the last retained line', async () => {
     const h = harness({ chunkLines: 1 });
-    const result = await h.run();
     const path = '.claude/fast-jev-output/bash-bash-test.txt';
+    let releaseArchive!: () => void;
+    const archiveReady = new Promise<void>((resolve) => { releaseArchive = resolve; });
+    h.write.mockImplementation(async (file) => {
+      if (file === path) await archiveReady;
+    });
+    const pending = h.run();
+    await vi.waitFor(() => expect(h.write).toHaveBeenCalledTimes(2));
+    expect(h.fetch).not.toHaveBeenCalled();
+    releaseArchive();
+    const result = await pending;
     const archiveWrites = h.write.mock.calls.filter(([file]) => file === path);
     expect(archiveWrites).toEqual([[path, `${h.original.result.stdout}\n${h.original.result.stderr}`]]);
     const archiveIndex = h.write.mock.calls.findIndex(([file]) => file === path);
@@ -116,7 +125,7 @@ describe('Bash output archives', () => {
 
   it('leaves output intact without scoring if the archive cannot be written', async () => {
     const h = harness();
-    h.write.mockRejectedValueOnce(new Error('disk full'));
+    h.write.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('disk full'));
     expect(await h.run()).toBe(h.original);
     expect(h.fetch).not.toHaveBeenCalled();
   });

@@ -228,7 +228,10 @@ test('the Bash hook fails open when live Jev rejects authentication', { timeout:
   assert.equal(statuses.length, 1);
   assert([401, 403].includes(statuses[0]!));
   assert.equal(result, original);
-  assert.equal(writes.mock.calls.length, 0);
+  assert.deepEqual(writes.mock.calls.map(call => call.arguments), [
+    ['.claude/fast-jev-output/.gitignore', '*\n'],
+    ['.claude/fast-jev-output/bash-live-auth-rejection.txt', `${original.result.stdout}\n${original.result.stderr}`],
+  ]);
   assert(logs.some((message) => message.startsWith('bash output trim skipped')));
   t.diagnostic(`Authentication rejected with HTTP ${statuses[0]}; original result preserved.`);
 });

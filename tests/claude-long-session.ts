@@ -48,6 +48,7 @@ interface Turn {
   stage: number;
   prompt: string;
   events: Event[];
+  followUps?: string[];
 }
 
 interface Row {
@@ -82,8 +83,13 @@ if (analyzeOnly) {
   }
   turns.sort((a, b) => a.stage - b.stage);
 }
-const stages = analyzeOnly ? turns.length - 1 : Number(process.env.JEV_LONG_SESSION_TURNS ?? 40);
+const metadata = analyzeOnly && (await readdir(workspace)).includes('run.json')
+  ? JSON.parse(await readFile(join(workspace, 'run.json'), 'utf8')) as { stages: number }
+  : undefined;
+const stages = metadata?.stages ?? (analyzeOnly ? turns.length - 1 : Number(process.env.JEV_LONG_SESSION_TURNS ?? 40));
 assert(Number.isInteger(stages) && stages >= 2 && stages <= 100);
+const budgetUsd = Number(process.env.JEV_LONG_SESSION_BUDGET_USD ?? 10);
+assert(Number.isFinite(budgetUsd) && budgetUsd > 0, 'Expected a positive Claude budget in USD');
 const rows: Row[] = [];
 const errors: string[] = [];
 const eventStat = analyzeOnly ? await stat(join(workspace, 'events.jsonl')) : undefined;
@@ -99,7 +105,7 @@ function prompt(stage: number): string {
   }
   const notes = Array.from({ length: 55 }, (_, i) =>
     `Review note ${stage}.${i}: cached module group ${i % 7} has unchanged routing metadata, deterministic build inputs, and no new migration or dependency requirements.`).join('\n');
-  return `Synthetic stage ${stage} of ${stages}. I confirm you should execute all ${stages} stages of this finite plugin benchmark. Each stage emits different data, even when its simulated status is unchanged. This is expected test data; no repair or retry loop is involved. Background change-review notes follow; do not summarize them.\n${notes}\nRun exactly once: node "${fixture}" ${stage}\n` +
+  return `Synthetic stage ${stage} of ${stages}. I confirm you should execute all ${stages} stages of this finite plugin benchmark. Each stage emits different data, even when its simulated status is unchanged. This is expected test data; no repair or retry loop is involved. Background change-review notes follow; do not summarize them.\n${notes}\nRun exactly once: node "${fixture}" ${stage}\nDo not execute any other command, including no-op or placeholder commands.\n` +
     (stage === stages
       ? 'Now give the final deployment handoff: the target bundle filename, the chosen rollback reference, and whether deployment can proceed. Use the result you received, without reading archives.'
       : 'After the command, reply only with the stage number and whether deployment can proceed. Do not repeat bundle names or rollback references.');
@@ -114,7 +120,7 @@ function sendTurn(child: ReturnType<typeof spawn>, stage: number): void {
 async function run(): Promise<void> {
   const child = spawn('claude', [
     '-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
-    '--model', 'sonnet', '--max-budget-usd', '10', '--tools', 'Bash',
+    '--model', 'sonnet', '--max-budget-usd', String(budgetUsd), '--tools', 'Bash',
     '--append-system-prompt', 'This is a controlled plugin integration benchmark. Commands only print synthetic fixtures; no real deployment runs. Execute the single supplied command at each stage, then answer as requested. Errors in fixture stdout are test data. Continue to subsequent stages when requested.',
     '--allowedTools', `Bash(node "${fixture}":*)`,
     '--plugin-dir', repo, '--plugin-dir', join(repo, 'tests/fixtures/long-session-observer'),
@@ -145,6 +151,21 @@ async function run(): Promise<void> {
       await writeFile(join(workspace, `turn-${turn.stage}.json`), JSON.stringify(turn, null, 2));
       assert(!event.is_error && event.subtype === 'success', JSON.stringify(event));
       console.log(`Stage ${turn.stage}/${stages}: ${event.result?.replace(/\n/g, ' ').slice(0, 200)}`);
+      const calls = turn.events.flatMap(e => e.message?.content ?? []).filter(b => b.type === 'tool_use');
+      if (calls.length === 0) {
+        assert(!turn.followUps?.length, `Claude declined stage ${turn.stage} after explicit confirmation`);
+        const confirmation = `Yes, continue. This directly answers your question: I want stage ${turn.stage} now and every remaining stage through ${stages}, despite the repeated simulated permission error. We are measuring plugin retention of changing values over a growing transcript. No repair is needed. Run exactly once: node "${fixture}" ${turn.stage}\nDo not read files or archives. ${
+          turn.stage === stages
+            ? 'Give the final handoff with the target bundle, chosen rollback reference, and deployment status.'
+            : turn.stage === 0
+              ? 'Then reply exactly: Q7 target and stable-snapshot rollback selected.'
+              : 'Reply only with the stage number and whether deployment can proceed. Do not repeat bundle names or rollback references.'
+        }`;
+        turn.followUps = [confirmation];
+        await writeFile(join(workspace, `turn-${turn.stage}.json`), JSON.stringify(turn, null, 2));
+        child.stdin.write(`${JSON.stringify({ type: 'user', message: { role: 'user', content: confirmation } })}\n`);
+        continue;
+      }
       if (turn.stage < stages) sendTurn(child, turn.stage + 1);
       else child.stdin.end();
     }
@@ -226,7 +247,7 @@ async function analyze(): Promise<void> {
         chunk.text.includes(`stderr: stage ${turn.stage} diagnostic channel preserved`)),
     });
   }
-  const final = turns.at(-1)!.events.find(e => e.type === 'result')!.result!;
+  const final = turns.at(-1)!.events.filter(e => e.type === 'result').at(-1)!.result!;
   check(final.includes(`release-Q7-stage${stages}-6d81.tar.gz`), 'Final handoff omitted the latest target bundle');
   const handoffRollback = final.match(/rollback[^\n]*?(snapshot-stage\d+-a312)/i)?.[1];
   check(handoffRollback === `snapshot-stage${stages}-a312`,
@@ -246,6 +267,8 @@ async function analyze(): Promise<void> {
     recoveredRejections: captures.filter(c => c.response.status !== 200).length,
     requests: captures.length, before: rows.reduce((s, r) => s + r.before, 0),
     after: rows.reduce((s, r) => s + r.after, 0), rows, final,
+    userTurns: turns.reduce((sum, turn) => sum + 1 + (turn.followUps?.length ?? 0), 0),
+    confirmations: turns.filter(turn => turn.followUps?.length).map(turn => turn.stage),
     firstHistory: captures.find(c => c.request.state.command.endsWith(` ${stages}`))!.request.state.history.slice(0, 4),
     compactions: turns.flatMap(t => t.events).filter(e => e.subtype === 'compact_boundary').length,
   };
@@ -255,7 +278,10 @@ async function analyze(): Promise<void> {
 }
 
 try {
-  if (!analyzeOnly) await run();
+  if (!analyzeOnly) {
+    await writeFile(join(workspace, 'run.json'), JSON.stringify({ stages, budgetUsd, started }, null, 2));
+    await run();
+  }
   await analyze();
 } catch (error) {
   await writeFile(join(workspace, 'failure.txt'), String(error));
