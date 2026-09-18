@@ -207,10 +207,50 @@ def summarize_trial(path: Path) -> dict:
     }
 
 
+def summarize_smoke(path: Path, arm: str) -> dict:
+    row = summarize_agent(path, arm, stream="events.jsonl")
+    if row["model"] != "claude-sonnet-5":
+        row["measurement_issues"].append("Smoke model does not match pin")
+    if row["bash_calls_observed"] != 1:
+        row["measurement_issues"].append("Smoke must execute exactly one Bash call")
+    if arm == "plugin" and not (
+        row["jev_responses"] > 0
+        and all(status == 200 for status in row["jev_http_statuses"])
+        and row["pruned_results_in_transcript"] > 0
+        and row["net_chars_saved"] > 0
+    ):
+        row["measurement_issues"].append("Smoke did not prove real Jev trimming")
+    auth_path = path / "auth-status.json"
+    row["auth_status"] = (
+        json.loads(auth_path.read_text()) if auth_path.exists() else None
+    )
+    return row
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("evidence", type=Path)
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--smoke-arm", choices=("control", "plugin"))
+    mode.add_argument("--job", action="store_true")
     args = parser.parse_args()
+    if args.smoke_arm:
+        row = summarize_smoke(args.evidence, args.smoke_arm)
+        (args.evidence / "summary.json").write_text(json.dumps(row, indent=2) + "\n")
+        if row["measurement_issues"]:
+            raise SystemExit("; ".join(row["measurement_issues"]))
+        print(f"{args.smoke_arm} activation smoke passed")
+        return
+    if args.job:
+        paths = list(args.evidence.glob("*/result.json"))
+        if len(paths) != 1:
+            raise SystemExit("Expected one completed trial; stopping pilot")
+        row = summarize_trial(paths[0])
+        if row["exception"] or row["measurement_issues"] or row["reward"] is None:
+            raise SystemExit(
+                "Failed or invalid trial; stopping pilot, inspect evidence"
+            )
+        return
     paths = sorted((args.evidence / "jobs").glob("pilot-*/*/result.json"))
     rows = [summarize_trial(path) for path in paths]
     paired = []
