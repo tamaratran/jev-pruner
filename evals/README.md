@@ -160,7 +160,9 @@ Harbor retries. It refuses reused run directories and checks source hashes befor
 each trial. Results checkpoint after every trial, preserving missing rewards and
 unstarted tasks. Subscription/account/model errors and instrumentation/Jev failures
 pause further execution and create `blocker.json`; ordinary task failures remain
-in the results. A paused run must be inspected before any separate continuation.
+in the results. Any environment or agent setup failure also pauses the run before
+the next trial; setup failures are classified using Harbor's recorded execution
+phase. A paused run must be inspected before any separate continuation.
 The launcher stops before another trial when less than 20 GiB disk is free.
 CLI-native request retries, if any, are not additional Harbor trial attempts.
 

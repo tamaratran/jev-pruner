@@ -199,6 +199,19 @@ def summarize_trial(path: Path) -> dict:
         "task_checksum": trial["task_checksum"],
         "reward": (trial.get("verifier_result") or {}).get("rewards", {}).get("reward"),
         "exception": exception,
+        "exception_phase": next(
+            (
+                phase
+                for phase in (
+                    "verifier",
+                    "agent_execution",
+                    "agent_setup",
+                    "environment_setup",
+                )
+                if exception and trial.get(phase)
+            ),
+            None,
+        ),
         "wall_seconds": elapsed(trial),
         "agent_seconds": elapsed(trial.get("agent_execution") or {}),
         "verifier_seconds": elapsed(trial.get("verifier") or {}),
