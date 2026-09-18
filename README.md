@@ -130,6 +130,9 @@ simulated failures. If a stage contains no tool call, the runner sends one
 direct confirmation in the same session; a second refusal stops the run.
 Confirmations are saved in the evidence and counted as additional user turns.
 The one-command-per-stage and retention assertions still apply.
+Set `JEV_LONG_SESSION_BUDGET_USD` to override the Claude cap for longer runs,
+for example `JEV_LONG_SESSION_TURNS=100 JEV_LONG_SESSION_BUDGET_USD=25 npm run test:long-session`.
+The selected cap and stage count are saved with the evidence; the cap excludes Jev charges.
 
 The test checks early requirements, result-body omission from tool metadata,
 target bundle and rollback retention, archives, stderr, history fitting, and

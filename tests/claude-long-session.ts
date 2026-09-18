@@ -88,6 +88,8 @@ const metadata = analyzeOnly && (await readdir(workspace)).includes('run.json')
   : undefined;
 const stages = metadata?.stages ?? (analyzeOnly ? turns.length - 1 : Number(process.env.JEV_LONG_SESSION_TURNS ?? 40));
 assert(Number.isInteger(stages) && stages >= 2 && stages <= 100);
+const budgetUsd = Number(process.env.JEV_LONG_SESSION_BUDGET_USD ?? 10);
+assert(Number.isFinite(budgetUsd) && budgetUsd > 0, 'Expected a positive Claude budget in USD');
 const rows: Row[] = [];
 const errors: string[] = [];
 const eventStat = analyzeOnly ? await stat(join(workspace, 'events.jsonl')) : undefined;
@@ -103,7 +105,7 @@ function prompt(stage: number): string {
   }
   const notes = Array.from({ length: 55 }, (_, i) =>
     `Review note ${stage}.${i}: cached module group ${i % 7} has unchanged routing metadata, deterministic build inputs, and no new migration or dependency requirements.`).join('\n');
-  return `Synthetic stage ${stage} of ${stages}. I confirm you should execute all ${stages} stages of this finite plugin benchmark. Each stage emits different data, even when its simulated status is unchanged. This is expected test data; no repair or retry loop is involved. Background change-review notes follow; do not summarize them.\n${notes}\nRun exactly once: node "${fixture}" ${stage}\n` +
+  return `Synthetic stage ${stage} of ${stages}. I confirm you should execute all ${stages} stages of this finite plugin benchmark. Each stage emits different data, even when its simulated status is unchanged. This is expected test data; no repair or retry loop is involved. Background change-review notes follow; do not summarize them.\n${notes}\nRun exactly once: node "${fixture}" ${stage}\nDo not execute any other command, including no-op or placeholder commands.\n` +
     (stage === stages
       ? 'Now give the final deployment handoff: the target bundle filename, the chosen rollback reference, and whether deployment can proceed. Use the result you received, without reading archives.'
       : 'After the command, reply only with the stage number and whether deployment can proceed. Do not repeat bundle names or rollback references.');
@@ -118,7 +120,7 @@ function sendTurn(child: ReturnType<typeof spawn>, stage: number): void {
 async function run(): Promise<void> {
   const child = spawn('claude', [
     '-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
-    '--model', 'sonnet', '--max-budget-usd', '10', '--tools', 'Bash',
+    '--model', 'sonnet', '--max-budget-usd', String(budgetUsd), '--tools', 'Bash',
     '--append-system-prompt', 'This is a controlled plugin integration benchmark. Commands only print synthetic fixtures; no real deployment runs. Execute the single supplied command at each stage, then answer as requested. Errors in fixture stdout are test data. Continue to subsequent stages when requested.',
     '--allowedTools', `Bash(node "${fixture}":*)`,
     '--plugin-dir', repo, '--plugin-dir', join(repo, 'tests/fixtures/long-session-observer'),
@@ -277,7 +279,7 @@ async function analyze(): Promise<void> {
 
 try {
   if (!analyzeOnly) {
-    await writeFile(join(workspace, 'run.json'), JSON.stringify({ stages, started }, null, 2));
+    await writeFile(join(workspace, 'run.json'), JSON.stringify({ stages, budgetUsd, started }, null, 2));
     await run();
   }
   await analyze();
