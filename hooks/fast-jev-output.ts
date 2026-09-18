@@ -8,6 +8,9 @@ import type {
 import { DEFAULT_MODEL, buildJevRequest, parseJevResponse } from '../src/jev.js';
 import { exceedsOutputThreshold, MIN_OUTPUT_TOKENS, trimOutput } from '../src/output.js';
 import type { JevAsker } from '../src/jev.js';
+import { looksSecret } from '../src/secrets.js';
+
+export { looksSecret } from '../src/secrets.js';
 
 const ARCHIVE_DIR = '.claude/fast-jev-output';
 const DEFAULTS = {
@@ -122,15 +125,6 @@ export async function getApiKey(
     if (typeof value === 'string' && value) return value;
   }
   return undefined;
-}
-
-const SECRET_COMMAND =
-  /(^|[|;&]\s*)(printenv|env)\b|\.env\b|\b(secret|secrets|credential|credentials|password|token|keychain|netrc|id_rsa|private[_-]?key)\b/i;
-const SECRET_OUTPUT =
-  /-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(aws_secret_access_key|api[_-]?key|access[_-]?token|client[_-]?secret|password)\s*[=:]\s*\S|:\/\/[^\s:@/]+:[^\s:@/]+@/i;
-
-export function looksSecret(command: string, output: string): boolean {
-  return SECRET_COMMAND.test(command) || SECRET_OUTPUT.test(output);
 }
 
 export const register: Register = (on: On, options: PluginOptions) => {

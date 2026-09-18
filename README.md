@@ -93,7 +93,65 @@ safeguard applies. This is a heuristic, not a shell parser. All categories keep
 the strict **over 10,000 estimated tokens** gate. Category guidance counts toward
 the state budget in every history segment and output batch.
 
-## Install
+## Codex
+
+Codex CLI 0.152.1 does not support replacing native shell output from
+`PostToolUse`. The Codex integration is an **opt-in command wrapper and skill**,
+not automatic interception. Its `PreToolUse` hook only records a transcript
+pointer; it never rewrites commands or returns an approval decision.
+
+Build a local checkout before installing it (Node.js 18+):
+
+```sh
+git clone https://github.com/tamaratran/jev-pruner.git
+cd jev-pruner
+npm ci
+npm run build
+codex plugin marketplace add "$PWD"
+codex plugin add jev-pruner@jev-pruner-codex
+```
+
+In Codex, review and trust this plugin's hook using `/hooks`, then invoke the
+`jev-pruner` skill. Supply `TYPESAFE_API_KEY` through your existing environment
+configuration; it must be available to the shell command. The wrapper needs
+network access to `https://api.typesafe.ai/v1/systemone`. It does not change
+Codex's sandbox, environment filtering, network policy, or approval settings.
+When those settings prevent access, stdout passes through unchanged.
+Build before installing: Git-only installation does not compile TypeScript.
+
+The skill runs non-interactive commands through the native Codex shell, using:
+
+```sh
+node "<installed-plugin-root>/dist/codex/run.js" -- npm test
+```
+
+The executable and arguments after `--` are passed directly, preserving cwd,
+environment, stdin, stderr, and exit status. Explicitly select a shell for a
+shell program (`-- bash -c 'command1 && command2'`). Interactive commands, live
+progress streams, servers, and machine-readable nested tool calls should use
+the ordinary shell. Stdout is buffered until command completion; above 8 MiB,
+the wrapper switches to unchanged streaming to bound memory use. Nonzero exits,
+invalid UTF-8, and credential-like commands/output pass through without scoring.
+
+The strict over-10,000-token gate, categories, complete-history partitioning,
+verbatim retention, and incomplete-scoring safeguards reuse the same pruning
+engine as Claude. The host transcript pointer is stored under
+`~/.cache/jev-pruner/codex/<session-id>.json`. `CODEX_THREAD_ID` selects the
+current session; the rollout's session ID must match. The adapter reads recorded
+user/assistant messages and full tool inputs/results, including custom tools.
+It does not load reasoning items or system/developer prompts. Earlier originals
+that Codex already truncated or compacted are not reconstructed.
+Unavailable, malformed, or mismatched history disables pruning.
+
+Before scoring, original stdout is archived in the command workdir's
+`.jev-pruner/` directory with private file permissions and a local `.gitignore`.
+Stderr remains unchanged on its original stream. Successful pruning ends with
+the archive recovery footer. Archives and transcript pointers persist until
+manually removed. API requests time out after 30 seconds and failures preserve
+stdout. Jev receives the recorded conversation and tool results; secret detection
+is a heuristic for the current command/output, not transcript redaction.
+
+## Claude Code install
 
 The project is named **jev-pruner**, but its current Claude Code plugin and
 marketplace identifiers are still `fast-jev-output`. Use those identifiers in

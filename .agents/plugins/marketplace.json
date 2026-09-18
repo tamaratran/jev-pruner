@@ -1,0 +1,12 @@
+{
+  "name": "jev-pruner-codex",
+  "plugins": [
+    {
+      "name": "jev-pruner",
+      "source": {
+        "source": "local",
+        "path": "."
+      }
+    }
+  ]
+}
