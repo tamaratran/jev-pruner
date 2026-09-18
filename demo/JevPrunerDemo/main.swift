@@ -7,7 +7,7 @@ import SwiftUI
 enum Style {
     static let width = 1100.0
     static let height = 720.0
-    static let frameCount = Int(ceil((Timing.done + 1.7) * 30))
+    static let frameCount = Int(ceil((Timing.done + 1.25) * 30))
     static let duration = Double(frameCount) / 30
     static let background = Color(red: 0.055, green: 0.055, blue: 0.07)
     static let panel = Color(red: 0.09, green: 0.09, blue: 0.11)
@@ -47,13 +47,14 @@ struct InstallRecording: Decodable {
 }
 
 enum Timing {
-    static let installStart = 0.6
-    static let installEnd = installStart + InstallExample.recording.duration
-    static let scanStart = installEnd + 0.3
-    static let scanEnd = scanStart + 1.5
-    static let pruneStart = scanEnd + 0.2
-    static let pruneEnd = pruneStart + 0.9
-    static let done = pruneEnd + 0.2
+    static let maximumOutputGap = 0.35
+    static let installStart = 0.25
+    static let installEnd = installStart + InstallExample.playbackTime(InstallExample.recording.duration)
+    static let scanStart = installEnd + 0.1
+    static let scanEnd = scanStart + 1.2
+    static let pruneStart = scanEnd + 0.05
+    static let pruneEnd = pruneStart + 0.75
+    static let done = pruneEnd + 0.15
 }
 
 enum InstallExample {
@@ -67,18 +68,32 @@ enum InstallExample {
     }()
     static let log = recording.events.map(\.text).joined(separator: "\n")
     static let marker = "[trimmed output; full log: .claude/fast-jev-output/bash-<id>.txt]"
-    static let rows: [OutputRow] = {
+    static let previewEvents: [InstallEvent] = {
         let events = recording.events
-        let samples = Array(events.prefix(1))
+        return Array(events.prefix(1))
             + Array(events.filter { $0.text.hasPrefix("npm http fetch GET") }.prefix(9))
             + events.filter { $0.text.hasPrefix("added ") || $0.text.hasPrefix("found ") || $0.text == "npm info ok" }
-        return samples.enumerated().map { index, event in
+    }()
+    static let playbackEvents = recording.events.map {
+        InstallEvent(time: playbackTime($0.time), text: $0.text)
+    }
+    static let rows: [OutputRow] = {
+        return previewEvents.enumerated().map { index, event in
             let keep = !event.text.hasPrefix("npm http")
-            return OutputRow(id: index, text: event.text, appearedAt: event.time, keep: keep, reason: keep ? "KEEP" : "DROP")
+            return OutputRow(id: index, text: event.text, appearedAt: playbackTime(event.time), keep: keep, reason: keep ? "KEEP" : "DROP")
         }
     }()
     static let compactText = rows.filter(\.keep).map(\.text).joined(separator: "\n") + "\n" + marker
     static func tokens(_ text: String) -> Int { Int(ceil(Double(text.count) / 4)) }
+
+    static func playbackTime(_ time: Double) -> Double {
+        let checkpoints = [0] + previewEvents.map(\.time) + [recording.duration]
+        return zip(checkpoints, checkpoints.dropFirst()).reduce(time) { result, interval in
+            let removed = interval.1 - interval.0 - Timing.maximumOutputGap
+            guard removed > 0 else { return result }
+            return result - removed * progress(time, from: interval.0, to: interval.1)
+        }
+    }
 }
 
 struct DemoFrame: View {
@@ -87,7 +102,7 @@ struct DemoFrame: View {
     private var collapse: Double { ease(progress(time, from: Timing.pruneStart, to: Timing.pruneEnd)) }
     private var done: Bool { time >= Timing.done }
     private var tokens: Int {
-        let received = InstallExample.recording.events
+        let received = InstallExample.playbackEvents
             .prefix { $0.time <= time - Timing.installStart }
             .map(\.text).joined(separator: "\n")
         let before = InstallExample.tokens(received)
@@ -267,7 +282,7 @@ struct DemoFrame: View {
                 .font(Style.mono(12)).foregroundStyle(done ? Style.green : Style.cyan)
             }
             HStack {
-                Text("Recorded install · illustrative pruning · estimated tokens")
+                Text("Recorded output · shortened pauses · illustrative pruning · estimated tokens")
                 Spacer()
                 Text("Space to replay")
             }
