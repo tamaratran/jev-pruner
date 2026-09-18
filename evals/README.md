@@ -155,6 +155,21 @@ by task before starting, and store the complete protocol/provenance with it.
 Use the same subscription environment described above and a committed checkout.
 The optional `--harbor` argument selects the pinned virtual environment's CLI.
 
+For Modal sandboxes, install `modal==1.5.1 dockerfile-parse==2.0.1` in the Harbor
+virtual environment and authenticate with `modal token new`. Pass
+`--environment modal` to the full runner. Task CPU and memory declarations remain
+unchanged; audit the selected Modal workspace's capacity before clearing local
+`resource_blocked` flags in a new manifest. Modal compute is billed separately.
+The runner pins Modal's image builder to `2025.06` for this process, preserving
+upstream image working directories and avoiding legacy Python injection.
+
+Remote subscription setup uploads only `.credentials.json` and optional
+`.claude.json` through Harbor's sandbox file-transfer interface into a private
+directory outside logs. It does not create a Modal Secret, Volume, or credential
+image. The private runtime copy and source staging files disappear on sandbox
+teardown. Docker keeps its read-only bind mount. Modal's agent logs are downloaded
+at trial boundaries, so account-error inspection may occur after a trial ends.
+
 The launcher runs serially with the pilot's model, version, limits, and zero
 Harbor retries. It refuses reused run directories and checks source hashes before
 each trial. Results checkpoint after every trial, preserving missing rewards and

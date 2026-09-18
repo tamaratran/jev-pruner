@@ -13,6 +13,50 @@ from evals.harbor_agent import JevClaudeCode
 
 
 class SubscriptionSetupTests(unittest.IsolatedAsyncioTestCase):
+    async def test_remote_upload_only_stages_auth_files_outside_logs(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "login"
+            source.mkdir()
+            for name in (".credentials.json", ".claude.json", "unrelated-secret"):
+                (source / name).write_text("fixture")
+            logs = root / "logs"
+            logs.mkdir()
+            remote = create_autospec(BaseEnvironment, instance=True)
+            remote.exec.return_value = ExecResult(return_code=0)
+            with patch(
+                "evals.harbor_agent.subscription_mounts",
+                return_value=[{"source": str(source)}],
+            ):
+                agent = JevClaudeCode(logs_dir=logs, version="2.1.274")
+                await agent.upload_subscription(remote)
+            self.assertEqual(remote.upload_file.await_count, 2)
+            for name in (".credentials.json", ".claude.json"):
+                remote.upload_file.assert_any_await(
+                    source / name, f"/opt/jev-eval/login/{name}"
+                )
+            self.assertEqual(list(logs.rglob("*")), [])
+            remote.exec.assert_awaited_with(
+                command="chmod 400 /opt/jev-eval/login/.*json && chmod 500 /opt/jev-eval/login"
+            )
+
+    async def test_remote_upload_fails_before_copy_if_private_directory_fails(
+        self,
+    ) -> None:
+        remote = create_autospec(BaseEnvironment, instance=True)
+        remote.exec.return_value = ExecResult(return_code=1)
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch(
+                "evals.harbor_agent.subscription_mounts",
+                return_value=[{"source": directory}],
+            ),
+        ):
+            agent = JevClaudeCode(logs_dir=Path(directory), version="2.1.274")
+            with self.assertRaisesRegex(RuntimeError, "private remote"):
+                await agent.upload_subscription(remote)
+        remote.upload_file.assert_not_awaited()
+
     async def test_installer_can_create_config_without_breaking_private_setup(
         self,
     ) -> None:
