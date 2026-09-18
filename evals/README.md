@@ -52,6 +52,14 @@ in the evaluation protocol before resuming. Never repeat completed inference.
 
 ## Activation smoke
 
+To evaluate another revision without changing the harness, set
+`JEV_EVAL_PLUGIN_DIR` to an absolute, clean Git checkout of that revision.
+The smoke and Harbor adapter load `.claude-plugin`, `hooks`, and `src` from
+that checkout; the observer and orchestration remain in this repository.
+The full runner hashes the selected production files, records both commits,
+and rejects a resume with different production hashes. Keep both checkouts
+unchanged while running.
+
 Build a separate Docker image with Claude Code 2.1.274 installed from npm,
 record its base digest, set `SMOKE_IMAGE` to that image, and run
 `bash evals/smoke.sh` with a **new** `EVIDENCE_DIR`. Both arms execute the same

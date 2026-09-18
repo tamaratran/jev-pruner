@@ -15,6 +15,7 @@ from typing import Protocol
 import tomllib
 
 from evals.auth import AUTH_OVERRIDES, subscription_mounts
+from evals.sources import PRODUCTION, production_provenance, production_root
 from evals.summarize import read_events, summarize_trial
 
 REPO = Path(__file__).resolve().parents[1]
@@ -64,14 +65,21 @@ def save(path: Path, value: object) -> None:
 
 
 def source_hashes() -> dict[str, str]:
-    names = subprocess.check_output(
-        ["git", "ls-files", "evals", ".claude-plugin", "hooks", "src"],
-        cwd=REPO,
-        text=True,
-    ).splitlines()
-    return {
-        name: hashlib.sha256((REPO / name).read_bytes()).hexdigest() for name in names
-    }
+    hashes = {}
+    for root, directories in (
+        (REPO, ("evals",)),
+        (production_root(REPO), PRODUCTION),
+    ):
+        names = subprocess.check_output(
+            ["git", "ls-files", *directories], cwd=root, text=True
+        ).splitlines()
+        hashes.update(
+            {
+                name: hashlib.sha256((root / name).read_bytes()).hexdigest()
+                for name in names
+            }
+        )
+    return hashes
 
 
 def access_blocker(events: list[dict]) -> str | None:
@@ -403,6 +411,7 @@ def run(
         raise ValueError("No checkpoint to resume")
     if subprocess.check_output(["git", "status", "--porcelain"], cwd=REPO):
         raise ValueError("Commit sources before execution")
+    production = production_provenance(REPO)
     if subprocess.check_output([harbor, "--version"], text=True).strip() != "0.22.0":
         raise ValueError("Harbor 0.22.0 required")
     os.environ["EVIDENCE_DIR"] = str(root)
@@ -438,6 +447,7 @@ def run(
         ]
     )
     provenance = {
+        **production,
         "started_at": datetime.now(UTC).isoformat(),
         "commit": subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=REPO, text=True
