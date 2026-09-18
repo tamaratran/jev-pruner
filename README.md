@@ -113,6 +113,26 @@ question batching, digit-heavy state fitting, and the hook's behavior when Jev
 rejects authentication. It runs separately from `npm test` and does not exercise
 the Claude Code host itself.
 
+### Long Claude Code session
+
+With an authenticated Claude CLI and `TYPESAFE_API_KEY` in the environment, run
+`npm run test:long-session`. This starts one continuous Claude process, loads the
+production plugin plus a test-only observer, and runs a bootstrap followed by
+40 noisy Bash commands against synthetic fixtures. Both Claude and Jev incur
+API usage; the Claude process has a $10 budget.
+
+The test checks early requirements, result-body omission from tool metadata,
+target bundle and rollback retention, archives, stderr, history fitting, and
+the final answer. Conversation text that quotes tool output is preserved.
+Raw events and header-free Jev request/response captures are saved under
+`~/jev-long-sessions/`. The path is printed when the run starts.
+
+Run `npm run report:long-session -- <evidence-directory>` to generate a
+self-contained HTML evidence report. For a quick harness smoke check,
+set `JEV_LONG_SESSION_TURNS=2`; history-fitting coverage requires at least 40.
+Use `JEV_LONG_SESSION_DIR` to choose a different persistent output directory.
+The long test is separate from the offline suite and `test:live`.
+
 Related: [fast-jev-compaction](https://github.com/tamaratran/fast-jev-compaction)
 (same author) applies Jev to session compaction; the two are independent and
 can be installed together.
