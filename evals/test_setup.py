@@ -1,3 +1,5 @@
+import hashlib
+import json
 import os
 import stat
 import subprocess
@@ -13,6 +15,63 @@ from evals.harbor_agent import JevClaudeCode
 
 
 class SubscriptionSetupTests(unittest.IsolatedAsyncioTestCase):
+    async def test_cache_is_only_seeded_for_matching_distribution_and_valid_hash(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            package = root / "fixture_1_amd64.deb"
+            package.write_bytes(b"package fixture")
+            manifest = {
+                "distribution": "debian",
+                "codename": "bullseye",
+                "packages": [
+                    {
+                        "filename": package.name,
+                        "sha256": hashlib.sha256(package.read_bytes()).hexdigest(),
+                    }
+                ],
+            }
+            (root / "manifest.json").write_text(json.dumps(manifest))
+            logs = root / "logs"
+            logs.mkdir()
+            remote = create_autospec(BaseEnvironment, instance=True)
+            agent = JevClaudeCode(logs_dir=logs, version="2.1.274")
+            with patch.dict(os.environ, {"JEV_EVAL_APT_CACHE_DIR": str(root)}):
+                remote.exec.return_value = ExecResult(return_code=1)
+                await agent.seed_apt_cache(remote)
+                remote.upload_file.assert_not_awaited()
+                remote.exec.return_value = ExecResult(return_code=0)
+                package.write_bytes(b"corrupted")
+                with self.assertRaisesRegex(ValueError, "checksum"):
+                    await agent.seed_apt_cache(remote)
+                remote.upload_file.assert_not_awaited()
+                package.write_bytes(b"package fixture")
+                await agent.seed_apt_cache(remote)
+                remote.upload_file.assert_awaited_once_with(
+                    package, f"/var/cache/apt/archives/{package.name}"
+                )
+                self.assertEqual(
+                    json.loads((logs / "apt-cache-manifest.json").read_text()), manifest
+                )
+
+    async def test_cache_rejects_paths_outside_the_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = {
+                "distribution": "debian",
+                "codename": "bullseye",
+                "packages": [{"filename": "../private.deb", "sha256": "unused"}],
+            }
+            (root / "manifest.json").write_text(json.dumps(manifest))
+            remote = create_autospec(BaseEnvironment, instance=True)
+            remote.exec.return_value = ExecResult(return_code=0)
+            agent = JevClaudeCode(logs_dir=root, version="2.1.274")
+            with patch.dict(os.environ, {"JEV_EVAL_APT_CACHE_DIR": str(root)}):
+                with self.assertRaisesRegex(ValueError, "filename"):
+                    await agent.seed_apt_cache(remote)
+            remote.upload_file.assert_not_awaited()
+
     async def test_remote_upload_only_stages_auth_files_outside_logs(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -1,5 +1,6 @@
 """Harbor 0.22.0 Claude Code adapter; task prompts and verifiers stay upstream."""
 
+import hashlib
 import json
 import os
 import shlex
@@ -49,6 +50,7 @@ class JevClaudeCode(ClaudeCode):
                 raise RuntimeError(
                     "Could not prepare private subscription configuration"
                 )
+        await self.seed_apt_cache(environment)
         await super().setup(environment)
         version = await self.exec_as_agent(
             environment, command=self.get_version_command() or "false"
@@ -78,6 +80,38 @@ class JevClaudeCode(ClaudeCode):
                 },
                 indent=2,
             )
+        )
+
+    async def seed_apt_cache(self, environment: BaseEnvironment) -> None:
+        directory = os.environ.get("JEV_EVAL_APT_CACHE_DIR")
+        if not directory:
+            return
+        source = Path(directory)
+        manifest = json.loads((source / "manifest.json").read_text())
+        distribution = f"{manifest['distribution']}:{manifest['codename']}"
+        matches = await environment.exec(
+            command=(
+                ". /etc/os-release && "
+                f'test "$ID:$VERSION_CODENAME" = {shlex.quote(distribution)} && '
+                "test -d /var/cache/apt/archives"
+            ),
+            user="root",
+        )
+        if matches.return_code != 0:
+            return
+        for package in manifest["packages"]:
+            name = package["filename"]
+            if Path(name).name != name or not name.endswith(".deb"):
+                raise ValueError("Invalid cached package filename")
+            path = source / name
+            if (
+                path.is_symlink()
+                or hashlib.sha256(path.read_bytes()).hexdigest() != package["sha256"]
+            ):
+                raise ValueError("Cached package checksum mismatch")
+            await environment.upload_file(path, f"/var/cache/apt/archives/{name}")
+        (self.logs_dir / "apt-cache-manifest.json").write_text(
+            json.dumps(manifest, indent=2)
         )
 
     async def upload_subscription(self, environment: BaseEnvironment) -> None:

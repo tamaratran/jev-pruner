@@ -34,6 +34,20 @@ Ordering alternates between arms. Do not replace tasks after observing results.
 The six runs are an integration pilot, not a full benchmark or significance test.
 Full Terminal-Bench 2.0 has 89 tasks, hence 178 trials for a single paired run.
 
+### Missing Debian mirror packages
+
+An optional `JEV_EVAL_APT_CACHE_DIR` can supply archived `.deb` files when a
+task image's live mirror no longer serves versions listed in its signed indexes.
+Its `manifest.json` contains `distribution`, `codename`, and a `packages` array
+of `filename`/`sha256` entries. Obtain checksums from APT's authenticated package
+metadata and retrieve the exact package versions from an official archive.
+
+The adapter verifies each local checksum, seeds only matching distributions, and
+records the manifest in agent evidence. Harbor's normal dependency installation
+still selects and verifies packages using APT; repository signatures and package
+validation remain enabled. Record the cache manifest and setup change in the
+evaluation protocol before resuming. Never repeat completed inference.
+
 ## Activation smoke
 
 Build a separate Docker image with Claude Code 2.1.274 installed from npm,
