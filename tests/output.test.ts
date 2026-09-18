@@ -299,3 +299,53 @@ describe('budget for engine-saved output', () => {
     expect(r.trimmed).toBe(false);
   });
 });
+
+describe('line-level second pass', () => {
+  const withNeedle = (n: number, at: number) =>
+    Array.from({ length: n }, (_, i) => (i === at ? 'ERROR worker-4 KeyError discount order=ORD-77341' : `INFO request ${i} ok`)).join('\n');
+  const counting = (score: number, calls: { n: number }) => ({
+    ask: async (_state: unknown, questions: Record<string, unknown>) => {
+      calls.n += 1;
+      return { answers: Object.fromEntries(Object.keys(questions).map((id) => [id, { type: 'noul' as const, noul: score }])) };
+    },
+  });
+
+  it('asks Jev again inside an oversized chunk', async () => {
+    const calls = { n: 0 };
+    const r = await trimOutput(
+      { command: 'tail -n +1 big.log', goal: 'g', output: withNeedle(40_000, 22_800) },
+      counting(0.01, calls),
+      { maxChars: 8_000 },
+    );
+    expect(calls.n).toBeGreaterThan(1);
+    expect(r.charsAfter).toBeLessThanOrEqual(8_000);
+    expect(r.output).toContain('ORD-77341');
+  });
+
+  it('keeps an error line even when Jev drops its group', async () => {
+    const r = await trimOutput(
+      { command: 'tail -n +1 big.log', goal: 'g', output: withNeedle(40_000, 22_800) },
+      { ask: async (_s: unknown, q: Record<string, unknown>) => ({ answers: Object.fromEntries(Object.keys(q).map((id) => [id, { type: 'noul' as const, noul: 0 }])) }) },
+      { maxChars: 4_000 },
+    );
+    expect(r.output).toContain('ORD-77341');
+  });
+
+  it('falls back to the pattern shrink when the second pass fails', async () => {
+    let first = true;
+    const flaky = {
+      ask: async (_s: unknown, q: Record<string, unknown>) => {
+        if (!first) throw new Error('jev down');
+        first = false;
+        return { answers: Object.fromEntries(Object.keys(q).map((id) => [id, { type: 'noul' as const, noul: 0.01 }])) };
+      },
+    };
+    const r = await trimOutput(
+      { command: 'tail -n +1 big.log', goal: 'g', output: withNeedle(40_000, 22_800) },
+      flaky,
+      { maxChars: 8_000 },
+    );
+    expect(r.output).toContain('ORD-77341');
+    expect(r.output).toMatch(/trimmed \d+ more lines from this section/);
+  });
+});

@@ -386,7 +386,13 @@ async function trimOutputAttempt(
       (a, b) => chunks[b]!.chars - chunks[a]!.chars,
     )) {
       if (size() <= maxChars) break;
-      const text = shrinkChunkText(chunks[index]!.text);
+      const text = await shrinkChunkWithJev(
+        chunks[index]!,
+        input,
+        history,
+        asker,
+        keepThreshold,
+      );
       if (text.length < chunks[index]!.chars) shrunk.set(index, text);
     }
   }
@@ -448,6 +454,63 @@ function shrinkChunkText(text: string, keepEdge = 2): string {
       parts.push(lines[index]!);
     } else removed += 1;
   }
+  if (removed > 0) parts.push(`[fast-jev-output trimmed ${removed} more lines from this section]`);
+  return parts.join('\n');
+}
+
+const REFINE_GROUP_LINES = 5;
+
+/**
+ * Asks Jev, line group by line group, what to keep inside one oversized chunk —
+ * the same noul question as the chunk pass, over the same state, so the last
+ * decision is Jev's rather than a regex. Lines that look like errors are kept
+ * whatever Jev says, and a failed request falls back to the regex shrink.
+ */
+async function shrinkChunkWithJev(
+  chunk: OutputChunk,
+  input: TrimOutputInput,
+  history: HistoryEntry[],
+  asker: JevAsker,
+  keepThreshold: number,
+): Promise<string> {
+  const lines = chunk.text.split('\n');
+  if (lines.length <= REFINE_GROUP_LINES * 2) return chunk.text;
+  const groups: OutputChunk[] = [];
+  for (let start = 0; start < lines.length; start += REFINE_GROUP_LINES) {
+    const text = lines.slice(start, start + REFINE_GROUP_LINES).join('\n');
+    groups.push({ id: `g${groups.length + 1}`, text, lines: Math.min(REFINE_GROUP_LINES, lines.length - start), chars: text.length });
+  }
+  const state = stateFor({ ...input, output: chunk.text }, groups, history);
+  let scores: number[];
+  try {
+    const answered = await Promise.all(
+      batches(groups, estimateStateTokens(JSON.stringify(state))).map(async (batch) => {
+        const questions = Object.assign({}, ...batch.map(questionFor));
+        const response = await asker.ask(state, questions);
+        return batch.map((group) => [group.id, noulAnswer(response.answers, group.id)] as const);
+      }),
+    );
+    const byId = new Map(answered.flat());
+    scores = groups.map((group) => byId.get(group.id) ?? 0);
+  } catch {
+    return shrinkChunkText(chunk.text);
+  }
+  const keep = new Set<number>([0, groups.length - 1]);
+  groups.forEach((group, index) => {
+    if (scores[index]! >= keepThreshold || ERROR_PATTERN.test(group.text)) keep.add(index);
+  });
+  if (keep.size === groups.length) return chunk.text;
+  const parts: string[] = [];
+  let removed = 0;
+  groups.forEach((group, index) => {
+    if (keep.has(index)) {
+      if (removed > 0) {
+        parts.push(`[fast-jev-output trimmed ${removed} more lines from this section]`);
+        removed = 0;
+      }
+      parts.push(group.text);
+    } else removed += group.lines;
+  });
   if (removed > 0) parts.push(`[fast-jev-output trimmed ${removed} more lines from this section]`);
   return parts.join('\n');
 }
