@@ -137,6 +137,32 @@ test('live Jev accepts repeated history across multiple question batches', { tim
   assert(result.trimmed);
 });
 
+test('live Jev preserves standing values despite instructions to omit them from the next reply', { timeout: 180_000 }, async (t) => {
+  const { asker } = liveAsker(t);
+  const goal = 'Run the next build. Reply only with its status; do not repeat release names or recovery references.';
+  const messages: ConversationMessage[] = [
+    { role: 'user', text: 'For release alpha, keep the release filename and recovery reference from future build output.', toolUses: [] },
+    ...Array.from({ length: 60 }, (_, i) => [
+      { role: 'user' as const, text: `Stage ${i}. ${'Review: cached inputs are unchanged. '.repeat(100)} ${goal}`, toolUses: [] },
+      { role: 'assistant' as const, text: `Stage ${i}: deployment is blocked.`, toolUses: [] },
+    ]).flat(),
+    { role: 'user', text: goal, toolUses: [] },
+  ];
+  const lines = Array.from({ length: 200 }, (_, i) => `progress: cached module ${i} unchanged`);
+  const release = 'release alpha = alpha-build-b758.tar.gz';
+  const recovery = 'recovery reference = stable-b758';
+  lines[65] = release;
+  lines[145] = recovery;
+  const result = await trimOutput(
+    { command: 'build', goal, messages, output: lines.join('\n') },
+    asker,
+  );
+  assert(result.trimmed, 'Pure progress chunks were not pruned');
+  assert(result.output.includes(release), 'Standing release requirement was lost');
+  assert(result.output.includes(recovery), 'Standing recovery requirement was lost');
+  t.diagnostic(JSON.stringify({ scores: result.scores, charsBefore: result.charsBefore, charsAfter: result.charsAfter }));
+});
+
 test('live Jev accepts digit-heavy output with a fitted conversation', { timeout: 180_000 }, async (t) => {
   const { asker, requests } = liveAsker(t);
   const messages: ConversationMessage[] = [

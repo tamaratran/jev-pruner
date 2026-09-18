@@ -16,7 +16,9 @@ verbatim — nothing is rewritten or summarized.
 3. Output is split into chunks of `chunkLines` lines, capped at 200 chunks;
    lines longer than 2,000 characters are split first.
 4. Jev receives `{ context, task, history, command, chunks }` and one noul question
-   per chunk: “must this chunk stay visible?”. `history` follows the
+   per chunk: “does any line in this chunk need to remain available?”. A single
+   needed line protects the chunk, including values required by earlier
+   instructions even when the next reply must not repeat them. `history` follows the
    fast-jev-compaction approach: user and assistant text in conversation order,
    with tool names and inputs; result bodies are replaced by status/length notes.
    Questions are batched so each request stays under 30,000 estimated tokens.
@@ -29,8 +31,8 @@ verbatim — nothing is rewritten or summarized.
    fitted history; the actual conversation is never edited by this fitting. A
    `max_tokens_exceeded` response retries twice with a halved state budget.
 6. A chunk stays when its noul is at least `keepThreshold`, it is first or
-   last, it matches an error or warning pattern, or it was unscored because it
-   was omitted while fitting state.
+   last, it matches an error or warning pattern, or its complete text was not
+   present in the scoring state (omitted or shortened while fitting).
 7. Each dropped run becomes a marker such as:
    `[fast-jev-output trimmed N lines (M chars); full output: .claude/fast-jev-output/bash-<id>.txt (Read or grep it if needed)]`
 8. The complete output is written under the project's
