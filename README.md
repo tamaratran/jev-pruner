@@ -69,6 +69,18 @@ TypeSafe API key configured as above:
 CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 claude --plugin-dir .
 ```
 
+## Output the engine saved
+
+When Bash output is too large to show inline, Claude Code saves the whole thing
+and hands the model a head-of-file preview — usually the least interesting part.
+The plugin prunes that saved file instead, caps the result at
+`persistedMaxChars` so it fits inline, and cites the engine's own saved copy in
+the markers, so nothing becomes unrecoverable. Set `persistedOutputs` to false
+to leave those results alone.
+
+A 76,379-char log went from a 2,227-char preview that did not contain the error
+line to 4,013 chars of pruned output that did.
+
 ## Configuration
 
 Use `/plugin configure fast-jev-output` inside Claude Code, or merge a

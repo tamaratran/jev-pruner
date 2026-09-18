@@ -21,6 +21,12 @@ export interface TrimOutputOptions {
   chunkLines?: number;
   keepThreshold?: number;
   maxStateTokens?: number;
+  /**
+   * Cap on the pruned output. Over it, the lowest-scoring kept chunks go until
+   * the rest fits, so a result the engine would otherwise replace with a
+   * head-of-file preview stays visible. 0 means no cap.
+   */
+  maxChars?: number;
 }
 
 export interface TrimOutputInput {
@@ -348,6 +354,19 @@ async function trimOutputAttempt(
       scores[index]! >= keepThreshold
     ) {
       keptIndexes.add(index);
+    }
+  }
+  const maxChars = Math.max(0, finite(options.maxChars, 0));
+  if (maxChars > 0) {
+    const size = () =>
+      [...keptIndexes].reduce((sum, index) => sum + chunks[index]!.chars + 1, 0);
+    // First and last stay; the rest go lowest score first.
+    const droppable = [...keptIndexes]
+      .filter((index) => index !== 0 && index !== chunks.length - 1)
+      .sort((a, b) => (scores[a] ?? 0) - (scores[b] ?? 0));
+    for (const index of droppable) {
+      if (size() <= maxChars) break;
+      keptIndexes.delete(index);
     }
   }
   const droppedIndexes = chunks

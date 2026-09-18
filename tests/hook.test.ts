@@ -12,6 +12,10 @@ describe('hook configuration', () => {
     });
   });
 
+  it('can turn off pruning of engine-saved output', () => {
+    expect(resolveHookConfig({ persistedOutputs: false }).persistedOutputs).toBe(false);
+  });
+
   it('accepts option overrides', () => {
     expect(
       resolveHookConfig({
@@ -25,6 +29,8 @@ describe('hook configuration', () => {
     ).toEqual({
       apiKey: 'key',
       minChars: 100,
+      persistedOutputs: true,
+      persistedMaxChars: 8000,
       chunkLines: 5,
       keepThreshold: 0.8,
       maxStateTokens: 5_000,

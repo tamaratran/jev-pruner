@@ -16,6 +16,18 @@
       "description": "Bash output at or below this length passes through untouched.",
       "default": 4000
     },
+    "persistedOutputs": {
+      "type": "boolean",
+      "title": "Prune output the engine saved",
+      "description": "When Bash output is too large to show inline, prune the saved file instead of leaving the model a head-of-file preview.",
+      "default": true
+    },
+    "persistedMaxChars": {
+      "type": "number",
+      "title": "Budget for engine-saved output",
+      "description": "Maximum characters of pruned output to hand back when the engine saved the full output; lowest-scoring chunks go until it fits.",
+      "default": 8000
+    },
     "chunkLines": {
       "type": "number",
       "title": "Bash output chunk lines",

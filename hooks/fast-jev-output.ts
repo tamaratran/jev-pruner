@@ -11,6 +11,7 @@ import type { JevAsker } from '../src/jev.js';
 
 const ARCHIVE_DIR = '.claude/fast-jev-output';
 const DEFAULTS = {
+  persistedMaxChars: 8_000,
   chunkLines: 20,
   keepThreshold: 0.5,
   maxStateTokens: 25_000,
@@ -41,6 +42,8 @@ export type HookConfig = {
   keepThreshold: number;
   maxStateTokens: number;
   minChars: number;
+  persistedOutputs: boolean;
+  persistedMaxChars: number;
   model: string;
 };
 
@@ -60,6 +63,9 @@ export function resolveHookConfig(options: PluginOptions): HookConfig {
     keepThreshold: optionNumber(options, 'keepThreshold', DEFAULTS.keepThreshold),
     maxStateTokens: optionNumber(options, 'maxStateTokens', DEFAULTS.maxStateTokens),
     minChars: optionNumber(options, 'minChars', DEFAULTS.minChars),
+    persistedOutputs:
+      typeof options.persistedOutputs === 'boolean' ? options.persistedOutputs : true,
+    persistedMaxChars: optionNumber(options, 'persistedMaxChars', DEFAULTS.persistedMaxChars),
     model: optionString(options, 'model') ?? DEFAULTS.model,
   };
   const apiKey = optionString(options, 'apiKey');
@@ -135,23 +141,44 @@ export const register: Register = (on: On, options: PluginOptions) => {
     try {
       if (answer.deny !== undefined || answer.isError || !answer.result) return answer;
       const record = answer.result;
-      if ('persistedOutputPath' in record && record.persistedOutputPath) return answer;
-      const combined = record.stdout + (record.stderr ? `\n${record.stderr}` : '');
+      // Output too large to show inline: the engine already saved the whole
+      // thing and hands the model a head-of-file preview, which is where the
+      // lines that matter usually are not. Prune the saved file instead, and
+      // keep citing it so nothing becomes unrecoverable.
+      const persistedPath =
+        'persistedOutputPath' in record && typeof record.persistedOutputPath === 'string'
+          ? record.persistedOutputPath
+          : undefined;
+      if (persistedPath && !configured.persistedOutputs) return answer;
+      let source = record.stdout;
+      if (persistedPath) {
+        try {
+          source = await $.fs.read(persistedPath);
+        } catch (error) {
+          $.ui.log(
+            `bash output: persisted output unreadable (${error instanceof Error ? error.message : String(error)})`,
+          );
+          return answer;
+        }
+      }
+      const combined = source + (record.stderr ? `\n${record.stderr}` : '');
       if (combined.length <= configured.minChars) return answer;
       const apiKey = await getApiKey($, configured);
       if (!apiKey) return answer;
       const messages = await $.session.messages();
       const goal = goalFromMessages(messages);
       const secret = looksSecret(event.command, combined);
-      const path = secret
-        ? undefined
-        : `${ARCHIVE_DIR}/bash-${event.tool_use_id ?? Date.now()}.txt`;
+      const path = persistedPath
+        ? persistedPath
+        : secret
+          ? undefined
+          : `${ARCHIVE_DIR}/bash-${event.tool_use_id ?? Date.now()}.txt`;
       const trimmed = await trimOutput(
         {
           command: event.command,
           goal,
           messages,
-          output: record.stdout,
+          output: source,
           fullOutputPath: path,
         },
         jevAsker(
@@ -164,6 +191,9 @@ export const register: Register = (on: On, options: PluginOptions) => {
         ),
         {
           minChars: configured.minChars,
+          // A pruned result that is still too big to show inline would be
+          // replaced by a preview again, so cap it when the engine saved it.
+          maxChars: persistedPath ? configured.persistedMaxChars : 0,
           chunkLines: configured.chunkLines,
           keepThreshold: configured.keepThreshold,
           maxStateTokens: configured.maxStateTokens,
@@ -173,7 +203,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
       // A workspace that cannot be written to (a sandbox, a read-only checkout)
       // must not cost the trim: drop the saved copy and keep the pruning.
       let saved = path !== undefined;
-      if (path) {
+      if (path && !persistedPath) {
         try {
           const ignorePath = `${ARCHIVE_DIR}/.gitignore`;
           if (!(await $.fs.exists(ignorePath))) await $.fs.write(ignorePath, '*\n');
@@ -199,7 +229,16 @@ export const register: Register = (on: On, options: PluginOptions) => {
         `trimmed Bash output ${trimmed.charsBefore}→${trimmed.charsAfter} chars`,
         { timeoutMs: 8_000 },
       );
-      return { result: { ...record, stdout: output } };
+      if (!persistedPath) return { result: { ...record, stdout: output } };
+      // The record still says the output was too large to show, so the engine
+      // would hand the model a preview of our pruned text. The pruned text is
+      // small and cites the saved file, so drop those flags.
+      const {
+        persistedOutputPath: _persistedOutputPath,
+        persistedOutputSize: _persistedOutputSize,
+        ...inline
+      } = record as Record<string, unknown> & { stdout: string };
+      return { result: { ...inline, stdout: output } as typeof record };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       $.ui.log(`bash output trim skipped (${message})`);
