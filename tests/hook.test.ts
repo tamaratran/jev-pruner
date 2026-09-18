@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { looksSecret, resolveHookConfig } from '../hooks/fast-jev-output.ts';
+import { getApiKey, looksSecret, resolveHookConfig } from '../hooks/fast-jev-output.ts';
 
 describe('hook configuration', () => {
   it('uses the documented defaults', () => {
@@ -38,5 +38,26 @@ describe('secret detection', () => {
     expect(looksSecret('cat .env', '')).toBe(true);
     expect(looksSecret('printf value', 'api_key=secret-value')).toBe(true);
     expect(looksSecret('ls', 'src README.md')).toBe(false);
+  });
+});
+
+describe('api key lookup', () => {
+  const $ = (env: Record<string, string>, settings: Record<string, unknown> = {}) => ({
+    env: { get: async (name: string) => env[name] },
+    settings: { read: async () => settings },
+  });
+
+  it('prefers the plugin option, then TYPESAFE_API_KEY', async () => {
+    expect(await getApiKey($({ TYPESAFE_API_KEY: 'from-env' }), { apiKey: 'from-option' } as never)).toBe('from-option');
+    expect(await getApiKey($({ TYPESAFE_API_KEY: 'from-env' }), {} as never)).toBe('from-env');
+  });
+
+  it('falls back to EVAL_TYPESAFE_API_KEY, which is all an eval run gets', async () => {
+    expect(await getApiKey($({ EVAL_TYPESAFE_API_KEY: 'from-eval' }), {} as never)).toBe('from-eval');
+  });
+
+  it('falls back to the settings env block, and is undefined with no key anywhere', async () => {
+    expect(await getApiKey($({}, { env: { TYPESAFE_API_KEY: 'from-settings' } }), {} as never)).toBe('from-settings');
+    expect(await getApiKey($({}), {} as never)).toBeUndefined();
   });
 });

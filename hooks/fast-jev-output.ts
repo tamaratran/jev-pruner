@@ -94,7 +94,8 @@ export function goalFromMessages(messages: readonly SessionMessage[]): string {
     .join('\n');
 }
 
-async function getApiKey(
+/** Key lookup order: plugin option, TYPESAFE_API_KEY, EVAL_TYPESAFE_API_KEY, settings env. */
+export async function getApiKey(
   $: {
     env: { get: (name: string) => Promise<string | undefined> };
     settings: { read: () => Promise<Readonly<Record<string, unknown>>> };
@@ -104,6 +105,10 @@ async function getApiKey(
   if (config.apiKey) return config.apiKey;
   const fromEnv = await $.env.get('TYPESAFE_API_KEY');
   if (fromEnv) return fromEnv;
+  // `claude plugin eval` runs with a fresh HOME and a scrubbed environment, and
+  // passes through only EVAL_* variables, so this is the eval suite's key path.
+  const fromEvalEnv = await $.env.get('EVAL_TYPESAFE_API_KEY');
+  if (fromEvalEnv) return fromEvalEnv;
   const settings = await $.settings.read();
   const env = settings['env'];
   if (env && typeof env === 'object') {
