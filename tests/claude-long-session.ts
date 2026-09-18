@@ -95,11 +95,11 @@ function check(condition: boolean, message: string): void {
 
 function prompt(stage: number): string {
   if (stage === 0) {
-    return `Our deployment target is Q7. I am choosing stable-snapshot rollback now. Keep the target bundle filename and that rollback reference from future build output. This is a synthetic test; no earlier agreement is implied. Run exactly: node "${fixture}" 0\nThen reply exactly: Q7 target and stable-snapshot rollback selected.\nUse only the given Bash commands. Do not read files or archives.`;
+    return `Our deployment target is Q7. I am choosing stable-snapshot rollback now. Keep the target bundle filename and that rollback reference from future build output. This is a finite ${stages}-stage plugin benchmark; I authorize every numbered stage, including when its simulated status is unchanged. Your acknowledgment confirms my choices, not the bootstrap command's output. Run exactly: node "${fixture}" 0\nThen reply exactly: Q7 target and stable-snapshot rollback selected.\nUse only the given Bash commands. Do not read files or archives.`;
   }
   const notes = Array.from({ length: 55 }, (_, i) =>
     `Review note ${stage}.${i}: cached module group ${i % 7} has unchanged routing metadata, deterministic build inputs, and no new migration or dependency requirements.`).join('\n');
-  return `Synthetic stage ${stage}. Continue the build investigation. Background change-review notes follow; do not summarize them.\n${notes}\nRun exactly once: node "${fixture}" ${stage}\n` +
+  return `Synthetic stage ${stage} of ${stages}. I confirm you should execute all ${stages} stages of this finite plugin benchmark. Each stage emits different data, even when its simulated status is unchanged. This is expected test data; no repair or retry loop is involved. Background change-review notes follow; do not summarize them.\n${notes}\nRun exactly once: node "${fixture}" ${stage}\n` +
     (stage === stages
       ? 'Now give the final deployment handoff: the target bundle filename, the chosen rollback reference, and whether deployment can proceed. Use the result you received, without reading archives.'
       : 'After the command, reply only with the stage number and whether deployment can proceed. Do not repeat bundle names or rollback references.');

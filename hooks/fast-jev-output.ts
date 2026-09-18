@@ -141,6 +141,13 @@ export const register: Register = (on: On, options: PluginOptions) => {
       const path = secret
         ? undefined
         : `${ARCHIVE_DIR}/bash-${event.tool_use_id ?? Date.now()}.txt`;
+      let archived: Promise<void> | undefined;
+      const saveOutput = async (): Promise<void> => {
+        if (!path) return;
+        const ignorePath = `${ARCHIVE_DIR}/.gitignore`;
+        if (!(await $.fs.exists(ignorePath))) await $.fs.write(ignorePath, '*\n');
+        await $.fs.write(path, combined);
+      };
       const trimmed = await trimOutput(
         {
           command: event.command,
@@ -151,6 +158,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
         },
         jevAsker(
           async (url, init) => {
+            if (path) await (archived ??= saveOutput());
             const response = await $.http.fetch(url, init);
             return { status: response.status, ok: response.ok, text: response.text };
           },
@@ -165,20 +173,18 @@ export const register: Register = (on: On, options: PluginOptions) => {
         },
       );
       if (!trimmed.trimmed) return answer;
-      if (path) {
-        const ignorePath = `${ARCHIVE_DIR}/.gitignore`;
-        if (!(await $.fs.exists(ignorePath))) await $.fs.write(ignorePath, '*\n');
-        await $.fs.write(path, combined);
-      }
+      const stdout = path
+        ? `${trimmed.output}\n\n[fast-jev-output full output: ${path} (Read or grep it if needed)]`
+        : trimmed.output;
       const scores = trimmed.scores.map((score) => score.toFixed(2)).join(',');
       $.ui.log(
-        `bash output: kept ${trimmed.kept}/${trimmed.chunks} chunks (${trimmed.charsBefore}→${trimmed.charsAfter} chars) scores=${scores}`,
+        `bash output: kept ${trimmed.kept}/${trimmed.chunks} chunks (${trimmed.charsBefore}→${stdout.length} chars) scores=${scores}`,
       );
       $.ui.toast(
-        `trimmed Bash output ${trimmed.charsBefore}→${trimmed.charsAfter} chars`,
+        `trimmed Bash output ${trimmed.charsBefore}→${stdout.length} chars`,
         { timeoutMs: 8_000 },
       );
-      return { result: { ...record, stdout: trimmed.output } };
+      return { result: { ...record, stdout } };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       $.ui.log(`bash output trim skipped (${message})`);
