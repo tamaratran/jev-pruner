@@ -42,6 +42,7 @@ from evals.modal_provider import (
     CLEANUP_SECONDS,
     TRANSFER_SECONDS,
     PinnedModalEnvironment,
+    verify_downloads,
 )
 from evals.summarize import read_events, summarize_trial
 
@@ -256,6 +257,97 @@ def load(path: Path) -> dict:
     return json.loads(path.read_text())
 
 
+def preflight_manifest(tasks: list[dict]) -> list[dict]:
+    return [
+        {
+            "task": spec["task"],
+            "arm": "preflight",
+            "job_name": f"{spec['task']}-preflight",
+            "state": "pending",
+            "reward": None,
+        }
+        for spec in tasks
+    ]
+
+
+def campaign_order(rows: list[dict], preflights: list[dict]) -> list[dict]:
+    return [
+        item
+        for setup in preflights
+        for item in [setup, *(row for row in rows if row["task"] == setup["task"])]
+    ]
+
+
+def seed_images(
+    source: Path, document: dict, prior_accounted: float
+) -> tuple[list[dict], dict]:
+    previous = load(source / "provenance.json")
+    if {k: v for k, v in previous.items() if k not in {"commit", "sources"}} != {
+        k: v
+        for k, v in document["provenance"].items()
+        if k not in {"commit", "sources"}
+    }:
+        raise ValueError("Seed preflight changed the frozen experiment")
+    ledger = load(source / "budget.json")
+    if ledger["unreconciled_import"] or prior_accounted < ledger["accounted_usd"]:
+        raise ValueError("Seed preflight spending must remain reserved")
+    prior_rows = json.loads((source / "progress.json").read_text())
+    rows = preflight_manifest(document["tasks"])
+    if {row["task"] for row in prior_rows} != {row["task"] for row in rows}:
+        raise ValueError("Seed preflight task inventory differs")
+    pins = load(source / "images.json")
+    images = {}
+    for row in rows:
+        previous_row = next(item for item in prior_rows if item["task"] == row["task"])
+        row["prior_preflight_state"] = previous_row["state"]
+        if previous_row["state"] != "finished":
+            continue
+        location = source / "trials" / previous_row["job_name"]
+        lifecycle = load(location / "modal-lifecycle.json")
+        pin = pins[row["task"]]
+        if (
+            not lifecycle["evidence_verified"]
+            or not lifecycle["termination_confirmed"]
+            or lifecycle["modal_image_id"] != pin["modal_image_id"]
+        ):
+            raise ValueError("Seed preflight lacks verified evidence/image/termination")
+        hashes = load(location / "modal-evidence-sha256.json")
+        required = {"agent/modal-preflight.json"}
+        if not required.issubset(hashes):
+            raise ValueError("Seed preflight missing required evidence")
+        verify_downloads(
+            location,
+            "\0".join(f"{digest}  /logs/{name}" for name, digest in hashes.items()),
+        )
+        settings_path = location / "agent/eval-settings.json"
+        settings = load(settings_path)
+        if (
+            settings["auth_mode"] != "subscription"
+            or settings["auth_status"]
+            != {
+                "loggedIn": True,
+                "authMethod": "claude.ai",
+                "apiProvider": "firstParty",
+                "subscriptionType": "max",
+            }
+            or settings["model"] != document["provenance"]["model"]
+            or settings["claude_version"] != document["provenance"]["claude_version"]
+            or not load(location / "agent/modal-preflight.json")["passed"]
+        ):
+            raise ValueError("Seed preflight authentication/settings differ")
+        images[row["task"]] = pin
+        row.update(
+            state="finished",
+            reused_preflight=str(location),
+            seed_evidence_sha256=hashes,
+            seed_local_settings_sha256=hashlib.sha256(
+                settings_path.read_bytes()
+            ).hexdigest(),
+            modal=lifecycle,
+        )
+    return rows, images
+
+
 async def refresh_budget(ledger: dict, start: date) -> None:
     now = datetime.now(timezone.utc)
     end = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
@@ -299,16 +391,23 @@ async def refresh_budget(ledger: dict, start: date) -> None:
 
 async def execute(args: argparse.Namespace) -> None:
     preflight = args.command == "preflight"
+    campaign = args.command == "campaign"
     if not args.approve_modal_compute or (not preflight and not args.approve_inference):
         raise ValueError("Explicit separate compute/inference approval flags required")
     if not math.isfinite(args.budget_usd) or args.budget_usd <= 0:
         raise ValueError("Positive finite credit budget required")
-    if preflight and (
+    if (preflight or campaign) and (
         not math.isfinite(args.build_reserve_usd) or args.build_reserve_usd <= 0
     ):
         raise ValueError(
             "Explicit positive planning reserve for unmetered image imports required"
         )
+    if not math.isfinite(args.prior_accounted_usd) or args.prior_accounted_usd < 0:
+        raise ValueError("Prior spending reservation must be finite and nonnegative")
+    if campaign and not args.billing_start_date:
+        raise ValueError("Campaign requires automatic provider billing reconciliation")
+    if args.seed_preflight and not campaign:
+        raise ValueError("Seed preflights require a new campaign")
     root, benchmark = args.evidence.resolve(), args.benchmark_source.resolve()
     if root.is_relative_to(REPO):
         raise ValueError("Evidence must be outside the repository")
@@ -335,11 +434,21 @@ async def execute(args: argparse.Namespace) -> None:
         ).hexdigest(),
         "mode": args.command,
         "budget_usd": args.budget_usd,
-        "build_reserve_usd": args.build_reserve_usd if preflight else 0,
+        "build_reserve_usd": args.build_reserve_usd if preflight or campaign else 0,
+        "prior_accounted_usd": args.prior_accounted_usd,
+        "seed_preflight": str(args.seed_preflight.resolve())
+        if args.seed_preflight
+        else None,
         "billing_start_date": (
             args.billing_start_date.isoformat() if args.billing_start_date else None
         ),
     }
+    setups: list[dict] = []
+    images: dict = {}
+    if campaign and args.seed_preflight:
+        setups, images = seed_images(
+            args.seed_preflight.resolve(), document, args.prior_accounted_usd
+        )
     if root.exists():
         if not args.resume or load(root / "identity.json") != identity:
             raise ValueError(
@@ -347,7 +456,10 @@ async def execute(args: argparse.Namespace) -> None:
             )
         rows = json.loads((root / "progress.json").read_text())
         ledger = load(root / "budget.json")
-        if any(row["state"] not in {"pending", "finished"} for row in rows):
+        if campaign:
+            setups = json.loads((root / "preflight-progress.json").read_text())
+            images = load(root / "images.json")
+        if any(row["state"] not in {"pending", "finished"} for row in rows + setups):
             raise ValueError("Interrupted/failed attempts cannot be silently resumed")
         if args.observed_total_usd is not None:
             observed = args.observed_total_usd
@@ -374,23 +486,14 @@ async def execute(args: argparse.Namespace) -> None:
         save(root / "identity.json", identity)
         save(root / "provenance.json", document["provenance"])
         rows = (
-            [
-                {
-                    "task": spec["task"],
-                    "arm": "preflight",
-                    "job_name": f"{spec['task']}-preflight",
-                    "state": "pending",
-                    "reward": None,
-                }
-                for spec in document["tasks"]
-            ]
-            if preflight
-            else document["trials"]
+            preflight_manifest(document["tasks"]) if preflight else document["trials"]
         )
+        if campaign and not setups:
+            setups = preflight_manifest(document["tasks"])
         ledger = {
             "budget_usd": args.budget_usd,
-            "accounted_usd": 0.0,
-            "held_build_reserve_usd": 0.0,
+            "accounted_usd": args.prior_accounted_usd,
+            "held_build_reserve_usd": args.prior_accounted_usd,
             "unreconciled_import": False,
             "reconciliations": [],
             "entries": [],
@@ -399,10 +502,23 @@ async def execute(args: argparse.Namespace) -> None:
             "jev_cost_usd": None,
             "note": "Estimates, not a billing cap. Provider observations may be delayed; import/build margins remain held even after reading metered usage.",
         }
+        if args.seed_preflight:
+            save(
+                root / "seed-provenance.json",
+                {
+                    name: load(args.seed_preflight / name)
+                    for name in (
+                        "identity.json",
+                        "provenance.json",
+                        "progress.json",
+                        "budget.json",
+                    )
+                },
+            )
         save(root / "budget.json", ledger)
     if preflight:
         images = load(root / "images.json") if (root / "images.json").exists() else {}
-    else:
+    elif not campaign:
         previous = load(args.preflight / "identity.json")
         if any(
             previous[key] != identity[key]
@@ -429,17 +545,22 @@ async def execute(args: argparse.Namespace) -> None:
     specs = {spec["task"]: spec for spec in document["tasks"]}
 
     def persist() -> None:
-        if preflight:
+        if args.command == "preflight":
             save(root / "progress.json", rows)
             save(root / "images.json", images)
         else:
             checkpoint(root, rows)
+        if campaign:
+            save(root / "preflight-progress.json", setups)
+            save(root / "images.json", images)
         save(root / "budget.json", ledger)
 
     persist()
-    for row in rows:
+    verified_images: set[str] = set()
+    for row in campaign_order(rows, setups) if campaign else rows:
         if row["state"] == "finished":
             continue
+        preflight = row["arm"] == "preflight"
         if args.billing_start_date:
             await refresh_budget(ledger, args.billing_start_date)
             persist()
@@ -453,13 +574,19 @@ async def execute(args: argparse.Namespace) -> None:
         row["state"] = "resolving_image"
         persist()
         try:
-            resolved = await asyncio.to_thread(resolve_image, spec["image"])
-            if row["task"] in images:
-                if resolved != {key: images[row["task"]][key] for key in resolved}:
-                    raise ValueError("Mutable image tag changed after preflight")
+            if campaign and row["task"] in verified_images:
                 resolved = images[row["task"]]
             else:
-                images[row["task"]] = resolved
+                resolved = await asyncio.to_thread(resolve_image, spec["image"])
+                if row["task"] in images:
+                    if resolved != {key: images[row["task"]][key] for key in resolved}:
+                        raise ValueError("Mutable image tag changed after preflight")
+                    resolved = images[row["task"]]
+                else:
+                    images[row["task"]] = resolved
+                verified_images.add(row["task"])
+            if not preflight and "modal_image_id" not in resolved:
+                raise ValueError("Scored trials require a verified cached image")
             save(root / "resolved-images.json", images)
         except Exception as error:
             row.update(
@@ -483,6 +610,7 @@ async def execute(args: argparse.Namespace) -> None:
             }
         )
         persist()
+        print(f"Starting {row['task']} {row['arm']}", flush=True)
         os.environ["JEV_EVAL_ARM"] = "control" if preflight else row["arm"]
         config = trial_config(root, benchmark, row, spec, resolved, approved=True)
         trial = None
@@ -581,11 +709,13 @@ async def execute(args: argparse.Namespace) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("plan", "preflight", "run"))
+    parser.add_argument("command", choices=("plan", "preflight", "run", "campaign"))
     parser.add_argument("--benchmark-source", type=Path, required=True)
     parser.add_argument("--plan", type=Path, required=True)
     parser.add_argument("--evidence", type=Path)
     parser.add_argument("--preflight", type=Path)
+    parser.add_argument("--seed-preflight", type=Path)
+    parser.add_argument("--prior-accounted-usd", type=float, default=0)
     parser.add_argument("--budget-usd", type=float, default=0)
     parser.add_argument("--build-reserve-usd", type=float, default=0)
     parser.add_argument("--approve-modal-compute", action="store_true")

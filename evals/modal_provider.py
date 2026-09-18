@@ -11,9 +11,10 @@ from pathlib import Path
 
 from harbor.environments.base import ExecResult
 from harbor.environments.modal import ModalEnvironment
-from modal import App, Image, Sandbox
+from modal import App, Image, Sandbox, Secret
 
 from evals.full import save
+from evals.registry_auth import registry_credentials
 
 TRANSFER_SECONDS = 300
 CLEANUP_SECONDS = 90
@@ -135,7 +136,20 @@ class PinnedModalEnvironment(ModalEnvironment):
                 "jev-terminal-bench", create_if_missing=True
             )
             if self.preflight_only:
-                self._image = Image.from_registry(self.pin["oci_reference"])
+                credentials = registry_credentials()
+                registry_secret = (
+                    Secret.from_dict(
+                        {
+                            "REGISTRY_USERNAME": credentials.username,
+                            "REGISTRY_PASSWORD": credentials.token,
+                        }
+                    )
+                    if credentials
+                    else None
+                )
+                self._image = Image.from_registry(
+                    self.pin["oci_reference"], secret=registry_secret
+                )
             else:
                 self._image = await Image.from_id.aio(self.pin["modal_image_id"])
             self._sandbox = await Sandbox.create.aio(

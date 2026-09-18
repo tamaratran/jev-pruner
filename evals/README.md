@@ -284,8 +284,59 @@ Valgrind/ptrace and actual task behavior remain runtime checks; version probes d
 not certify them. Subscription model access and hook activation require inference.
 Missing/corrupt evidence or unconfirmed termination prevents a completed score.
 All downloaded evidence is private and must be sanitized before sharing, as below.
-No credentials are put in image layers, Modal Secrets or Volumes. SDK exec uses
-direct environment values for the Jev key rather than Harbor's ephemeral Secrets.
+No credentials are put in image layers, named Modal Secrets or Volumes. SDK exec
+uses direct environment values for the Jev key rather than Harbor's ephemeral
+Secrets. Registry authentication uses an ephemeral Secret handle passed only to
+`Image.from_registry(secret=...)`; it is never attached to a sandbox or exec.
+
+### Authenticated registry and interleaved campaign
+
+Create a short-lived Docker Hub **Public Repo Read-only** token through the
+official account UI. Store `{"username": "...", "token": "..."}` in an owned
+mode-600 file inside a mode-700 directory outside the repository and evidence.
+Set `JEV_EVAL_DOCKER_AUTH_FILE` to its path. Values are read only by the controller:
+Basic authentication obtains a pull-scoped Docker Hub bearer token, and Modal's
+registry importer receives a private ephemeral registry-auth handle. Neither
+credential is included in trial configuration, logs, evidence, agent environment,
+verifier environment, or image layers. Invalid configured credentials fail closed.
+
+The `campaign` command runs each task's preflight followed immediately by its
+two arms, preserving the plan's alternating arm order and all 178 scored rows.
+Successful preflights can be adopted from an earlier run with `--seed-preflight`.
+This is an explicit new campaign with newly frozen harness provenance; production,
+task, dependency and agent settings must match. Adoption rechecks evidence hashes,
+image identity and confirmed termination. Old failed preflight rows remain in
+the copied seed provenance; new setup attempts are separate. No scored results
+are imported or retried. The first arm resolves the seed's tag again and rejects
+drift; subsequent arms use the same verified immutable Modal image ID.
+
+For this campaign, the $3.56 prior reservation rounds up the earlier $1.74 setup
+reserve plus v4's $1.81927 ledger. It remains held, including while delayed
+provider charges arrive. Build/import prices remain unknown and separately
+reserved at $0.25 per newly imported image. This is conservative local accounting,
+not a provider-enforced $30 cap.
+
+```sh
+export JEV_EVAL_DOCKER_AUTH_FILE="$HOME/.jev-docker-auth/registry.json"
+export JEV_EVAL_AUTH_MODE=subscription
+export JEV_EVAL_CLAUDE_AUTH_DIR="$HOME/.jev-claude-auth/.claude"
+export MODAL_PROFILE=jev-terminal-bench
+# Inject TYPESAFE_API_KEY privately before the campaign command.
+python -m evals.modal_runner plan \
+  --benchmark-source "$BENCHMARK" --plan "$HOME/jev-modal-execution-plan-v5"
+python -m evals.modal_runner campaign \
+  --benchmark-source "$BENCHMARK" --plan "$HOME/jev-modal-execution-plan-v5" \
+  --seed-preflight "$HOME/jev-modal-preflight-v4" \
+  --evidence "$HOME/jev-modal-campaign-v5" \
+  --budget-usd 30 --prior-accounted-usd 3.56 --build-reserve-usd 0.25 \
+  --billing-start-date 2026-09-18 --approve-modal-compute --approve-inference
+```
+
+The campaign stores setup checkpoints in `preflight-progress.json` and scored
+checkpoints in `progress.json`. Both share one budget ledger and stop together
+on access, registry, setup, evidence or budget failures. Use `--resume` only with
+an unchanged identity and entirely pending/finished checkpoints. Preserve all
+prior evidence directories unchanged.
 
 The observer adapts `tests/fixtures/long-session-observer`. It never modifies
 requests/results and never captures HTTP headers. It captures activation,
