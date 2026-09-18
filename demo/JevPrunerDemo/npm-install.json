@@ -1,0 +1,225 @@
+{
+  "duration": 4.648,
+  "events": [
+    {
+      "time": 0.177,
+      "text": "npm info using npm@10.8.3"
+    },
+    {
+      "time": 0.177,
+      "text": "npm info using node@v24.20.0"
+    },
+    {
+      "time": 0.183,
+      "text": "npm verbose title npm install"
+    },
+    {
+      "time": 0.183,
+      "text": "npm verbose argv \"install\""
+    },
+    {
+      "time": 0.595,
+      "text": "npm http fetch GET 200 https://registry.npmjs.org/@tanstack%2freact-query 126ms (cache miss)"
+    },
+    {
+      "time": 0.73,
+      "text": "npm http fetch GET 200 https://registry.npmjs.org/react 130ms (cache miss)"
+    },
+    {
+      "time": 0.893,
+      "text": "npm http fetch GET 200 https://registry.npmjs.org/@types%2fnode 145ms (cache miss)"
+    },
+    {
+      "time": 0.996,
+      "text": "npm http fetch GET 200 https://registry.npmjs.org/@types%2freact 70ms (cache miss)"
+    },
+    {
+      "time": 1.035,
+      "text": "npm http fetch GET 200 https://registry.npmjs.org/@types%2freact-dom 32ms (cache miss)"
+    },
+    {
+      "time": 1.055,
+      "text": "npm http fetch GET 200 https://registry.npmjs.org/clsx 19ms (cache miss)"
+    },
+    {
+      "time": 1.304,
+      "text": "npm http fetch GET 200 https://registry.npmjs.org/date-fns 247ms (cache miss)"
+    },
+    {
+      "time": 1.397,
+      "text": "npm http fetch GET 200 https://registry.npmjs.org/lucide-react 78ms (cache miss)"
+    },
+    {
+      "time": 1.551,
+      "text": "npm http fetch GET 200 https://registry.npmjs.org/react-dom 147ms (cache miss)"
+    },
+    {
+      "time": 1.785,
+      "text": "npm http fetch GET 200 https://registry.npmjs.org/typescript 205ms (cache miss)"
+    },
+    {
+      "time": 1.845,
+      "text": "npm http fetch GET 200 https://registry.npmjs.org/zustand 28ms (cache miss)"
+    },
+    {
+      "time": 1.88,
+      "text": "npm http fetch GET 200 https://registry.npmjs.org/immer 34ms (cache miss)"
+    },
+    {
+      "time": 1.995,
+      "text": "npm http fetch GET 200 https://registry.npmjs.org/use-sync-external-store 111ms (cache miss)"
+    },
+    {
+      "time": 2.083,
+      "text": "npm http fetch GET 200 https://registry.npmjs.org/zod 78ms (cache miss)"
+    },
+    {
+      "time": 2.148,
+      "text": "npm http fetch GET 200 https://registry.npmjs.org/@tanstack%2fquery-core 52ms (cache miss)"
+    },
+    {
+      "time": 2.156,
+      "text": "npm http fetch GET 200 https://registry.npmjs.org/loose-envify 59ms (cache miss)"
+    },
+    {
+      "time": 2.158,
+      "text": "npm http fetch GET 200 https://registry.npmjs.org/loose-envify 61ms (cache miss)"
+    },
+    {
+      "time": 2.159,
+      "text": "npm http fetch GET 200 https://registry.npmjs.org/@types%2fprop-types 63ms (cache miss)"
+    },
+    {
+      "time": 2.162,
+      "text": "npm http fetch GET 200 https://registry.npmjs.org/undici-types 65ms (cache miss)"
+    },
+    {
+      "time": 2.166,
+      "text": "npm http fetch GET 200 https://registry.npmjs.org/csstype 70ms (cache miss)"
+    },
+    {
+      "time": 2.248,
+      "text": "npm http fetch GET 200 https://registry.npmjs.org/scheduler 151ms (cache miss)"
+    },
+    {
+      "time": 2.286,
+      "text": "npm http fetch GET 200 https://registry.npmjs.org/js-tokens 18ms (cache miss)"
+    },
+    {
+      "time": 2.335,
+      "text": "npm http fetch POST 200 https://registry.npmjs.org/-/npm/v1/security/advisories/bulk 42ms"
+    },
+    {
+      "time": 2.349,
+      "text": "npm http fetch GET 200 https://registry.npmjs.org/@types/prop-types/-/prop-types-15.7.15.tgz 50ms (cache miss)"
+    },
+    {
+      "time": 2.353,
+      "text": "npm http fetch GET 200 https://registry.npmjs.org/loose-envify/-/loose-envify-1.4.0.tgz 54ms (cache miss)"
+    },
+    {
+      "time": 2.363,
+      "text": "npm http fetch GET 200 https://registry.npmjs.org/js-tokens/-/js-tokens-4.0.0.tgz 65ms (cache miss)"
+    },
+    {
+      "time": 2.49,
+      "text": "npm http fetch GET 200 https://registry.npmjs.org/scheduler/-/scheduler-0.23.2.tgz 191ms (cache miss)"
+    },
+    {
+      "time": 2.497,
+      "text": "npm http fetch GET 200 https://registry.npmjs.org/clsx/-/clsx-2.1.1.tgz 197ms (cache miss)"
+    },
+    {
+      "time": 2.504,
+      "text": "npm http fetch GET 200 https://registry.npmjs.org/@types/react-dom/-/react-dom-18.3.5.tgz 204ms (cache miss)"
+    },
+    {
+      "time": 2.51,
+      "text": "npm http fetch GET 200 https://registry.npmjs.org/undici-types/-/undici-types-6.20.0.tgz 212ms (cache miss)"
+    },
+    {
+      "time": 2.541,
+      "text": "npm http fetch GET 200 https://registry.npmjs.org/react/-/react-18.3.1.tgz 241ms (cache miss)"
+    },
+    {
+      "time": 2.561,
+      "text": "npm http fetch GET 200 https://registry.npmjs.org/@types/react/-/react-18.3.18.tgz 262ms (cache miss)"
+    },
+    {
+      "time": 2.581,
+      "text": "npm http fetch GET 200 https://registry.npmjs.org/zustand/-/zustand-5.0.3.tgz 281ms (cache miss)"
+    },
+    {
+      "time": 2.613,
+      "text": "npm http fetch GET 200 https://registry.npmjs.org/csstype/-/csstype-3.2.3.tgz 314ms (cache miss)"
+    },
+    {
+      "time": 2.702,
+      "text": "npm http fetch GET 200 https://registry.npmjs.org/zod/-/zod-3.24.2.tgz 402ms (cache miss)"
+    },
+    {
+      "time": 2.813,
+      "text": "npm http fetch GET 200 https://registry.npmjs.org/@types/node/-/node-22.10.2.tgz 513ms (cache miss)"
+    },
+    {
+      "time": 2.868,
+      "text": "npm http fetch GET 200 https://registry.npmjs.org/react-dom/-/react-dom-18.3.1.tgz 568ms (cache miss)"
+    },
+    {
+      "time": 2.908,
+      "text": "npm http fetch GET 200 https://registry.npmjs.org/@tanstack/query-core/-/query-core-5.66.4.tgz 609ms (cache miss)"
+    },
+    {
+      "time": 2.913,
+      "text": "npm http fetch GET 200 https://registry.npmjs.org/@tanstack/react-query/-/react-query-5.66.9.tgz 612ms (cache miss)"
+    },
+    {
+      "time": 3.22,
+      "text": "npm http fetch GET 200 https://registry.npmjs.org/typescript/-/typescript-5.7.3.tgz 920ms (cache miss)"
+    },
+    {
+      "time": 4.335,
+      "text": "npm http fetch GET 200 https://registry.npmjs.org/lucide-react/-/lucide-react-0.468.0.tgz 2036ms (cache miss)"
+    },
+    {
+      "time": 4.616,
+      "text": "npm http fetch GET 200 https://registry.npmjs.org/date-fns/-/date-fns-4.1.0.tgz 2316ms (cache miss)"
+    },
+    {
+      "time": 4.627,
+      "text": ""
+    },
+    {
+      "time": 4.627,
+      "text": "added 19 packages, and audited 20 packages in 4s"
+    },
+    {
+      "time": 4.627,
+      "text": ""
+    },
+    {
+      "time": 4.627,
+      "text": "4 packages are looking for funding"
+    },
+    {
+      "time": 4.627,
+      "text": "  run `npm fund` for details"
+    },
+    {
+      "time": 4.627,
+      "text": ""
+    },
+    {
+      "time": 4.627,
+      "text": "found 0 vulnerabilities"
+    },
+    {
+      "time": 4.628,
+      "text": "npm verbose exit 0"
+    },
+    {
+      "time": 4.628,
+      "text": "npm info ok"
+    }
+  ]
+}

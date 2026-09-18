@@ -162,14 +162,31 @@ can be installed together.
 ## Animated demo (macOS)
 
 `demo/JevPrunerDemo` matches the dark terminal, scanning beam and collapsing
-output of the fast-jev-compaction demo. A scripted `npm install` fills the
-terminal, Jev marks chunks to keep or drop, and the tool result shrinks from
-10,000 to 100 illustrative tokens. Retained text stays verbatim and a saved-log
-card shows where the original output can be read.
+output of the fast-jev-compaction demo. An `npm install` is followed by a scan,
+pruning, and a pause on the retained summary. The terminal's top bar
+shows estimated output tokens. There are no surrounding captions or sidebar.
+Retained text stays verbatim and a saved-log card shows where the original
+output can be read.
 
-This is a 25-second animation, not a live install or benchmark. Output, scores,
-timings and token counts are scripted; it makes no API requests. Rows represent
-larger output chunks, and omission markers are shortened for readability.
+`npm-install.json` records each output line's arrival time and the process
+duration from an actual install of a small React project with
+`npm_config_loglevel=verbose`; the displayed command remains `npm install`.
+Machine-specific CLI, log-file and working-directory metadata were removed.
+The recorded install takes **4.648 seconds**, replayed at its original speed.
+The complete animation is approximately **10.1 seconds**, allowing time for
+the scan, a smooth shared collapse and a final pause. Its duration follows the
+recording rather than compressing the install into a fixed five-second clip.
+
+The preview appends representative rows at their recorded timestamps and keeps
+them in place, instead of cycling a scrolling viewport or switching to a
+different layout at completion. Natural pauses are preserved.
+
+This is recorded playback, not a live install or benchmark; it makes no API
+requests. The pruning animation and keep/drop decisions are illustrative at
+line granularity, rather than the default 20-line chunks.
+Token estimates use one token per four characters of the capture and the
+illustrated compact text, including its archive marker; they are not measured
+model usage. Omission markers are shortened for readability.
 The full-output path uses the plugin's existing `fast-jev-output` directory.
 
 Requires macOS 14+ and the Xcode command-line tools. No extra packages are needed.
@@ -178,9 +195,9 @@ Requires macOS 14+ and the Xcode command-line tools. No extra packages are neede
 demo/JevPrunerDemo/build.sh             # build and open; Space replays
 demo/JevPrunerDemo/build.sh --no-launch # build without opening a window
 demo/JevPrunerDemo/build.sh --export "$PWD/demo/JevPrunerDemo/build/jev-pruner.mp4"
-demo/JevPrunerDemo/build.sh --frame 18 "$PWD/demo/JevPrunerDemo/build/poster.png"
+demo/JevPrunerDemo/build.sh --frame 9 "$PWD/demo/JevPrunerDemo/build/poster.png"
 ```
 
-Export renders the same timeline directly to a 1440×900 H.264 MP4 at 30 fps.
+Export renders the same timeline directly to a 1100×720 H.264 MP4 at 30 fps.
 Use a new output filename for each movie export; existing movies are not
 overwritten. Build products and exports under the demo's `build/` are ignored.

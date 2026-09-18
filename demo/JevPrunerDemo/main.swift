@@ -5,9 +5,10 @@ import ImageIO
 import SwiftUI
 
 enum Style {
-    static let width = 1440.0
-    static let height = 900.0
-    static let duration = 25.0
+    static let width = 1100.0
+    static let height = 720.0
+    static let frameCount = Int(ceil((Timing.done + 1.7) * 30))
+    static let duration = Double(frameCount) / 30
     static let background = Color(red: 0.055, green: 0.055, blue: 0.07)
     static let panel = Color(red: 0.09, green: 0.09, blue: 0.11)
     static let text = Color(red: 0.91, green: 0.91, blue: 0.93)
@@ -30,80 +31,76 @@ func ease(_ value: Double) -> Double { value * value * (3 - 2 * value) }
 struct OutputRow: Identifiable {
     let id: Int
     let text: String
+    let appearedAt: Double
     let keep: Bool
     let reason: String
 }
 
-let outputRows: [OutputRow] = [
-    .init(id: 0, text: "npm info using npm@10.8.2", keep: true, reason: "FIRST CHUNK"),
-    .init(id: 1, text: "npm http fetch GET 200 registry.npmjs.org/react 42ms", keep: false, reason: "DROP 0.03"),
-    .init(id: 2, text: "npm http fetch GET 200 registry.npmjs.org/typescript 38ms", keep: false, reason: "DROP 0.02"),
-    .init(id: 3, text: "npm timing idealTree:node_modules/react Completed in 0ms", keep: false, reason: "DROP 0.01"),
-    .init(id: 4, text: "npm timing idealTree:node_modules/vite Completed in 1ms", keep: false, reason: "DROP 0.01"),
-    .init(id: 5, text: "npm WARN deprecated stable@0.1.8: use native Array#sort", keep: true, reason: "KEEP 0.98"),
-    .init(id: 6, text: "npm http fetch GET 200 registry.npmjs.org/esbuild 31ms", keep: false, reason: "DROP 0.04"),
-    .init(id: 7, text: "npm timing reify:unpack Completed in 842ms", keep: false, reason: "DROP 0.02"),
-    .init(id: 8, text: "npm timing build:link:node_modules/vite Completed in 3ms", keep: false, reason: "DROP 0.01"),
-    .init(id: 9, text: "npm timing reify:save Completed in 49ms", keep: false, reason: "DROP 0.03"),
-    .init(id: 10, text: "npm timing command:install Completed in 12048ms", keep: false, reason: "DROP 0.02"),
-    .init(id: 11, text: "added 1,284 packages, and audited 1,285 packages in 12s", keep: true, reason: "LAST CHUNK"),
-    .init(id: 12, text: "found 0 vulnerabilities", keep: true, reason: "LAST CHUNK"),
-]
+struct InstallEvent: Decodable {
+    let time: Double
+    let text: String
+}
+
+struct InstallRecording: Decodable {
+    let duration: Double
+    let events: [InstallEvent]
+}
+
+enum Timing {
+    static let installStart = 0.6
+    static let installEnd = installStart + InstallExample.recording.duration
+    static let scanStart = installEnd + 0.3
+    static let scanEnd = scanStart + 1.5
+    static let pruneStart = scanEnd + 0.2
+    static let pruneEnd = pruneStart + 0.9
+    static let done = pruneEnd + 0.2
+}
+
+enum InstallExample {
+    static let recording: InstallRecording = {
+        guard let url = Bundle.main.url(forResource: "npm-install", withExtension: "json"),
+              let data = try? Data(contentsOf: url),
+              let recording = try? JSONDecoder().decode(InstallRecording.self, from: data) else {
+            fatalError("Missing or invalid npm-install.json in the demo bundle")
+        }
+        return recording
+    }()
+    static let log = recording.events.map(\.text).joined(separator: "\n")
+    static let marker = "[trimmed output; full log: .claude/fast-jev-output/bash-<id>.txt]"
+    static let rows: [OutputRow] = {
+        let events = recording.events
+        let samples = Array(events.prefix(1))
+            + Array(events.filter { $0.text.hasPrefix("npm http fetch GET") }.prefix(9))
+            + events.filter { $0.text.hasPrefix("added ") || $0.text.hasPrefix("found ") || $0.text == "npm info ok" }
+        return samples.enumerated().map { index, event in
+            let keep = !event.text.hasPrefix("npm http")
+            return OutputRow(id: index, text: event.text, appearedAt: event.time, keep: keep, reason: keep ? "KEEP" : "DROP")
+        }
+    }()
+    static let compactText = rows.filter(\.keep).map(\.text).joined(separator: "\n") + "\n" + marker
+    static func tokens(_ text: String) -> Int { Int(ceil(Double(text.count) / 4)) }
+}
 
 struct DemoFrame: View {
     let time: Double
 
-    private var flow: Double { progress(time, from: 3.2, to: 8.0) }
-    private var collapse: Double { ease(progress(time, from: 13.0, to: 16.8)) }
-    private var done: Bool { time >= 17.0 }
+    private var collapse: Double { ease(progress(time, from: Timing.pruneStart, to: Timing.pruneEnd)) }
+    private var done: Bool { time >= Timing.done }
     private var tokens: Int {
-        Int((10_000 * flow * (1 - collapse) + 100 * collapse).rounded())
+        let received = InstallExample.recording.events
+            .prefix { $0.time <= time - Timing.installStart }
+            .map(\.text).joined(separator: "\n")
+        let before = InstallExample.tokens(received)
+        let after = InstallExample.tokens(InstallExample.compactText)
+        return Int((Double(before) * (1 - collapse) + Double(after) * collapse).rounded())
     }
     private var stage: Int {
-        time < 3.2 ? 0 : time < 8.8 ? 1 : time < 13 ? 2 : time < 17 ? 3 : 4
-    }
-    private var stageTitle: String {
-        ["Run the command.", "Here comes the noise.", "Jev finds the signal.",
-         "Prune before the model sees it.", "10,000 tokens. Only 100 sent."][stage]
-    }
-    private var stageDetail: String {
-        ["The Bash tool runs normally.",
-         "Verbose install logs pile up at the tool-result boundary.",
-         "Score output chunks against the conversation and task.",
-         "Keep useful chunks verbatim. Save the complete output.",
-         "A smaller tool result, with the full log available when needed."][stage]
+        time < Timing.installStart ? 0 : time < Timing.scanStart ? 1 : time < Timing.pruneStart ? 2 : time < Timing.done ? 3 : 4
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            header
-            HStack(alignment: .top, spacing: 20) {
-                terminal
-                sidebar
-            }
-            footer
-        }
-        .padding(36)
-        .frame(width: Style.width, height: Style.height)
-        .background(Style.background)
-        .foregroundStyle(Style.text)
-    }
-
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 10) {
-                Text("✻").font(.system(size: 27)).foregroundStyle(Style.orange)
-                Text("jev-pruner").font(Style.mono(20)).bold()
-                Text("/").foregroundStyle(Style.border).padding(.horizontal, 5)
-                Text("CLAUDE CODE PLUGIN").font(Style.mono(12)).foregroundStyle(Style.dim)
-                Spacer()
-                Text(String(format: "%02d / 05", stage + 1))
-                    .font(Style.mono(13)).foregroundStyle(Style.dim)
-            }
-            Text(stageTitle).font(.system(size: 34, weight: .semibold))
-            Text(stageDetail).font(.system(size: 17)).foregroundStyle(Style.dim)
-        }
-        .frame(height: 116, alignment: .top)
+        terminal
+            .foregroundStyle(Style.text)
     }
 
     private var terminal: some View {
@@ -112,16 +109,18 @@ struct DemoFrame: View {
                 ForEach([Style.red, Style.amber, Style.green], id: \.self) { color in
                     Circle().fill(color.opacity(0.85)).frame(width: 10, height: 10)
                 }
+                Text("claude — storefront")
+                    .font(Style.mono(12)).foregroundStyle(Style.dim)
+                    .padding(.leading, 12)
                 Spacer()
-                Text("claude — storefront").font(Style.mono(12)).foregroundStyle(Style.dim)
-                Spacer()
-                Text("Bash").font(Style.mono(11)).foregroundStyle(Style.dim)
+                tokenMeter
             }
-            .padding(.horizontal, 20).frame(height: 42).background(Style.panel)
+            .padding(.horizontal, 20).frame(height: 48).background(Style.panel)
+            Rectangle().fill(Style.border).frame(height: 1)
             VStack(alignment: .leading, spacing: 14) {
                 HStack(spacing: 10) {
                     Text(">").foregroundStyle(Style.orange)
-                    Text(String("Install the dependencies.".prefix(Int(26 * progress(time, from: 0.4, to: 1.8)))))
+                    Text("Install the dependencies.")
                     Spacer()
                 }
                 .font(Style.mono(17))
@@ -129,17 +128,20 @@ struct DemoFrame: View {
                 .padding(.horizontal, 12)
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(Style.border))
                 HStack(spacing: 9) {
-                    Circle().fill(Style.green).frame(width: 7, height: 7)
+                    if time < Timing.installEnd {
+                        Circle().trim(from: 0.1, to: 0.85)
+                            .stroke(Style.dim, lineWidth: 1.5)
+                            .frame(width: 9, height: 9)
+                            .rotationEffect(.degrees(time * 180))
+                    } else {
+                        Circle().fill(Style.green).frame(width: 9, height: 9)
+                    }
                     Text("Bash").bold()
                     Text("(").foregroundStyle(Style.dim)
-                    Text(String("npm install".prefix(Int(11 * progress(time, from: 2.0, to: 3.0)))))
+                    Text("npm install")
                     Text(")").foregroundStyle(Style.dim)
-                    if time < 3.2 {
-                        Rectangle().fill(Style.text).frame(width: 8, height: 18)
-                            .opacity(Int(time * 3) % 2 == 0 ? 1 : 0)
-                    }
                     Spacer()
-                    Text(time < 8 ? "RUNNING" : done ? "DELIVERED" : "INTERCEPTED")
+                    Text(time < Timing.installEnd ? "RUNNING" : done ? "DELIVERED" : "INTERCEPTED")
                         .font(Style.mono(10))
                         .foregroundStyle(done ? Style.green : Style.dim)
                 }
@@ -147,32 +149,48 @@ struct DemoFrame: View {
                 output
                     .frame(height: 405, alignment: .top)
                     .clipped()
+                Spacer(minLength: 0)
                 status
                     .frame(height: 52, alignment: .leading)
             }
             .padding(20)
         }
-        .frame(width: 992, height: 650)
-        .background(Style.panel.opacity(0.50))
+        .frame(width: Style.width, height: Style.height)
+        .background(Style.background)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(Style.border))
     }
 
+    private var tokenMeter: some View {
+        let color = done ? Style.green : tokens > 0 ? Style.amber : Style.dim
+        return HStack(spacing: 10) {
+            Text("Output tokens").font(Style.mono(12)).foregroundStyle(Style.dim)
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 3).fill(Style.border)
+                RoundedRectangle(cornerRadius: 3).fill(color)
+                    .frame(width: tokens == 0 ? 0 : max(3, 120 * Double(tokens) / Double(InstallExample.tokens(InstallExample.log))))
+            }
+            .frame(width: 120, height: 8)
+            Text("~" + tokens.formatted())
+                .font(Style.mono(18)).bold().monospacedDigit()
+                .foregroundStyle(color)
+                .frame(width: 78, alignment: .trailing)
+        }
+    }
+
     private var output: some View {
         ZStack(alignment: .topLeading) {
-            if time >= 3.2 && time < 8 {
-                flood
-            } else if time >= 8 {
+            if time >= Timing.installStart {
                 VStack(alignment: .leading, spacing: 0) {
-                    ForEach(outputRows) { row in
-                        let remove = row.keep ? 0 : ease(progress(time, from: 13 + Double(row.id) * 0.09, to: 14.1 + Double(row.id) * 0.09))
-                        let scanned = time >= 9.1 + Double(row.id) * 0.22
+                    ForEach(InstallExample.rows.filter { $0.appearedAt <= time - Timing.installStart }) { row in
+                        let remove = row.keep ? 0 : collapse
+                        let scanned = time >= Timing.scanStart + Double(row.id) * (Timing.scanEnd - Timing.scanStart) / Double(InstallExample.rows.count)
                         line(row, scanned: scanned)
                             .opacity(1 - remove)
-                            .offset(x: remove * 130)
+                            .offset(x: remove * 30)
                             .frame(height: 29 * (1 - remove), alignment: .top)
                             .clipped()
-                        if row.id == 0 || row.id == 5 {
+                        if row.id == 0 {
                             Text("  ⋯ [trimmed output · full log saved]")
                                 .font(Style.mono(13))
                                 .foregroundStyle(Style.dim)
@@ -181,49 +199,22 @@ struct DemoFrame: View {
                                 .clipped()
                         }
                     }
-                    if time >= 15.5 {
+                    if time >= Timing.pruneEnd {
                         archive
                             .padding(.top, 18)
-                            .opacity(ease(progress(time, from: 15.5, to: 17)))
-                            .offset(y: 12 * (1 - ease(progress(time, from: 15.5, to: 17))))
+                            .opacity(ease(progress(time, from: Timing.pruneEnd, to: Timing.done)))
                     }
                 }
             }
-            if time >= 8.9 && time <= 12.3 {
+            if time >= Timing.scanStart && time <= Timing.scanEnd {
                 VStack(spacing: 0) {
                     LinearGradient(colors: [.clear, Style.cyan.opacity(0.20)], startPoint: .top, endPoint: .bottom)
                         .frame(height: 24)
                     Rectangle().fill(Style.cyan).frame(height: 2)
                         .shadow(color: Style.cyan.opacity(0.8), radius: 10)
                 }
-                .offset(y: -24 + progress(time, from: 8.9, to: 12.3) * 401)
+                .offset(y: -24 + progress(time, from: Timing.scanStart, to: Timing.scanEnd) * 377)
             }
-        }
-    }
-
-    private var flood: some View {
-        let offset = flow * 360
-        let first = Int(offset)
-        let packages = ["react", "typescript", "vite", "esbuild", "@types/node", "rollup", "postcss", "picocolors"]
-        return VStack(alignment: .leading, spacing: 0) {
-            ForEach(0..<16, id: \.self) { i in
-                let index = first + i
-                let package = packages[index % packages.count]
-                Text(index % 3 == 0
-                     ? "npm timing idealTree:node_modules/\(package) Completed in \(index % 7)ms"
-                     : "npm http fetch GET 200 registry.npmjs.org/\(package) \(24 + index % 52)ms (cache hit)")
-                    .font(Style.mono(14))
-                    .foregroundStyle(Style.dim.opacity(0.35 + Double(i) / 24))
-                    .frame(height: 27, alignment: .leading)
-            }
-        }
-        .offset(y: -(offset - Double(first)) * 27)
-        .frame(height: 405, alignment: .top)
-        .clipped()
-        .overlay(alignment: .bottomTrailing) {
-            Text("… hundreds more lines")
-                .font(Style.mono(11)).foregroundStyle(Style.amber)
-                .padding(8).background(Style.panel)
         }
     }
 
@@ -232,11 +223,12 @@ struct DemoFrame: View {
         return HStack(spacing: 10) {
             Text("⎿").foregroundStyle(Style.dim)
             Text(row.text).foregroundStyle(scanned && row.keep ? Style.text : Style.dim)
+                .lineLimit(1)
             Spacer(minLength: 0)
             Text(scanned ? row.reason : "")
                 .font(Style.mono(10)).bold().foregroundStyle(color)
         }
-        .font(Style.mono(13.5))
+        .font(Style.mono(12))
         .padding(.horizontal, 9)
         .frame(height: 27)
         .background(RoundedRectangle(cornerRadius: 4).fill(scanned ? color.opacity(row.keep ? 0.10 : 0.07) : .clear))
@@ -267,96 +259,20 @@ struct DemoFrame: View {
                 Text(done ? "✓" : "✻").foregroundStyle(done ? Style.green : Style.cyan)
                 Text([
                     "Ready to run Bash.",
-                    "Collecting the tool result…",
-                    "jev-latest · which output chunks must stay visible?",
+                    "Installing dependencies…",
+                    "Jev Pruner · checking the output…",
                     "Dropping repetitive chunks · kept text stays verbatim",
                     "Pruned. The model receives the compact tool result."
                 ][stage])
                 .font(Style.mono(12)).foregroundStyle(done ? Style.green : Style.cyan)
             }
-            Text(done ? "Warnings + final result kept · original log available" : "No text rewriting. No generated summary.")
-                .font(Style.mono(11)).foregroundStyle(Style.dim)
-        }
-    }
-
-    private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            VStack(alignment: .leading, spacing: 14) {
-                Text("TOOL-RESULT TOKENS").font(Style.mono(11)).foregroundStyle(Style.dim)
-                Text(tokens.formatted())
-                    .font(.system(size: 53, weight: .medium, design: .monospaced))
-                    .foregroundStyle(done ? Style.green : flow > 0.6 ? Style.amber : Style.text)
-                    .monospacedDigit()
-                tokenBlocks
-                Text(done ? "99% less in this example" : "Before entering model context")
-                    .font(.system(size: 12)).foregroundStyle(done ? Style.green : Style.dim)
+            HStack {
+                Text("Recorded install · illustrative pruning · estimated tokens")
+                Spacer()
+                Text("Space to replay")
             }
-            .padding(20)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 10).fill(Style.panel))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Style.border))
-            VStack(alignment: .leading, spacing: 13) {
-                pipelineItem("01", "Bash output", detail: "10,000 tokens", active: stage >= 1, color: Style.amber)
-                Rectangle().fill(Style.border).frame(width: 1, height: 23).padding(.leading, 12)
-                pipelineItem("02", "Jev Pruner", detail: stage >= 2 ? "Score → keep → prune" : "Waiting for output", active: stage >= 2, color: Style.cyan)
-                Rectangle().fill(Style.border).frame(width: 1, height: 23).padding(.leading, 12)
-                pipelineItem("03", "Model context", detail: done ? "100 tokens delivered" : "Nothing delivered yet", active: done, color: Style.green)
-            }
-            .padding(.horizontal, 10).padding(.vertical, 10)
-            Spacer(minLength: 0)
-            VStack(alignment: .leading, spacing: 8) {
-                Text(done ? "10,000 → 100" : "Noise stays out.")
-                    .font(Style.mono(20)).foregroundStyle(done ? Style.green : Style.text)
-                Text(done ? "Same retained text.\nMore room for the task." : "The command still runs.\nThe useful output stays.")
-                    .font(.system(size: 14)).foregroundStyle(Style.dim)
-                    .lineSpacing(4)
-            }
-            .padding(20)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(done ? Style.green.opacity(0.35) : Style.border))
+            .font(Style.mono(11)).foregroundStyle(Style.dim)
         }
-        .frame(width: 356, height: 650, alignment: .top)
-    }
-
-    private var tokenBlocks: some View {
-        VStack(spacing: 4) {
-            ForEach(0..<4, id: \.self) { row in
-                HStack(spacing: 4) {
-                    ForEach(0..<20, id: \.self) { column in
-                        let lit = row * 20 + column < max(tokens > 0 ? 1 : 0, Int(Double(tokens) / 125))
-                        RoundedRectangle(cornerRadius: 2)
-                            .fill(lit ? (done ? Style.green : Style.amber) : Style.border.opacity(0.4))
-                            .frame(height: 8)
-                    }
-                }
-            }
-        }
-    }
-
-    private func pipelineItem(_ index: String, _ name: String, detail: String, active: Bool, color: Color) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            Text(index).font(Style.mono(11))
-                .foregroundStyle(active ? color : Style.dim)
-                .frame(width: 26, height: 26)
-                .background(Circle().fill(active ? color.opacity(0.12) : Style.border.opacity(0.4)))
-            VStack(alignment: .leading, spacing: 6) {
-                Text(name).font(.system(size: 17, weight: .medium))
-                Text(detail).font(Style.mono(11)).foregroundStyle(active ? color : Style.dim)
-            }
-        }
-        .opacity(active ? 1 : 0.5)
-    }
-
-    private var footer: some View {
-        HStack {
-            Text("ILLUSTRATIVE ANIMATION")
-                .font(Style.mono(10)).foregroundStyle(Style.orange)
-            Text("Scripted output, scores and token counts · not a benchmark")
-                .font(.system(size: 12)).foregroundStyle(Style.dim)
-            Spacer()
-            Text("SPACE TO REPLAY").font(Style.mono(10)).foregroundStyle(Style.dim)
-        }
-        .frame(height: 14)
     }
 }
 
@@ -434,7 +350,8 @@ enum Export {
         guard writer.startWriting() else { throw writer.error ?? ExportError.cannotWriteFrame }
         writer.startSession(atSourceTime: .zero)
         do {
-            for frame in 0..<Int(Style.duration * 30) {
+            let frameCount = Style.frameCount
+            for frame in 0..<frameCount {
                 while !input.isReadyForMoreMediaData {
                     guard writer.status == .writing else { throw writer.error ?? ExportError.cannotWriteFrame }
                     try await Task.sleep(for: .milliseconds(5))
@@ -459,7 +376,7 @@ enum Export {
                         throw writer.error ?? ExportError.cannotWriteFrame
                     }
                 }
-                if frame % 150 == 0 { print("Rendered \(frame)/750 frames") }
+                if frame % 150 == 0 { print("Rendered \(frame)/\(frameCount) frames") }
             }
             input.markAsFinished()
             writer.endSession(atSourceTime: CMTime(seconds: Style.duration, preferredTimescale: 30))
@@ -493,7 +410,7 @@ enum JevPrunerDemo {
                     }
                     exit(0)
                 } catch {
-                    fputs("Demo export failed: \(error)\nUsage: --export movie.mp4 | --frame <0…25> image.png\n", stderr)
+                    fputs("Demo export failed: \(error)\nUsage: --export movie.mp4 | --frame <0…\(Style.duration)> image.png\n", stderr)
                     exit(1)
                 }
             }
