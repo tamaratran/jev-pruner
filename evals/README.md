@@ -43,8 +43,13 @@ synthetic fixture. Assert control has no Jev requests or pruning markers;
 plugin must show HTTP 200 captures, production trim logs, original archives,
 and matching pruned tool results. A CLI exit code of zero alone proves nothing.
 The smoke is not included in benchmark scores.
-The smoke launcher supports API mode only and rejects subscription mode before
-starting Docker, so selecting subscription never silently falls back to API billing.
+The smoke supports the same explicit API/subscription selection as the pilot.
+In subscription mode it reuses the private read-only login mount, clears auth
+overrides, forces Claude.ai, and runs the filtered auth preflight before inference.
+Both arms require the pinned CLI and a successful measured result. The launcher
+writes per-arm `summary.json` files and stops unless the treatment proves real
+Jev responses and matching trimmed transcript results. Use committed sources and
+a new absolute evidence directory outside the repo.
 
 ## Subscription authentication
 
@@ -84,8 +89,14 @@ Only when another evaluation is explicitly approved, configure the launcher:
 export JEV_EVAL_AUTH_MODE=subscription
 export JEV_EVAL_CLAUDE_AUTH_DIR="$CLAUDE_AUTH_HOME/.claude"
 # Use a new EVIDENCE_DIR and keep TYPESAFE_API_KEY supplied as before.
+# bash evals/smoke.sh starts the paired activation smoke.
 # bash evals/pilot.sh starts inference; authentication alone does not authorize it.
 ```
+
+The subscription pilot stops after any failed command, incomplete/invalid trial,
+or Claude error, including authentication, model-access, and rate-limit errors.
+It does not retry, switch models, or fall back to API billing. A completed verifier
+reward of zero remains a valid result and does not stop the pilot.
 
 Each disposable container copies only the CLI's `.credentials.json` and
 `.claude.json` from the read-only mount into a new private Claude config directory

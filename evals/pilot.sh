@@ -47,6 +47,12 @@ for task in build-cython-ext chess-best-move configure-git-webserver; do
       -n 1 -k 1 -r 0 --timeout-multiplier 1.0 \
       --job-name "pilot-$task-$arm" --jobs-dir "$EVIDENCE_DIR/jobs" "${auth_args[@]}"; then
       status=1
+      if [[ "${JEV_EVAL_AUTH_MODE:-api}" == subscription ]]; then break 2; fi
+    fi
+    if [[ "${JEV_EVAL_AUTH_MODE:-api}" == subscription ]] &&
+      ! python3 "$repo/evals/summarize.py" "$EVIDENCE_DIR/jobs/pilot-$task-$arm" --job; then
+      status=1
+      break 2
     fi
   done
 done
