@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from harbor.environments.base import ExecResult
@@ -144,3 +145,34 @@ class ContinuationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertRaises(TimeoutError),
             ):
                 await environment._sdk_download_dir("/logs/agent", Path(directory))
+
+    async def test_cancelled_exec_does_not_wait_for_sdk_cancellation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            environment = provider(Path(directory))
+            release = asyncio.Event()
+
+            async def read() -> str:
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    await release.wait()
+                    raise
+                return ""
+
+            process = SimpleNamespace(
+                stdout=SimpleNamespace(read=SimpleNamespace(aio=read)),
+                stderr=SimpleNamespace(read=SimpleNamespace(aio=read)),
+                wait=SimpleNamespace(aio=AsyncMock(return_value=0)),
+            )
+            sandbox = SimpleNamespace(
+                exec=SimpleNamespace(aio=AsyncMock(return_value=process))
+            )
+            with patch.object(environment, "_sandbox", sandbox):
+                task = asyncio.create_task(environment._sdk_exec("long command"))
+                await asyncio.sleep(0)
+                task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await asyncio.wait_for(task, 0.1)
+                self.assertEqual(environment.lifecycle["cancelled_execs"], 1)
+                release.set()
+                await asyncio.sleep(0)

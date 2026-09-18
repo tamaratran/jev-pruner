@@ -49,6 +49,13 @@ def verify_downloads(root: Path, manifest: str) -> dict[str, str]:
     return verified
 
 
+def consume_cancelled_exec(task: asyncio.Task[ExecResult]) -> None:
+    try:
+        task.exception()
+    except BaseException:
+        pass
+
+
 class PinnedModalEnvironment(ModalEnvironment):
     def __init__(
         self,
@@ -227,12 +234,25 @@ class PinnedModalEnvironment(ModalEnvironment):
             env=self._merge_env(env),
             timeout=timeout_sec,
         )
-        stdout, stderr = await asyncio.gather(
-            process.stdout.read.aio(), process.stderr.read.aio()
-        )
-        return ExecResult(
-            stdout=stdout, stderr=stderr, return_code=await process.wait.aio()
-        )
+
+        async def finish() -> ExecResult:
+            stdout, stderr = await asyncio.gather(
+                process.stdout.read.aio(), process.stderr.read.aio()
+            )
+            return ExecResult(
+                stdout=stdout, stderr=stderr, return_code=await process.wait.aio()
+            )
+
+        pending = asyncio.create_task(finish())
+        try:
+            return await asyncio.shield(pending)
+        except asyncio.CancelledError:
+            self.lifecycle["cancelled_execs"] = (
+                self.lifecycle.get("cancelled_execs", 0) + 1
+            )
+            pending.cancel()
+            pending.add_done_callback(consume_cancelled_exec)
+            raise
 
     async def _sdk_upload_file(self, source_path: Path | str, target_path: str) -> None:
         if self._sandbox is None:
