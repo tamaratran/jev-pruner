@@ -1,5 +1,7 @@
-import { estimateTokens, noulAnswer } from './jev.js';
+import { estimateStateTokens, noulAnswer } from './jev.js';
 import type { JevAsker, JevQuestions } from './jev.js';
+import { fitHistory } from './history.js';
+import type { ConversationMessage, HistoryEntry } from './history.js';
 
 const DEFAULT_MIN_CHARS = 4_000;
 const DEFAULT_CHUNK_LINES = 20;
@@ -11,11 +13,8 @@ const MAX_CHUNKS = 200;
 const MAX_LINE_CHARS = 2_000;
 const ERROR_PATTERN =
   /\b(error|errors|failed|failure|fatal|exception|traceback|panic|assert|denied|refused|timeout|cannot|unable|warning)\b/i;
-const estimateOutputTokens = (text: string): number =>
-  estimateTokens(text) + (text.match(/\d/g)?.length ?? 0) / 2;
-
 const OUTPUT_CONTEXT =
-  'A coding agent ran a shell command. Its output is split into numbered chunks. The agent will only see the chunks that are kept; the full output is saved to a file it can read later. Decide which chunks the agent needs to understand the outcome of the command and continue its task: errors, failures, warnings, summaries, final results, and lines the task depends on are needed; repetitive progress output, verbose listings, download/install noise and boilerplate are not.';
+  'A coding agent ran a shell command. `history` is the conversation so far, oldest first, with tool outputs replaced by status and length notes; long inputs and texts may be abridged and older text-only messages may be omitted. Use its instructions and decisions to judge what the task needs. The current command output is split into numbered chunks. The agent will only see the chunks that are kept; the full output is saved to a file it can read later. Decide which chunks the agent needs to understand the outcome of the command and continue its task: errors, failures, warnings, summaries, final results, and lines the task depends on are needed; repetitive progress output, verbose listings, download/install noise and boilerplate are not.';
 
 export interface TrimOutputOptions {
   minChars?: number;
@@ -29,6 +28,7 @@ export interface TrimOutputInput {
   goal: string;
   output: string;
   fullOutputPath?: string;
+  messages?: readonly ConversationMessage[];
 }
 
 export interface TrimOutputResult {
@@ -118,10 +118,12 @@ function chunkOutput(output: string, chunkLines: number): OutputChunk[] {
 function stateFor(
   input: TrimOutputInput,
   chunks: readonly OutputChunk[],
-): { context: string; task: string; command: string; chunks: { id: string; text: string }[] } {
+  history: HistoryEntry[],
+) {
   return {
     context: OUTPUT_CONTEXT,
     task: input.goal,
+    history,
     command: input.command,
     chunks: chunks.map(({ id, text }) => ({ id, text })),
   };
@@ -150,7 +152,7 @@ function batches(
   let current: OutputChunk[] = [];
   let currentTokens = 0;
   for (const chunk of chunks) {
-    const tokens = estimateOutputTokens(JSON.stringify(questionFor(chunk)));
+    const tokens = estimateStateTokens(JSON.stringify(questionFor(chunk)));
     if (current.length > 0 && currentTokens + tokens > budget) {
       result.push(current);
       current = [];
@@ -228,8 +230,13 @@ async function trimOutputAttempt(
   if (chunks.length <= 2) return untrimmed(input.output, chunks.length, []);
 
   let stateChunks = chunks.map((chunk) => ({ ...chunk }));
-  let state = stateFor(input, stateChunks);
-  let stateTokens = estimateOutputTokens(JSON.stringify(state));
+  const outputTokens = estimateStateTokens(JSON.stringify(stateFor(input, stateChunks, [])));
+  const history = fitHistory(
+    input.messages ?? [],
+    maxStateTokens - Math.min(outputTokens, Math.ceil(maxStateTokens / 2)),
+  );
+  let state = stateFor(input, stateChunks, history);
+  let stateTokens = estimateStateTokens(JSON.stringify(state));
   let omitted = new Set<number>();
   if (stateTokens > maxStateTokens) {
     stateChunks = chunks.map((chunk) => ({
@@ -239,8 +246,8 @@ async function trimOutputAttempt(
         .map((line) => line.slice(0, 200))
         .join('\n'),
     }));
-    state = stateFor(input, stateChunks);
-    stateTokens = estimateOutputTokens(JSON.stringify(state));
+    state = stateFor(input, stateChunks, history);
+    stateTokens = estimateStateTokens(JSON.stringify(state));
   }
   if (stateTokens > maxStateTokens) {
     // Chunks left out of the state are never scored, so they are KEPT, not
@@ -254,25 +261,19 @@ async function trimOutputAttempt(
             index >= 40 && index < chunks.length - 40 && !ERROR_PATTERN.test(chunks[index]!.text),
         ),
     );
-    stateChunks = chunks.map((chunk, index) =>
-      omitted.has(index)
-        ? { ...chunk, text: '[… omitted from state …]' }
-        : { ...chunk },
-    );
-    state = stateFor(input, stateChunks);
-    stateTokens = estimateOutputTokens(JSON.stringify(state));
+    stateChunks = chunks.filter((_, index) => !omitted.has(index));
+    state = stateFor(input, stateChunks, history);
+    stateTokens = estimateStateTokens(JSON.stringify(state));
   }
 
   if (stateTokens > maxStateTokens) {
     let perChunkChars = 400;
     while (stateTokens > maxStateTokens) {
-      stateChunks = chunks.map((chunk, index) =>
-        omitted.has(index)
-          ? { ...chunk, text: '[… omitted from state …]' }
-          : { ...chunk, text: chunk.text.slice(0, perChunkChars) },
-      );
-      state = stateFor(input, stateChunks);
-      stateTokens = estimateOutputTokens(JSON.stringify(state));
+      stateChunks = chunks
+        .filter((_, index) => !omitted.has(index))
+        .map((chunk) => ({ ...chunk, text: chunk.text.slice(0, perChunkChars) }));
+      state = stateFor(input, stateChunks, history);
+      stateTokens = estimateStateTokens(JSON.stringify(state));
       if (stateTokens <= maxStateTokens || perChunkChars === 50) break;
       perChunkChars = Math.max(50, Math.floor(perChunkChars / 2));
     }
@@ -294,16 +295,16 @@ async function trimOutputAttempt(
         });
       for (let start = 0; stateTokens > maxStateTokens && start < candidates.length; start += 10) {
         for (const index of candidates.slice(start, start + 10)) omitted.add(index);
-        stateChunks = chunks.map((chunk, index) =>
-          omitted.has(index)
-            ? { ...chunk, text: '[… omitted from state …]' }
-            : { ...chunk, text: chunk.text.slice(0, 50) },
-        );
-        state = stateFor(input, stateChunks);
-        stateTokens = estimateOutputTokens(JSON.stringify(state));
+        stateChunks = chunks
+          .filter((_, index) => !omitted.has(index))
+          .map((chunk) => ({ ...chunk, text: chunk.text.slice(0, 50) }));
+        state = stateFor(input, stateChunks, history);
+        stateTokens = estimateStateTokens(JSON.stringify(state));
       }
     }
   }
+
+  if (stateTokens > maxStateTokens) return untrimmed(input.output, chunks.length, []);
 
   const asked = chunks.filter((_, index) => !omitted.has(index));
   const scores = Array<number>(chunks.length).fill(0);

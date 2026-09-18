@@ -160,3 +160,7 @@ export function estimateTokens(text: string): number {
   }
   return Math.ceil(tokens);
 }
+
+export function estimateStateTokens(text: string): number {
+  return estimateTokens(text) + (text.match(/\d/g)?.length ?? 0) / 2;
+}
