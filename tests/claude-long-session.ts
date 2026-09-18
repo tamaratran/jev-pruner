@@ -210,7 +210,8 @@ async function analyze(): Promise<void> {
       assert(estimateStateTokens(stateText) <= 25_000);
     }
     assert(state.history[0]?.text.includes('Our deployment target is Q7.'));
-    assert(state.history.some(e => e.role === 'assistant' && e.text.includes('stable-snapshot')));
+    check(state.history.some(e => e.role === 'assistant' && e.text.includes('stable-snapshot')),
+      `Earlier assistant decision absent from scoring history at stage ${turn.stage}`);
     const toolMetadata = state.history.flatMap(entry => entry.tool_calls ?? []);
     assert(!JSON.stringify(toolMetadata).includes('OLDER_BASH_RESULT_ONLY_79a61e'));
     assert(state.history.some(e => e.tool_calls?.some(c => c.result.includes('omitted'))));
