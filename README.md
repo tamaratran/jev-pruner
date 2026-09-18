@@ -146,3 +146,29 @@ misses. To reanalyze saved evidence without making API calls, run
 Related: [fast-jev-compaction](https://github.com/tamaratran/fast-jev-compaction)
 (same author) applies Jev to session compaction; the two are independent and
 can be installed together.
+
+## Animated demo (macOS)
+
+`demo/JevPrunerDemo` matches the dark terminal, scanning beam and collapsing
+output of the fast-jev-compaction demo. A scripted `npm install` fills the
+terminal, Jev marks chunks to keep or drop, and the tool result shrinks from
+10,000 to 100 illustrative tokens. Retained text stays verbatim and a saved-log
+card shows where the original output can be read.
+
+This is a 25-second animation, not a live install or benchmark. Output, scores,
+timings and token counts are scripted; it makes no API requests. Rows represent
+larger output chunks, and omission markers are shortened for readability.
+The full-output path uses the plugin's existing `fast-jev-output` directory.
+
+Requires macOS 14+ and the Xcode command-line tools. No extra packages are needed.
+
+```sh
+demo/JevPrunerDemo/build.sh             # build and open; Space replays
+demo/JevPrunerDemo/build.sh --no-launch # build without opening a window
+demo/JevPrunerDemo/build.sh --export "$PWD/demo/JevPrunerDemo/build/jev-pruner.mp4"
+demo/JevPrunerDemo/build.sh --frame 18 "$PWD/demo/JevPrunerDemo/build/poster.png"
+```
+
+Export renders the same timeline directly to a 1440×900 H.264 MP4 at 30 fps.
+Use a new output filename for each movie export; existing movies are not
+overwritten. Build products and exports under the demo's `build/` are ignored.
