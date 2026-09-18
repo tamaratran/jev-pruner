@@ -496,7 +496,16 @@ def continue_trials(
             ):
                 raise ValueError("Historical scored settings differ")
             retain_trial_summary(row, summarize_trial(result_path))
-            if row["measurement_issues"] or row["reward"] is None:
+            timeout_without_usage = (
+                (row.get("exception") or {}).get("exception_type")
+                == "AgentTimeoutError"
+                and row["measurement_issues"]
+                == ["Final Claude result missing; usage totals unavailable"]
+                and not access_blocker(read_events(location / "agent/claude-code.txt"))
+            )
+            if row["reward"] is None or (
+                row["measurement_issues"] and not timeout_without_usage
+            ):
                 raise ValueError("Historical scored measurements are incomplete")
             row.update(
                 modal=lifecycle,

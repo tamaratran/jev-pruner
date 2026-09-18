@@ -119,6 +119,42 @@ class CampaignTests(unittest.TestCase):
                 self.assertEqual(
                     json.loads((source / "progress.json").read_text()), old
                 )
+                summary.update(
+                    exception={"exception_type": "AgentTimeoutError"},
+                    measurement_issues=[
+                        "Final Claude result missing; usage totals unavailable"
+                    ],
+                )
+                continued = continue_trials(source, document, 1, {"a": pin})
+                self.assertEqual(continued[0]["state"], "finished")
+                self.assertEqual(continued[0]["reward"], 0)
+                self.assertEqual(continued[0]["agent_attempts"], 1)
+                self.assertEqual(
+                    continued[0]["measurement_issues"], summary["measurement_issues"]
+                )
+                self.assertEqual(
+                    continued[0]["continuation"]["kind"], "preserved_scored_result"
+                )
+                with (
+                    patch(
+                        "evals.modal_runner.access_blocker", return_value="access limit"
+                    ),
+                    self.assertRaisesRegex(ValueError, "measurements are incomplete"),
+                ):
+                    continue_trials(source, document, 1, {"a": pin})
+                summary["reward"] = None
+                with self.assertRaisesRegex(ValueError, "measurements are incomplete"):
+                    continue_trials(source, document, 1, {"a": pin})
+                summary["reward"] = 0
+                summary["measurement_issues"] = ["Observer activation missing"]
+                with self.assertRaisesRegex(ValueError, "measurements are incomplete"):
+                    continue_trials(source, document, 1, {"a": pin})
+                summary["measurement_issues"] = [
+                    "Final Claude result missing; usage totals unavailable"
+                ]
+                summary["exception"] = None
+                with self.assertRaisesRegex(ValueError, "measurements are incomplete"):
+                    continue_trials(source, document, 1, {"a": pin})
                 with self.assertRaisesRegex(ValueError, "scored attempt"):
                     continue_trials(
                         source,
