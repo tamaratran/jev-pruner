@@ -24,7 +24,8 @@
     "test": "vitest run",
     "test:live": "tsx --test tests/jev-live.ts",
     "typecheck:hooks": "tsc -p tsconfig.hooks.json",
-    "validate:plugin": "claude plugin validate .claude-plugin/plugin.json"
+    "validate:plugin": "claude plugin validate .claude-plugin/plugin.json",
+    "eval:manual": "tsx evals/manual/run.mts"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

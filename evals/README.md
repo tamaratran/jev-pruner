@@ -40,3 +40,31 @@ EVAL_TYPESAFE_API_KEY="$TYPESAFE_API_KEY" claude plugin eval . --trust-plugin --
 
 That key path is ready for when the harness runs hooks; today it changes
 nothing.
+
+## Manual eval
+
+`evals/manual/run.mts` calls `trimOutput` directly against live Jev, so a sweep
+costs cents and runs in seconds — the loop to use while tuning thresholds. Each
+scenario carries the text an agent would need afterwards, and the run reports
+whether it survived, how much went away, and how long a decision took.
+
+```sh
+TYPESAFE_API_KEY=... npm run eval:manual      # RUNS=3 by default
+```
+
+Twelve scenarios: eight that should trim (build error, pytest summary, npm
+install, a serial number among 300 lines, two latency outliers, a stack trace,
+grep hits, a Docker failure) and four that should pass through whole (a git log
+where every line matters, a JSON document, binary data, short output).
+
+Sweep on 2026-09-18, 3 runs per scenario, `jev-latest`:
+
+| Measure | Result |
+| --- | --- |
+| Needles kept | 24/24 |
+| Mean reduction | 83% (71–92%) on scenarios meant to trim |
+| Wrongly trimmed | 0/12 pass-through runs |
+| Mean latency | 240 ms |
+
+Unlike the `claude plugin eval` cases above, this exercises the real pruning
+path, because it does not go through the eval harness.
