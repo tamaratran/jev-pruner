@@ -1,4 +1,4 @@
-"""Serial matched runs with immutable sources, explicit coverage, and access stops."""
+"""Matched runs with bounded concurrency, checkpoints, and access stops."""
 
 import argparse
 import hashlib
@@ -233,6 +233,82 @@ def checkpoint(root: Path, rows: list[dict]) -> None:
     save(root / "results.json", aggregate(rows))
 
 
+def next_pending(rows: list[dict]) -> int | None:
+    running_tasks = {row["task"] for row in rows if row["state"] == "running"}
+    return next(
+        (
+            index
+            for index, row in enumerate(rows)
+            if row["state"] == "pending" and row["task"] not in running_tasks
+        ),
+        None,
+    )
+
+
+def stop_trial(process: subprocess.Popen) -> None:
+    try:
+        os.killpg(process.pid, signal.SIGINT)
+    except ProcessLookupError:
+        pass
+    try:
+        process.wait(timeout=120)
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGTERM)
+        process.wait(timeout=30)
+
+
+def finish_trial(root: Path, row: dict, environment: str) -> str | None:
+    job = root / "jobs" / row["job_name"]
+    reason = trial_blocker(job)
+    paths = list(job.glob("*/result.json"))
+    if len(paths) == 1:
+        row.update(summarize_trial(paths[0]))
+        row["failure_category"] = failure_category(row)
+        row["state"] = "finished"
+    else:
+        row["state"] = "infrastructure_error"
+        row["failure_category"] = "infrastructure"
+        row["error"] = f"Expected one trial result, found {len(paths)}"
+        reason = reason or row["error"]
+    if environment == "docker":
+        inspected = subprocess.run(
+            [
+                "docker",
+                "image",
+                "inspect",
+                row["requested_docker_image"],
+                "--format",
+                "{{json .RepoDigests}}",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if inspected.returncode == 0:
+            row["image_repo_digests"] = json.loads(inspected.stdout)
+    if row.get("task_revision") not in {
+        None,
+        "69671fbaac6d67a7ef0dfec016cc38a64ef7a77c",
+    }:
+        reason = "Unexpected benchmark revision in trial result"
+    issues = row.get("measurement_issues") or []
+    if row.get("model") and any(
+        issue.startswith(
+            (
+                "Unexpected plugins",
+                "Observer activation missing",
+                "Pruning logs",
+                "Missing original output",
+                "Jev errors",
+                "Jev requests",
+            )
+        )
+        for issue in issues
+    ):
+        reason = reason or "Instrumentation or Jev failure; inspect trial evidence"
+    return reason
+
+
 def continuation_rows(
     root: Path, manifest: list[dict], flags: list[str], pin: dict
 ) -> list[dict]:
@@ -286,7 +362,10 @@ def run(
     harbor: str,
     environment: str = "docker",
     resume: bool = False,
+    concurrency: int = 1,
 ) -> None:
+    if concurrency < 1:
+        raise ValueError("Concurrency must be positive")
     if os.environ.get("JEV_EVAL_AUTH_MODE") != "subscription":
         raise ValueError("Explicit JEV_EVAL_AUTH_MODE=subscription is required")
     if (root / "progress.json").exists() and not resume:
@@ -340,7 +419,8 @@ def run(
         ),
         "auth_mode": "subscription",
         "api_overrides_present_in_launcher": sorted(set(AUTH_OVERRIDES) & set(env)),
-        "concurrency": 1,
+        "concurrency": concurrency,
+        "pair_arm_order": "manifest; arms of the same task never overlap",
         "harbor_retries": 0,
         "resume": resume,
         "pending_trials": sum(row["state"] == "pending" for row in rows),
@@ -367,128 +447,100 @@ def run(
     (root / "jobs").mkdir(exist_ok=resume)
     (root / "console").mkdir(exist_ok=resume)
     checkpoint(root, rows)
-    for index, row in enumerate(rows):
-        if row["state"] != "pending":
-            continue
-        if source_hashes() != pin:
-            raise RuntimeError("Sources changed during run; no further trials started")
-        if shutil.disk_usage(root).free < 20 * 1024**3:
-            save(
-                root / "blocker.json",
-                {
-                    "reason": "Less than 20 GiB disk free before next trial",
-                    "index": index,
-                },
-            )
-            return
-        task_config = tomllib.loads((benchmark / row["task"] / "task.toml").read_text())
-        image = task_config["environment"]["docker_image"]
-        job = root / "jobs" / row["job_name"]
-        command = [
-            harbor,
-            "run",
-            *FLAGS,
-            "-i",
-            row["task"],
-            "--job-name",
-            row["job_name"],
-            "--jobs-dir",
-            str(root / "jobs"),
-            *environment_flags,
-        ]
-        row["command"] = command
-        row["execution_commit"] = provenance["commit"]
-        row["state"] = "running"
-        checkpoint(root, rows)
-        print(f"START {index + 1}/178 {row['task']} {row['arm']}", flush=True)
-        reason = None
-        with (root / "console" / f"{row['job_name']}.txt").open("w") as output:
-            process = subprocess.Popen(
-                command,
-                env={**env, "JEV_EVAL_ARM": row["arm"]},
-                cwd=REPO,
-                stdout=output,
-                stderr=subprocess.STDOUT,
-                start_new_session=True,
-            )
-            while process.poll() is None:
-                reason = trial_blocker(job)
-                if reason:
-                    os.killpg(process.pid, signal.SIGINT)
-                    try:
-                        process.wait(timeout=120)
-                    except subprocess.TimeoutExpired:
-                        os.killpg(process.pid, signal.SIGTERM)
-                        process.wait(timeout=30)
-                    break
-                time.sleep(5)
-        row["harbor_return_code"] = process.returncode
-        paths = list(job.glob("*/result.json"))
-        if len(paths) == 1:
-            row.update(summarize_trial(paths[0]))
-            row["failure_category"] = failure_category(row)
-            row["state"] = "finished"
-        else:
-            row["state"] = "infrastructure_error"
-            row["failure_category"] = "infrastructure"
-            row["error"] = f"Expected one trial result, found {len(paths)}"
-            reason = reason or row["error"]
-        row["requested_docker_image"] = image
-        if environment == "docker":
-            inspected = subprocess.run(
-                [
-                    "docker",
-                    "image",
-                    "inspect",
-                    image,
-                    "--format",
-                    "{{json .RepoDigests}}",
-                ],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            if inspected.returncode == 0:
-                row["image_repo_digests"] = json.loads(inspected.stdout)
-        checkpoint(root, rows)
-        print(
-            f"END {index + 1}/178 reward={row.get('reward')} category={row.get('failure_category')}",
-            flush=True,
-        )
-        reason = reason or trial_blocker(job)
-        if row.get("task_revision") not in {
-            None,
-            "69671fbaac6d67a7ef0dfec016cc38a64ef7a77c",
-        }:
-            reason = "Unexpected benchmark revision in trial result"
-        issues = row.get("measurement_issues") or []
-        if row.get("model") and any(
-            issue.startswith(
-                (
-                    "Unexpected plugins",
-                    "Observer activation missing",
-                    "Pruning logs",
-                    "Missing original output",
-                    "Jev errors",
-                    "Jev requests",
-                )
-            )
-            for issue in issues
-        ):
-            reason = reason or "Instrumentation or Jev failure; inspect trial evidence"
-        if reason:
+    active: dict[int, subprocess.Popen] = {}
+    paused = False
+
+    def pause(index: int, reason: str) -> None:
+        nonlocal paused
+        if not paused:
             save(
                 root / "blocker.json",
                 {
                     "reason": reason,
                     "index": index,
-                    "task": row["task"],
-                    "arm": row["arm"],
+                    "task": rows[index]["task"],
+                    "arm": rows[index]["arm"],
                 },
             )
             print(f"PAUSED: {reason}", flush=True)
-            return
-    save(root / "finished.json", {"finished_at": datetime.now(UTC).isoformat()})
+        paused = True
+
+    while True:
+        for index, process in list(active.items()):
+            row = rows[index]
+            reason = trial_blocker(root / "jobs" / row["job_name"])
+            if reason:
+                pause(index, reason)
+                if process.poll() is None:
+                    stop_trial(process)
+            if process.poll() is None:
+                continue
+            row["harbor_return_code"] = process.returncode
+            final_reason = finish_trial(root, row, environment)
+            reason = reason or final_reason
+            checkpoint(root, rows)
+            print(
+                f"END {index + 1}/178 reward={row.get('reward')} category={row.get('failure_category')}",
+                flush=True,
+            )
+            del active[index]
+            if reason:
+                pause(index, reason)
+        while not paused and len(active) < concurrency:
+            candidate = next_pending(rows)
+            if candidate is None:
+                break
+            index = candidate
+            row = rows[index]
+            if source_hashes() != pin:
+                pause(index, "Sources changed during run; no further trials started")
+                break
+            if shutil.disk_usage(root).free < 20 * 1024**3:
+                pause(index, "Less than 20 GiB disk free before next trial")
+                break
+            task_config = tomllib.loads(
+                (benchmark / row["task"] / "task.toml").read_text()
+            )
+            row["requested_docker_image"] = task_config["environment"]["docker_image"]
+            command = [
+                harbor,
+                "run",
+                *FLAGS,
+                "-i",
+                row["task"],
+                "--job-name",
+                row["job_name"],
+                "--jobs-dir",
+                str(root / "jobs"),
+                *environment_flags,
+            ]
+            row["command"] = command
+            row["execution_commit"] = provenance["commit"]
+            row["execution_concurrency"] = concurrency
+            row["state"] = "running"
+            checkpoint(root, rows)
+            print(f"START {index + 1}/178 {row['task']} {row['arm']}", flush=True)
+            try:
+                with (root / "console" / f"{row['job_name']}.txt").open("w") as output:
+                    active[index] = subprocess.Popen(
+                        command,
+                        env={**env, "JEV_EVAL_ARM": row["arm"]},
+                        cwd=REPO,
+                        stdout=output,
+                        stderr=subprocess.STDOUT,
+                        start_new_session=True,
+                    )
+            except OSError as error:
+                row["state"] = "infrastructure_error"
+                row["failure_category"] = "infrastructure"
+                row["error"] = str(error)
+                checkpoint(root, rows)
+                pause(index, f"Could not start Harbor: {error}")
+        if not active:
+            break
+        time.sleep(5)
+    if not paused:
+        save(root / "finished.json", {"finished_at": datetime.now(UTC).isoformat()})
 
 
 if __name__ == "__main__":
@@ -498,6 +550,7 @@ if __name__ == "__main__":
     parser.add_argument("--harbor", default="harbor")
     parser.add_argument("--environment", choices=("docker", "modal"), default="docker")
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--concurrency", type=int, default=1)
     args = parser.parse_args()
     run(
         args.evidence.resolve(),
@@ -505,4 +558,5 @@ if __name__ == "__main__":
         args.harbor,
         args.environment,
         args.resume,
+        args.concurrency,
     )
