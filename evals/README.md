@@ -391,10 +391,13 @@ drain active trials without interrupting an agent attempt. `active-trials.json`
 records the configured limit, launch count and active job names.
 
 Parallel launches require the private access expiry to exceed each selected
-trial's full build/runtime bound plus ten minutes. Near expiry the runner falls
-back to one trial so a runtime refresh can be checkpointed without concurrent
-writers. Unexpected competing credential updates still fail closed. This
-does not bypass Claude subscription limits; access failures stop scheduling.
+trial's full build/runtime bound plus ten minutes. Eligible rows that fit this
+window run before longer rows that require exclusive execution, retaining
+manifest order within each group and the original arm order within each task.
+After safe rows finish, the runner falls back to one trial so a runtime refresh
+can be checkpointed without concurrent writers. The initial subscription recheck
+remains an exclusive barrier. Unexpected competing credential updates still fail
+closed. This does not bypass Claude subscription limits; access failures stop scheduling.
 
 Use `--checkpoint-tasks 10` to save `small-results.json` once the first ten
 manifest tasks finish both arms. These are the first tasks in alphabetical
