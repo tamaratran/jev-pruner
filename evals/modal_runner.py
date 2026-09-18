@@ -183,6 +183,7 @@ def trial_config(
                 "image_pin": pin,
                 "approved": approved,
                 "preflight": preflight,
+                "reuse_image": row.get("subscription_recheck", False),
                 "sandbox_timeout_secs": spec[
                     "preflight_lifetime_seconds"
                     if preflight
@@ -310,7 +311,10 @@ def seed_images(
     ledger = load(source / "budget.json")
     if ledger["unreconciled_import"] or prior_accounted < ledger["accounted_usd"]:
         raise ValueError("Seed preflight spending must remain reserved")
-    prior_rows = json.loads((source / "progress.json").read_text())
+    progress = source / "preflight-progress.json"
+    if not progress.exists():
+        progress = source / "progress.json"
+    prior_rows = json.loads(progress.read_text())
     rows = preflight_manifest(document["tasks"])
     if {row["task"] for row in prior_rows} != {row["task"] for row in rows}:
         raise ValueError("Seed preflight task inventory differs")
@@ -321,7 +325,11 @@ def seed_images(
         row["prior_preflight_state"] = previous_row["state"]
         if previous_row["state"] != "finished":
             continue
-        location = source / "trials" / previous_row["job_name"]
+        location = Path(
+            previous_row.get(
+                "reused_preflight", source / "trials" / previous_row["job_name"]
+            )
+        )
         lifecycle = load(location / "modal-lifecycle.json")
         pin = pins[row["task"]]
         if (
@@ -365,6 +373,110 @@ def seed_images(
             modal=lifecycle,
         )
     return rows, images
+
+
+def continue_trials(
+    source: Path, document: dict, prior_accounted: float, images: dict
+) -> list[dict]:
+    previous = load(source / "provenance.json")
+    if {k: v for k, v in previous.items() if k not in {"commit", "sources"}} != {
+        k: v
+        for k, v in document["provenance"].items()
+        if k not in {"commit", "sources"}
+    }:
+        raise ValueError("Continuation changed the frozen experiment")
+    ledger = load(source / "budget.json")
+    if ledger["unreconciled_import"] or prior_accounted < ledger["accounted_usd"]:
+        raise ValueError("Continuation spending must remain reserved")
+    prior = {row["job_name"]: row for row in load(source / "progress.json")}
+    rows = document["trials"]
+    if set(prior) != {row["job_name"] for row in rows}:
+        raise ValueError("Continuation task/arm inventory differs")
+    for row in rows:
+        old = prior[row["job_name"]]
+        history_before = old.get("continuation", {})
+        if history_before:
+            row["continuation"] = history_before
+        if old["state"] == "pending":
+            continue
+        location = (
+            Path(history_before["source"])
+            if history_before.get("kind") == "preserved_scored_result"
+            else source / "trials" / row["job_name"]
+        )
+        result_path = location / "result.json"
+        result = load(result_path)
+        lifecycle = load(location / "modal-lifecycle.json")
+        if not lifecycle["evidence_verified"] or not lifecycle["termination_confirmed"]:
+            raise ValueError("Continuation requires verified evidence and termination")
+        hashes = load(location / "modal-evidence-sha256.json")
+        verify_downloads(
+            location,
+            "\0".join(f"{digest}  /logs/{name}" for name, digest in hashes.items()),
+        )
+        attempted = bool(result.get("agent_execution"))
+        history = {
+            "source": str(location),
+            "harness_commit": history_before.get("harness_commit", previous["commit"]),
+            "checkpoint_state": old["state"],
+            "reported_arm": old["arm"],
+            "agent_attempts": int(attempted),
+            "verifier_attempts": int(bool(result.get("verifier"))),
+            "result_sha256": hashlib.sha256(result_path.read_bytes()).hexdigest(),
+            "evidence_sha256": hashes,
+        }
+        if history_before:
+            history["earlier_continuation"] = history_before
+        if attempted:
+            required = {
+                "agent/eval-settings.json",
+                "agent/claude-code.txt",
+                "agent/jev/activated.json",
+            }
+            pin = images.get(row["task"], {})
+            if (
+                old["state"] != "finished"
+                or not result.get("verifier")
+                or not required.issubset(hashes)
+                or not {"verifier/reward.txt", "verifier/reward.json"}.intersection(
+                    hashes
+                )
+                or pin.get("modal_image_id") != lifecycle["modal_image_id"]
+                or pin.get("oci_reference") != lifecycle["image_pin"]["oci_reference"]
+            ):
+                raise ValueError("Cannot repeat or silently discard a scored attempt")
+            settings = load(location / "agent/eval-settings.json")
+            if (
+                settings["auth_mode"] != "subscription"
+                or settings["auth_status"]
+                != {
+                    "loggedIn": True,
+                    "authMethod": "claude.ai",
+                    "apiProvider": "firstParty",
+                    "subscriptionType": "max",
+                }
+                or settings["model"] != document["provenance"]["model"]
+                or settings["claude_version"]
+                != document["provenance"]["claude_version"]
+            ):
+                raise ValueError("Historical scored settings differ")
+            retain_trial_summary(row, summarize_trial(result_path))
+            if row["measurement_issues"] or row["reward"] is None:
+                raise ValueError("Historical scored measurements are incomplete")
+            row.update(
+                modal=lifecycle,
+                task_revision=BENCHMARK_REVISION,
+                agent_attempts=1,
+                verifier_attempts=1,
+                continuation={"kind": "preserved_scored_result", **history},
+            )
+        else:
+            row["continuation"] = {
+                "kind": "retry_before_first_agent_attempt",
+                "prior_attempt": history,
+                "prior_reward": None,
+            }
+    return rows
 
 
 async def refresh_budget(ledger: dict, start: date) -> None:
@@ -427,6 +539,8 @@ async def execute(args: argparse.Namespace) -> None:
         raise ValueError("Campaign requires automatic provider billing reconciliation")
     if args.seed_preflight and not campaign:
         raise ValueError("Seed preflights require a new campaign")
+    if args.continue_from and (not campaign or not args.seed_preflight):
+        raise ValueError("Continuation requires a campaign with verified image seeds")
     root, benchmark = args.evidence.resolve(), args.benchmark_source.resolve()
     if root.is_relative_to(REPO):
         raise ValueError("Evidence must be outside the repository")
@@ -458,6 +572,9 @@ async def execute(args: argparse.Namespace) -> None:
         "seed_preflight": str(args.seed_preflight.resolve())
         if args.seed_preflight
         else None,
+        "continue_from": str(args.continue_from.resolve())
+        if args.continue_from
+        else None,
         "billing_start_date": (
             args.billing_start_date.isoformat() if args.billing_start_date else None
         ),
@@ -478,7 +595,11 @@ async def execute(args: argparse.Namespace) -> None:
         if campaign:
             setups = json.loads((root / "preflight-progress.json").read_text())
             images = load(root / "images.json")
-        if any(row["state"] not in {"pending", "finished"} for row in rows + setups):
+        if any(
+            row["state"] not in {"pending", "finished"}
+            or row.get("authentication_continuation_blocked")
+            for row in rows + setups
+        ):
             raise ValueError("Interrupted/failed attempts cannot be silently resumed")
         if args.observed_total_usd is not None:
             observed = args.observed_total_usd
@@ -507,6 +628,27 @@ async def execute(args: argparse.Namespace) -> None:
         rows = (
             preflight_manifest(document["tasks"]) if preflight else document["trials"]
         )
+        if args.continue_from:
+            rows = continue_trials(
+                args.continue_from.resolve(), document, args.prior_accounted_usd, images
+            )
+            setups[0] = {
+                **preflight_manifest(document["tasks"][:1])[0],
+                "subscription_recheck": True,
+                "prior_preflight": setups[0],
+            }
+            save(
+                root / "continuation-provenance.json",
+                {
+                    name: load(args.continue_from / name)
+                    for name in (
+                        "identity.json",
+                        "provenance.json",
+                        "progress.json",
+                        "budget.json",
+                    )
+                },
+            )
         if campaign and not setups:
             setups = preflight_manifest(document["tasks"])
         ledger = {
@@ -584,7 +726,12 @@ async def execute(args: argparse.Namespace) -> None:
             await refresh_budget(ledger, args.billing_start_date)
             persist()
         spec = specs[row["task"]]
-        reserve = budget_reservation(spec, preflight, identity["build_reserve_usd"])
+        build_margin = (
+            identity["build_reserve_usd"]
+            if preflight and not row.get("subscription_recheck")
+            else 0
+        )
+        reserve = budget_reservation(spec, preflight, build_margin)
         ensure_budget(ledger, reserve)
         if shutil.disk_usage(root).free < 20 * 1024**3:
             raise ValueError("Less than 20 GiB free for local evidence")
@@ -617,15 +764,15 @@ async def execute(args: argparse.Namespace) -> None:
             return
         row.update(state="running", agent_attempts=0, verifier_attempts=0)
         ledger["accounted_usd"] += reserve
-        ledger["unreconciled_import"] = preflight
+        ledger["unreconciled_import"] = bool(build_margin)
         if preflight:
-            ledger["held_build_reserve_usd"] += identity["build_reserve_usd"]
+            ledger["held_build_reserve_usd"] += build_margin
         ledger["entries"].append(
             {
                 "task": row["task"],
                 "arm": row["arm"],
                 "reserved_usd": reserve,
-                "image_build_usd": None if preflight else 0,
+                "image_build_usd": None if build_margin else 0,
             }
         )
         persist()
@@ -700,9 +847,10 @@ async def execute(args: argparse.Namespace) -> None:
             images[row["task"]]["modal_image_id"] = lifecycle["modal_image_id"]
         if lifecycle.get("termination_confirmed"):
             estimate = lifecycle["elapsed_seconds"] * spec["runtime_usd_per_second"]
-            build_margin = identity["build_reserve_usd"] if preflight else 0
             ledger["accounted_usd"] += estimate + build_margin - reserve
             ledger["entries"][-1]["runtime_estimate_usd"] = estimate
+        if lifecycle.get("subscription_state_saved") is not True:
+            row["authentication_continuation_blocked"] = True
         persist()
         print(f"{row['task']} {row['arm']}: {row['state']}", flush=True)
         if preflight and not args.billing_start_date:
@@ -713,6 +861,7 @@ async def execute(args: argparse.Namespace) -> None:
             return
         if (
             row["state"] != "finished"
+            or row.get("authentication_continuation_blocked")
             or row.get("failure_category")
             in {"infrastructure", "agent_setup", "instrumentation"}
             or access_blocker(read_events(location / "agent/claude-code.txt"))
@@ -734,6 +883,7 @@ def main() -> None:
     parser.add_argument("--evidence", type=Path)
     parser.add_argument("--preflight", type=Path)
     parser.add_argument("--seed-preflight", type=Path)
+    parser.add_argument("--continue-from", type=Path)
     parser.add_argument("--prior-accounted-usd", type=float, default=0)
     parser.add_argument("--budget-usd", type=float, default=0)
     parser.add_argument("--build-reserve-usd", type=float, default=0)

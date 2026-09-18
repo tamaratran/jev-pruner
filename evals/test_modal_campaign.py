@@ -4,10 +4,12 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from evals.full import aggregate, save
 from evals.modal_runner import (
     campaign_order,
+    continue_trials,
     preflight_manifest,
     retain_trial_summary,
     seed_images,
@@ -15,6 +17,120 @@ from evals.modal_runner import (
 
 
 class CampaignTests(unittest.TestCase):
+    def test_continuation_preserves_scored_control_and_labels_setup_retry(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory)
+            provenance = {
+                "commit": "old",
+                "sources": {},
+                "model": "frozen",
+                "claude_version": "pinned",
+            }
+            rows: list[dict] = [
+                {
+                    "task": "a",
+                    "arm": arm,
+                    "job_name": f"a-{arm}",
+                    "state": "pending",
+                    "reward": None,
+                }
+                for arm in ("control", "plugin")
+            ]
+            old = copy.deepcopy(rows)
+            old[0]["state"] = "finished"
+            old[1].update(arm="trials", state="evidence_error")
+            save(source / "provenance.json", provenance)
+            save(
+                source / "budget.json",
+                {"accounted_usd": 1, "unreconciled_import": False},
+            )
+            save(source / "progress.json", old)
+            pin = {"modal_image_id": "im-fixture", "oci_reference": "sha256:fixture"}
+            for row in rows:
+                location = source / "trials" / row["job_name"]
+                location.mkdir(parents=True)
+                scored = row["arm"] == "control"
+                save(
+                    location / "result.json",
+                    {"agent_execution": scored, "verifier": scored},
+                )
+                save(
+                    location / "modal-lifecycle.json",
+                    {
+                        "evidence_verified": True,
+                        "termination_confirmed": True,
+                        "modal_image_id": "im-fixture",
+                        "image_pin": pin,
+                    },
+                )
+                files = (
+                    {
+                        "agent/eval-settings.json": {
+                            "auth_mode": "subscription",
+                            "auth_status": {
+                                "loggedIn": True,
+                                "authMethod": "claude.ai",
+                                "apiProvider": "firstParty",
+                                "subscriptionType": "max",
+                            },
+                            "model": "frozen",
+                            "claude_version": "pinned",
+                        },
+                        "agent/claude-code.txt": {},
+                        "agent/jev/activated.json": {},
+                        "verifier/reward.txt": 0,
+                    }
+                    if scored
+                    else {}
+                )
+                hashes = {}
+                for name, data in files.items():
+                    file = location / name
+                    file.parent.mkdir(parents=True, exist_ok=True)
+                    save(file, data)
+                    hashes[name] = hashlib.sha256(file.read_bytes()).hexdigest()
+                save(location / "modal-evidence-sha256.json", hashes)
+            document: dict = {
+                "provenance": {**provenance, "commit": "new"},
+                "trials": rows,
+            }
+            summary = {
+                "task": "a",
+                "arm": "control",
+                "reward": 0,
+                "measurement_issues": [],
+                "exception_phase": None,
+                "exception": None,
+            }
+            with patch("evals.modal_runner.summarize_trial", return_value=summary):
+                continued = continue_trials(source, document, 1, {"a": pin})
+                self.assertEqual(
+                    [row["state"] for row in continued], ["finished", "pending"]
+                )
+                self.assertEqual(
+                    continued[0]["continuation"]["kind"], "preserved_scored_result"
+                )
+                self.assertEqual(
+                    continued[1]["continuation"]["kind"],
+                    "retry_before_first_agent_attempt",
+                )
+                self.assertEqual(continued[1]["arm"], "plugin")
+                self.assertIsNone(continued[1]["reward"])
+                self.assertEqual(
+                    json.loads((source / "progress.json").read_text()), old
+                )
+                with self.assertRaisesRegex(ValueError, "scored attempt"):
+                    continue_trials(
+                        source,
+                        document,
+                        1,
+                        {"a": {**pin, "modal_image_id": "different"}},
+                    )
+                changed = copy.deepcopy(document)
+                changed["provenance"]["model"] = "different"
+                with self.assertRaisesRegex(ValueError, "frozen"):
+                    continue_trials(source, changed, 1, {"a": pin})
+
     def test_failed_setup_cannot_overwrite_planned_arm(self) -> None:
         row: dict = {"task": "fixture", "arm": "plugin"}
         summary: dict = {
