@@ -37,12 +37,11 @@ export interface TrimOutputOptions {
   keepThreshold?: number;
   maxStateTokens?: number;
   /**
-   * Cap on the pruned output. Over it, the lowest-scoring kept chunks go until
-   * the rest fits, so a result the engine would otherwise replace with a
-   * head-of-file preview stays visible. 0 means no cap.
+   * Cap on rendered pruned output, including markers. If errors or unscored
+   * content cannot fit safely, return the original output. 0 means no cap.
    */
   maxChars?: number;
-  /** Cap on extra Jev requests when the state cannot hold every chunk at full text. */
+  /** Maximum additional Jev requests, including refinement and retries. */
   maxScoringRequests?: number;
 }
 
@@ -153,11 +152,10 @@ function stateFor(
 }
 
 function questionFor(chunk: OutputChunk): JevQuestions {
-  const n = chunk.id.slice(1);
   return {
     [chunk.id]: {
       type: 'noul',
-      instructions: `Chunk c${n} must stay visible to the agent for it to understand the result of the command and continue its task.`,
+      instructions: `Chunk ${chunk.id} must stay visible to the agent for it to understand the result of the command and continue its task.`,
       criteria: {
         true: 'The chunk contains an error, failure, warning, summary, final result, or information the task depends on.',
         false: 'The chunk is repetitive, verbose, or boilerplate output the agent can act without.',
@@ -229,6 +227,7 @@ async function trimOutputAttempt(
   asker: JevAsker,
   options: TrimOutputOptions = {},
   retriesRemaining = 2,
+  requestBudget = { remaining: 1 + Math.max(0, Math.floor(finite(options.maxScoringRequests, DEFAULT_MAX_SCORING_REQUESTS))) },
 ): Promise<TrimOutputResult> {
   const minChars = Math.max(0, finite(options.minChars, DEFAULT_MIN_CHARS));
   const chunkLines = Math.max(
@@ -236,10 +235,6 @@ async function trimOutputAttempt(
     Math.floor(finite(options.chunkLines, DEFAULT_CHUNK_LINES)),
   );
   const keepThreshold = finite(options.keepThreshold, DEFAULT_KEEP_THRESHOLD);
-  const maxScoringRequests = Math.max(
-    1,
-    Math.floor(finite(options.maxScoringRequests, DEFAULT_MAX_SCORING_REQUESTS)),
-  );
   const maxStateTokens = Math.max(
     1,
     finite(options.maxStateTokens, DEFAULT_MAX_STATE_TOKENS),
@@ -256,123 +251,76 @@ async function trimOutputAttempt(
   const chunks = chunkOutput(input.output, perChunk);
   if (chunks.length <= 2) return untrimmed(input.output, chunks.length, []);
 
-  let stateChunks = chunks.map((chunk) => ({ ...chunk }));
-  const outputTokens = estimateStateTokens(JSON.stringify(stateFor(input, stateChunks, [])));
+  const outputTokens = estimateStateTokens(JSON.stringify(stateFor(input, chunks, [])));
   const history = fitHistory(
     input.messages ?? [],
     maxStateTokens - Math.min(outputTokens, Math.ceil(maxStateTokens / 2)),
   );
-  let state = stateFor(input, stateChunks, history);
-  let stateTokens = estimateStateTokens(JSON.stringify(state));
-  let omitted = new Set<number>();
-  if (stateTokens > maxStateTokens) {
-    let perChunkChars = 400;
-    while (stateTokens > maxStateTokens) {
-      stateChunks = chunks
-        .filter((_, index) => !omitted.has(index))
-        .map((chunk) => ({ ...chunk, text: chunk.text.slice(0, perChunkChars) }));
-      state = stateFor(input, stateChunks, history);
-      stateTokens = estimateStateTokens(JSON.stringify(state));
-      if (stateTokens <= maxStateTokens || perChunkChars === 50) break;
-      perChunkChars = Math.max(50, Math.floor(perChunkChars / 2));
+  const omitted = new Set(chunks.map((_, index) => index));
+  const groups: OutputChunk[][] = [];
+  const baseTokens = estimateStateTokens(JSON.stringify(stateFor(input, [], history)));
+  let group: OutputChunk[] = [];
+  let tokens = baseTokens;
+  for (const chunk of chunks) {
+    const cost = estimateStateTokens(JSON.stringify({ id: chunk.id, text: chunk.text })) + 1;
+    if (baseTokens + cost > maxStateTokens) continue;
+    if (group.length > 0 && tokens + cost > maxStateTokens) {
+      groups.push(group);
+      group = [];
+      tokens = baseTokens;
     }
-
-    if (stateTokens > maxStateTokens) {
-      const middle = (chunks.length - 1) / 2;
-      const candidates = chunks
-        .map((_, index) => index)
-        .filter(
-          (index) =>
-            index !== 0 &&
-            index !== chunks.length - 1 &&
-            !omitted.has(index) &&
-            !ERROR_PATTERN.test(chunks[index]!.text),
-        )
-        .sort((left, right) => {
-          const distance = Math.abs(left - middle) - Math.abs(right - middle);
-          return distance || left - right;
-        });
-      for (let start = 0; stateTokens > maxStateTokens && start < candidates.length; start += 10) {
-        for (const index of candidates.slice(start, start + 10)) omitted.add(index);
-        stateChunks = chunks
-          .filter((_, index) => !omitted.has(index))
-          .map((chunk) => ({ ...chunk, text: chunk.text.slice(0, 50) }));
-        state = stateFor(input, stateChunks, history);
-        stateTokens = estimateStateTokens(JSON.stringify(state));
-      }
-    }
+    group.push(chunk);
+    tokens += cost;
   }
-
-  if (stateTokens > maxStateTokens) return untrimmed(input.output, chunks.length, []);
-
-  const asked = chunks.filter((_, index) => !omitted.has(index));
+  if (group.length > 0) groups.push(group);
+  const limitedAsker: JevAsker = {
+    async ask(state, questions) {
+      if (requestBudget.remaining === 0) throw new Error('Jev request budget exhausted');
+      requestBudget.remaining -= 1;
+      return asker.ask(state, questions);
+    },
+  };
   const scores = Array<number>(chunks.length).fill(0);
-  scores[0] = 1;
-  scores[chunks.length - 1] = 1;
   try {
-    const questionBatches = batches(asked, stateTokens);
-    const answered = await Promise.all(
-      questionBatches.map(async (batch) => {
-        const questions = Object.assign({}, ...batch.map(questionFor));
-        return asker.ask(state, questions);
-      }),
-    );
-    let answerOffset = 0;
-    for (const batch of questionBatches) {
-      const response = answered[answerOffset++];
-      if (!response) throw new Error('Missing Jev output answer batch');
-      for (const chunk of batch) {
-        scores[chunks.indexOf(chunk)] = noulAnswer(response.answers, chunk.id);
+    const requests = groups.flatMap(group => {
+      const state = stateFor(input, group, history);
+      return batches(group, estimateStateTokens(JSON.stringify(state)))
+        .map(batch => ({ state, batch }));
+    }).slice(0, requestBudget.remaining);
+    for (let start = 0; start < requests.length;) {
+      const slice = requests.slice(start, start + (start === 0 ? 1 : SLICE_CONCURRENCY));
+      start += slice.length;
+      const answered = await Promise.allSettled(slice.map(async ({ state, batch }) =>
+        limitedAsker.ask(state, Object.assign({}, ...batch.map(questionFor))),
+      ));
+      for (let offset = 0; offset < slice.length; offset += 1) {
+        const response = answered[offset]!;
+        if (response.status === 'rejected') throw response.reason;
+        for (const chunk of slice[offset]!.batch) {
+          const index = chunks.indexOf(chunk);
+          scores[index] = noulAnswer(response.value.answers, chunk.id);
+          omitted.delete(index);
+        }
       }
     }
   } catch (error) {
-    if (maxTokensExceeded(error) && retriesRemaining > 0 && maxStateTokens >= 2_000) {
+    if (maxTokensExceeded(error) && retriesRemaining > 0 && maxStateTokens >= 2_000 && requestBudget.remaining > 0) {
       return trimOutputAttempt(
         input,
         asker,
         { ...options, maxStateTokens: Math.floor(maxStateTokens / 2) },
         retriesRemaining - 1,
+        requestBudget,
       );
     }
     throw error;
-  }
-
-  // Chunks the state could not hold are scored in their own passes, over a
-  // state carrying just them: unscored chunks used to be kept blind and then
-  // dropped first by the budget, which lost a quiet line the task needed.
-  if (omitted.size > 0) {
-    const leftovers = chunks.filter((_, index) => omitted.has(index));
-    const scored = new Set<number>();
-    for (let start = 0; start < leftovers.length; start += LEFTOVER_PASS_CHUNKS) {
-      const slice = leftovers.slice(start, start + LEFTOVER_PASS_CHUNKS);
-      const sliceState = stateFor(input, slice, history);
-      const sliceTokens = estimateStateTokens(JSON.stringify(sliceState));
-      if (sliceTokens > maxStateTokens) continue;
-      try {
-        const answered = await Promise.all(
-          batches(slice, sliceTokens).map(async (batch) => {
-            const questions = Object.assign({}, ...batch.map(questionFor));
-            const response = await asker.ask(sliceState, questions);
-            return batch.map((chunk) => [chunk, noulAnswer(response.answers, chunk.id)] as const);
-          }),
-        );
-        for (const [chunk, score] of answered.flat()) {
-          const index = chunks.indexOf(chunk);
-          scores[index] = score;
-          scored.add(index);
-        }
-      } catch {
-        // Leave this slice unscored; it stays kept, as before.
-      }
-    }
-    for (const index of scored) omitted.delete(index);
   }
 
   return assemble(input, chunks, scores, omitted, {
     keepThreshold,
     maxChars: Math.max(0, finite(options.maxChars, 0)),
     history,
-    asker,
+    asker: limitedAsker,
     maxStateTokens,
   });
 }
@@ -404,14 +352,15 @@ async function assemble(
     }
   }
   const shrunk = new Map<number, string>();
+  const render = (kept = keptIndexes) => renderOutput(input, chunks, kept, shrunk);
+  if (maxChars > 0 && render(omitted).length > maxChars) {
+    return untrimmed(input.output, chunks.length, scores);
+  }
   if (maxChars > 0) {
-    const kept = [...keptIndexes].sort((a, b) => a - b);
-    const size = () =>
-      kept.reduce((sum, index) => sum + (shrunk.get(index) ?? chunks[index]!.text).length + 1, 0);
-    for (const index of [...kept].sort(
+    for (const index of [...keptIndexes].filter(index => !omitted.has(index)).sort(
       (a, b) => chunks[b]!.chars - chunks[a]!.chars,
     )) {
-      if (size() <= maxChars) break;
+      if (render().length <= maxChars) break;
       let text: string;
       try {
         text = await shrinkChunkWithJev(
@@ -429,81 +378,67 @@ async function assemble(
     }
   }
   if (maxChars > 0) {
-    const size = () =>
-      [...keptIndexes].reduce(
-        (sum, index) => sum + (shrunk.get(index) ?? chunks[index]!.text).length + 1,
-        0,
-      );
-    // First and last stay, and so does anything that looks like an error or a
-    // failure: a budget must never be the reason the one line the agent needs
-    // disappears. The rest goes lowest score first, and the budget is missed
-    // rather than met if that is not enough.
     const droppable = [...keptIndexes]
       .filter(
         (index) =>
           index !== 0 &&
           index !== chunks.length - 1 &&
+          !omitted.has(index) &&
           !ERROR_PATTERN.test(chunks[index]!.text),
       )
       .sort((a, b) => (scores[a] ?? 0) - (scores[b] ?? 0));
     for (const index of droppable) {
-      if (size() <= maxChars) break;
+      if (render().length <= maxChars) break;
       keptIndexes.delete(index);
     }
   }
-  // Hard fit: shrinking and dropping are both best-effort, so when the kept
-  // chunks still exceed the budget (a grep where nearly every line is wanted),
-  // fill the budget by priority — reported failures first, then the highest
-  // scores — and cut the chunk that straddles the line.
-  if (maxChars > 0) {
+  if (maxChars > 0 && render().length > maxChars) {
     const textOf = (index: number) => shrunk.get(index) ?? chunks[index]!.text;
-    const size = () =>
-      [...keptIndexes].reduce((sum, index) => sum + textOf(index).length + 1, 0);
-    if (size() > maxChars) {
-      const priority = [...keptIndexes].sort((a, b) => {
-        const errors =
-          Number(ERROR_PATTERN.test(chunks[b]!.text)) - Number(ERROR_PATTERN.test(chunks[a]!.text));
-        if (errors) return errors;
-        const edges = Number(b === 0 || b === chunks.length - 1) - Number(a === 0 || a === chunks.length - 1);
-        if (edges) return edges;
-        return (scores[b] ?? 0) - (scores[a] ?? 0);
-      });
-      const fitted = new Set<number>();
-      let used = 0;
-      for (const index of priority) {
-        const text = textOf(index);
-        if (used + text.length + 1 <= maxChars) {
-          fitted.add(index);
-          used += text.length + 1;
-          continue;
-        }
-        const room = maxChars - used - 80;
-        if (room > 200 && fitted.size === 0) {
-          shrunk.set(index, `${text.slice(0, room)}\n[fast-jev-output cut this section to fit]`);
-          fitted.add(index);
-          used = maxChars;
+    const fitted = new Set(omitted);
+    for (const index of keptIndexes) {
+      if (!ERROR_PATTERN.test(chunks[index]!.text) || omitted.has(index)) continue;
+      fitted.add(index);
+      const text = shrinkChunkText(chunks[index]!.text, 0, 0);
+      if (text.length < textOf(index).length) shrunk.set(index, text);
+    }
+    if (render(fitted).length > maxChars) return untrimmed(input.output, chunks.length, scores);
+    const priority = [...keptIndexes].filter(index => !fitted.has(index)).sort((a, b) => {
+      const edges = Number(b === 0 || b === chunks.length - 1) - Number(a === 0 || a === chunks.length - 1);
+      return edges || (scores[b] ?? 0) - (scores[a] ?? 0);
+    });
+    for (const index of priority) {
+      fitted.add(index);
+      if (render(fitted).length <= maxChars) continue;
+      const text = textOf(index);
+      const lines = text.split('\n');
+      let low = 1;
+      let high = lines.length - 1;
+      let best: string | undefined;
+      while (low <= high) {
+        const count = Math.floor((low + high) / 2);
+        const candidate = `${lines.slice(0, count).join('\n')}\n[fast-jev-output cut this section to fit]`;
+        shrunk.set(index, candidate);
+        if (render(fitted).length <= maxChars) {
+          best = candidate;
+          low = count + 1;
+        } else {
+          high = count - 1;
         }
       }
-      for (const index of [...keptIndexes]) if (!fitted.has(index)) keptIndexes.delete(index);
+      if (best !== undefined) shrunk.set(index, best);
+      else {
+        fitted.delete(index);
+        shrunk.set(index, text);
+      }
     }
+    for (const index of [...keptIndexes]) if (!fitted.has(index)) keptIndexes.delete(index);
   }
   const droppedIndexes = chunks
     .map((_, index) => index)
     .filter((index) => !keptIndexes.has(index));
-  if (droppedIndexes.length === 0) return untrimmed(input.output, chunks.length, scores);
+  if (droppedIndexes.length === 0 && shrunk.size === 0) return untrimmed(input.output, chunks.length, scores);
 
-  const parts: string[] = [];
-  for (let index = 0; index < chunks.length;) {
-    if (keptIndexes.has(index)) {
-      parts.push(shrunk.get(index) ?? chunks[index]!.text);
-      index += 1;
-      continue;
-    }
-    const run: OutputChunk[] = [];
-    while (index < chunks.length && !keptIndexes.has(index)) run.push(chunks[index++]!);
-    parts.push(outputMarker(run, input.fullOutputPath));
-  }
-  const output = parts.join('\n');
+  const output = render();
   return {
     output,
     trimmed: true,
@@ -516,6 +451,26 @@ async function assemble(
   };
 }
 
+function renderOutput(
+  input: TrimOutputInput,
+  chunks: readonly OutputChunk[],
+  keptIndexes: Set<number>,
+  shrunk: Map<number, string>,
+): string {
+  const parts: string[] = [];
+  for (let index = 0; index < chunks.length;) {
+    if (keptIndexes.has(index)) {
+      parts.push(shrunk.get(index) ?? chunks[index]!.text);
+      index += 1;
+      continue;
+    }
+    const run: OutputChunk[] = [];
+    while (index < chunks.length && !keptIndexes.has(index)) run.push(chunks[index++]!);
+    parts.push(outputMarker(run, input.fullOutputPath));
+  }
+  return parts.join('\n');
+}
+
 
 /**
  * Last resort when the kept chunks alone exceed the budget: inside a chunk,
@@ -523,12 +478,12 @@ async function assemble(
  * lines went. Better than handing back a chunk that will be replaced by a
  * head-of-file preview anyway.
  */
-function shrinkChunkText(text: string, keepEdge = 2): string {
+function shrinkChunkText(text: string, keepEdge = 2, context = 1): string {
   const lines = text.split('\n');
   const keep = new Set<number>();
   lines.forEach((line, index) => {
     if (ERROR_PATTERN.test(line)) {
-      for (let at = index - 1; at <= index + 1; at += 1) if (at >= 0 && at < lines.length) keep.add(at);
+      for (let at = index - context; at <= index + context; at += 1) if (at >= 0 && at < lines.length) keep.add(at);
     }
   });
   for (let index = 0; index < Math.min(keepEdge, lines.length); index += 1) keep.add(index);
@@ -550,7 +505,6 @@ function shrinkChunkText(text: string, keepEdge = 2): string {
 }
 
 const REFINE_GROUP_LINES = 5;
-const LEFTOVER_PASS_CHUNKS = 40;
 const DEFAULT_MAX_SCORING_REQUESTS = 40;
 const SLICE_CONCURRENCY = 4;
 

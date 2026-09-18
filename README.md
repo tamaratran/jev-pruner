@@ -78,6 +78,12 @@ The plugin prunes that saved file instead, caps the result at
 the markers, so nothing becomes unrecoverable. Set `persistedOutputs` to false
 to leave those results alone.
 
+The budget includes omission markers. Error lines and output that could not be
+scored are preserved; if they cannot fit, the original result passes through.
+Scoring uses complete chunks and allows one initial Jev request plus at most 40
+additional requests, shared by scoring, retries, and refinement. Library callers
+can change that allowance with `maxScoringRequests`, including zero.
+
 A 76,379-char log went from a 2,227-char preview that did not contain the error
 line to 4,013 chars of pruned output that did.
 
