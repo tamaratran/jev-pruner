@@ -1,9 +1,12 @@
 """Resolve public Docker Hub tags without pulling layers or creating compute."""
 
+import base64
 import hashlib
 import json
 import re
 from urllib.request import Request, urlopen
+
+from evals.registry_auth import registry_credentials
 
 ACCEPT = ", ".join(
     (
@@ -27,10 +30,17 @@ def resolve_image(reference: str) -> dict:
     if not match:
         raise ValueError("This pinned dataset requires public Docker Hub image tags")
     repository, tag = match.groups()
-    with urlopen(
+    headers = {}
+    if credentials := registry_credentials():
+        encoded = base64.b64encode(
+            f"{credentials.username}:{credentials.token}".encode()
+        ).decode()
+        headers["Authorization"] = f"Basic {encoded}"
+    request = Request(
         f"https://auth.docker.io/token?service=registry.docker.io&scope=repository:{repository}:pull",
-        timeout=30,
-    ) as response:
+        headers=headers,
+    )
+    with urlopen(request, timeout=30) as response:
         token = json.load(response)["token"]
 
     def fetch(kind: str, value: str, expected: str | None = None) -> tuple[dict, str]:
