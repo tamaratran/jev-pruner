@@ -40,8 +40,11 @@ if [[ -n "$(git status --porcelain -- evals .claude-plugin hooks src tests/fixtu
   printf '%s\n' 'Commit evaluation and production sources before running.' >&2
   exit 1
 fi
-prompt='Run exactly once: node /plugin/tests/fixtures/noisy-build.mjs 1
-Then report only whether deployment can proceed. Use Bash only. Do not read archives.'
+prompt='Make exactly one Bash tool call in total, running this exact command:
+node /plugin/tests/fixtures/noisy-build.mjs 1
+Then report only whether deployment can proceed, based on the visible result.
+If the result is insufficient, say so. Do not make any further tool calls,
+inspect saved output or archives, or check the exit code in another command.'
 mkdir -p "$EVIDENCE_DIR"
 git rev-parse HEAD > "$EVIDENCE_DIR/harness-commit.txt"
 docker image inspect "$SMOKE_IMAGE" --format '{{.Id}}' > "$EVIDENCE_DIR/image-id.txt"
