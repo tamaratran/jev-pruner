@@ -466,6 +466,13 @@ lifetime and cost reservations include this overhead without changing task
 agent or verifier limits. Subscription refresh state is checkpointed before
 agent-log downloads and again before sandbox termination.
 
+Modal scored trials also pass the remaining agent time to each remote exec.
+Cancelling a local output reader does not terminate the remote process; Modal's
+server-side exec deadline does. The same task agent limit governs the whole
+agent phase, with remaining time rounded up to Modal's integer-second API.
+Setup and verifier limits remain separate. Historical timed-out attempts without
+this remote deadline retain their observed rewards and require a timing caveat.
+
 ## Checks
 
 ```sh
