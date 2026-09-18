@@ -47,12 +47,36 @@ class SubscriptionSetupTests(unittest.IsolatedAsyncioTestCase):
                     await agent.seed_apt_cache(remote)
                 remote.upload_file.assert_not_awaited()
                 package.write_bytes(b"package fixture")
-                await agent.seed_apt_cache(remote)
+                await agent.ensure_system_dependencies(remote, ("curl",))
                 remote.upload_file.assert_awaited_once_with(
                     package, f"/var/cache/apt/archives/{package.name}"
                 )
                 self.assertEqual(
                     json.loads((logs / "apt-cache-manifest.json").read_text()), manifest
+                )
+                commands = [
+                    call.kwargs["command"] for call in remote.exec.await_args_list
+                ]
+                self.assertEqual(
+                    commands[-2:],
+                    [
+                        "set -o pipefail; apt-get update",
+                        "set -o pipefail; apt-get install -y curl",
+                    ],
+                )
+                calls = remote.mock_calls
+                upload_index = next(
+                    index
+                    for index, call in enumerate(calls)
+                    if call[0] == "upload_file"
+                )
+                self.assertEqual(
+                    calls[upload_index - 1].kwargs["command"],
+                    "set -o pipefail; apt-get update",
+                )
+                self.assertEqual(
+                    calls[upload_index + 1].kwargs["command"],
+                    "set -o pipefail; apt-get install -y curl",
                 )
 
     async def test_cache_rejects_paths_outside_the_cache(self) -> None:

@@ -50,7 +50,6 @@ class JevClaudeCode(ClaudeCode):
                 raise RuntimeError(
                     "Could not prepare private subscription configuration"
                 )
-        await self.seed_apt_cache(environment)
         await super().setup(environment)
         version = await self.exec_as_agent(
             environment, command=self.get_version_command() or "false"
@@ -82,10 +81,29 @@ class JevClaudeCode(ClaudeCode):
             )
         )
 
-    async def seed_apt_cache(self, environment: BaseEnvironment) -> None:
+    async def ensure_system_dependencies(
+        self, environment: BaseEnvironment, dependencies: tuple[str, ...]
+    ) -> None:
+        if not dependencies:
+            return
+        if not await self.seed_apt_cache(environment):
+            await super().ensure_system_dependencies(environment, dependencies)
+            return
+        packages = dict.fromkeys(
+            package
+            for dependency in dependencies
+            for package in self.SYSTEM_PACKAGES[dependency].packages["apt-get"]
+        )
+        await self.exec_as_root(
+            environment,
+            command=f"apt-get install -y {shlex.join(packages)}",
+            env={"DEBIAN_FRONTEND": "noninteractive"},
+        )
+
+    async def seed_apt_cache(self, environment: BaseEnvironment) -> bool:
         directory = os.environ.get("JEV_EVAL_APT_CACHE_DIR")
         if not directory:
-            return
+            return False
         source = Path(directory)
         manifest = json.loads((source / "manifest.json").read_text())
         distribution = f"{manifest['distribution']}:{manifest['codename']}"
@@ -98,7 +116,8 @@ class JevClaudeCode(ClaudeCode):
             user="root",
         )
         if matches.return_code != 0:
-            return
+            return False
+        await self.exec_as_root(environment, command="apt-get update")
         for package in manifest["packages"]:
             name = package["filename"]
             if Path(name).name != name or not name.endswith(".deb"):
@@ -113,6 +132,7 @@ class JevClaudeCode(ClaudeCode):
         (self.logs_dir / "apt-cache-manifest.json").write_text(
             json.dumps(manifest, indent=2)
         )
+        return True
 
     async def upload_subscription(self, environment: BaseEnvironment) -> None:
         source = Path(subscription_mounts()[0]["source"])
