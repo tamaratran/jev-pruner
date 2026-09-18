@@ -64,7 +64,7 @@ Enable early-access function hooks in Claude Code settings:
 Install from the marketplace:
 
 ```sh
-claude plugin marketplace add tamaratran/fast-jev-output
+claude plugin marketplace add tamaratran/jev-pruner
 claude plugin install fast-jev-output@fast-jev-output
 ```
 
