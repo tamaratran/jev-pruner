@@ -9,7 +9,14 @@ from harbor.agents.installed.claude_code import ClaudeCode
 from harbor.environments.base import BaseEnvironment, ExecResult
 from harbor.models.agent.context import AgentContext
 
-from evals.auth import AUTH_OVERRIDES, AUTH_RUNTIME, auth_mode, prepare_subscription
+from evals.auth import (
+    AUTH_MOUNT,
+    AUTH_OVERRIDES,
+    AUTH_RUNTIME,
+    auth_mode,
+    prepare_subscription,
+    subscription_mounts,
+)
 
 CLAUDE_VERSION = "2.1.274"
 REPO = Path(__file__).resolve().parents[1]
@@ -32,6 +39,8 @@ class JevClaudeCode(ClaudeCode):
         if auth_mode() == "subscription" and self.config_source is not None:
             raise ValueError("Subscription evaluation does not accept custom settings")
         if auth_mode() == "subscription":
+            if not environment.capabilities.mounted:
+                await self.upload_subscription(environment)
             prepared = await self.exec_as_agent(
                 environment,
                 command=prepare_subscription(self.environment_logs_dir.as_posix()),
@@ -70,6 +79,22 @@ class JevClaudeCode(ClaudeCode):
                 indent=2,
             )
         )
+
+    async def upload_subscription(self, environment: BaseEnvironment) -> None:
+        source = Path(subscription_mounts()[0]["source"])
+        created = await environment.exec(
+            command=f"test ! -e {AUTH_MOUNT} && mkdir -p -m 700 {AUTH_MOUNT}"
+        )
+        if created.return_code != 0:
+            raise RuntimeError("Could not create private remote login directory")
+        for name in (".credentials.json", ".claude.json"):
+            if (source / name).is_file():
+                await environment.upload_file(source / name, f"{AUTH_MOUNT}/{name}")
+        secured = await environment.exec(
+            command=f"chmod 400 {AUTH_MOUNT}/.*json && chmod 500 {AUTH_MOUNT}"
+        )
+        if secured.return_code != 0:
+            raise RuntimeError("Could not secure remote subscription configuration")
 
     def build_cli_flags(self) -> str:
         flags = super().build_cli_flags()

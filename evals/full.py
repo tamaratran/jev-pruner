@@ -230,7 +230,7 @@ def checkpoint(root: Path, rows: list[dict]) -> None:
     save(root / "results.json", aggregate(rows))
 
 
-def run(root: Path, benchmark: Path, harbor: str) -> None:
+def run(root: Path, benchmark: Path, harbor: str, environment: str = "docker") -> None:
     if os.environ.get("JEV_EVAL_AUTH_MODE") != "subscription":
         raise ValueError("Explicit JEV_EVAL_AUTH_MODE=subscription is required")
     if (root / "progress.json").exists():
@@ -240,9 +240,18 @@ def run(root: Path, benchmark: Path, harbor: str) -> None:
     if subprocess.check_output([harbor, "--version"], text=True).strip() != "0.22.0":
         raise ValueError("Harbor 0.22.0 required")
     os.environ["EVIDENCE_DIR"] = str(root)
-    mounts = json.dumps(subscription_mounts())
+    mounts = subscription_mounts()
+    environment_flags = ["--env", environment]
+    if environment == "docker":
+        environment_flags += ["--mounts", json.dumps(mounts)]
+    elif environment == "modal":
+        environment_flags += ["--ek", "app_name=jev-terminal-bench"]
+    else:
+        raise ValueError("Supported environments are docker and modal")
     env = {key: value for key, value in os.environ.items() if key not in AUTH_OVERRIDES}
     env["PYTHONPATH"] = str(REPO)
+    if environment == "modal":
+        env["MODAL_IMAGE_BUILDER_VERSION"] = "2025.06"
     if not env.get("TYPESAFE_API_KEY") or env["TYPESAFE_API_KEY"].startswith("secret:"):
         raise ValueError("Inject the Jev key before execution")
     manifest = json.loads((root / "manifest.json").read_text())
@@ -261,7 +270,11 @@ def run(root: Path, benchmark: Path, harbor: str) -> None:
                 ["git", "rev-parse", "HEAD"], cwd=REPO, text=True
             ).strip(),
             "source_sha256": pin,
-            "flags": FLAGS,
+            "flags": FLAGS + environment_flags,
+            "environment": environment,
+            "modal_image_builder_version": (
+                env["MODAL_IMAGE_BUILDER_VERSION"] if environment == "modal" else None
+            ),
             "auth_mode": "subscription",
             "api_overrides_present_in_launcher": sorted(set(AUTH_OVERRIDES) & set(env)),
             "concurrency": 1,
@@ -298,8 +311,7 @@ def run(root: Path, benchmark: Path, harbor: str) -> None:
             row["job_name"],
             "--jobs-dir",
             str(root / "jobs"),
-            "--mounts",
-            mounts,
+            *environment_flags,
         ]
         row["command"] = command
         row["state"] = "running"
@@ -336,14 +348,23 @@ def run(root: Path, benchmark: Path, harbor: str) -> None:
             row["state"] = "infrastructure_error"
             row["failure_category"] = "infrastructure"
             row["error"] = f"Expected one trial result, found {len(paths)}"
-        inspected = subprocess.run(
-            ["docker", "image", "inspect", image, "--format", "{{json .RepoDigests}}"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if inspected.returncode == 0:
-            row["image_repo_digests"] = json.loads(inspected.stdout)
+        row["requested_docker_image"] = image
+        if environment == "docker":
+            inspected = subprocess.run(
+                [
+                    "docker",
+                    "image",
+                    "inspect",
+                    image,
+                    "--format",
+                    "{{json .RepoDigests}}",
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if inspected.returncode == 0:
+                row["image_repo_digests"] = json.loads(inspected.stdout)
         checkpoint(root, rows)
         print(
             f"END {index + 1}/178 reward={row.get('reward')} category={row.get('failure_category')}",
@@ -362,6 +383,7 @@ def run(root: Path, benchmark: Path, harbor: str) -> None:
                     "Unexpected plugins",
                     "Observer activation missing",
                     "Pruning logs",
+                    "Missing original output",
                     "Jev errors",
                     "Jev requests",
                 )
@@ -389,5 +411,11 @@ if __name__ == "__main__":
     parser.add_argument("evidence", type=Path)
     parser.add_argument("--benchmark-source", type=Path, required=True)
     parser.add_argument("--harbor", default="harbor")
+    parser.add_argument("--environment", choices=("docker", "modal"), default="docker")
     args = parser.parse_args()
-    run(args.evidence.resolve(), args.benchmark_source.resolve(), args.harbor)
+    run(
+        args.evidence.resolve(),
+        args.benchmark_source.resolve(),
+        args.harbor,
+        args.environment,
+    )
