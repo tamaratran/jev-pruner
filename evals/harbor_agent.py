@@ -31,6 +31,11 @@ class JevClaudeCode(ClaudeCode):
         auth_mode()
         if auth_mode() == "subscription" and self.config_source is not None:
             raise ValueError("Subscription evaluation does not accept custom settings")
+        if auth_mode() == "subscription":
+            await self.exec_as_agent(
+                environment,
+                command=prepare_subscription(self.environment_logs_dir.as_posix()),
+            )
         await super().setup(environment)
         version = await self.exec_as_agent(
             environment, command=self.get_version_command() or "false"
@@ -47,14 +52,6 @@ class JevClaudeCode(ClaudeCode):
         )
         auth_status = None
         if auth_mode() == "subscription":
-            prepared = await self.exec_as_agent(
-                environment,
-                command=prepare_subscription(self.environment_logs_dir.as_posix()),
-            )
-            if prepared.return_code != 0:
-                raise RuntimeError(
-                    "Could not prepare private subscription configuration"
-                )
             auth_status = await self.check_subscription(environment)
         (self.logs_dir / "eval-settings.json").write_text(
             json.dumps(
