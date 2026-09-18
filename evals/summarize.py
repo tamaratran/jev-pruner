@@ -4,11 +4,38 @@ import argparse
 import json
 import re
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from statistics import median
 
 TRIM_LOG = re.compile(r"kept (\d+)/(\d+) chunks \((\d+)→(\d+) chars\)")
 TRIM_MARKER = re.compile(r"\[fast-jev-output trimmed (\d+) lines \((\d+) chars\)")
+ARCHIVE_FOOTER = re.compile(
+    r"\[fast-jev-output full output: ([^\n]+) \(Read or grep it if needed\)\]"
+)
+
+
+def native_archive_exists(agent: Path, content: str) -> bool:
+    matches = list(ARCHIVE_FOOTER.finditer(content))
+    if not matches:
+        return False
+    remote = PurePosixPath(matches[-1][1])
+    base = (agent / "sessions/projects").resolve()
+    if not base.is_relative_to(agent.resolve()):
+        return False
+    for prefix in ("/opt/jev-eval/auth/projects", "/logs/agent/sessions/projects"):
+        if not remote.is_relative_to(prefix):
+            continue
+        relative = remote.relative_to(prefix)
+        if (
+            len(relative.parts) != 4
+            or ".." in relative.parts
+            or relative.parts[2] != "tool-results"
+            or relative.suffix != ".txt"
+        ):
+            return False
+        candidate = (base / str(relative)).resolve()
+        return candidate.is_relative_to(base) and candidate.is_file()
+    return False
 
 
 def read_events(path: Path) -> list[dict]:
@@ -69,7 +96,7 @@ def summarize_agent(agent: Path, arm: str, stream: str = "claude-code.txt") -> d
         issues.append("Pruning logs and transcript tool-result counts disagree")
     for result in results:
         archive = evidence / "archives" / f"bash-{result['tool_use_id']}.txt"
-        if not archive.exists():
+        if not archive.exists() and not native_archive_exists(agent, result["content"]):
             issues.append(f"Missing original output for {result['tool_use_id']}")
     markers = [m for result in results for m in TRIM_MARKER.finditer(result["content"])]
     requests = [

@@ -41,21 +41,6 @@ export const register: Register = (on) => {
     const id = ++calls;
     const started = Date.now();
     const answer = await next(event);
-    const archive = answer.deny === undefined && !answer.isError
-      ? answer.result?.stdout.match(
-        /\[fast-jev-output full output: ([^\n]+) \(Read or grep it if needed\)\]/,
-      )?.[1]
-      : undefined;
-    if (archive && event.tool_use_id) {
-      try {
-        await $.fs.write(
-          `${root}/archives/bash-${event.tool_use_id}.txt`,
-          await $.fs.read(archive),
-        );
-      } catch {
-        $.ui.log('Evaluation observer could not capture original Bash output');
-      }
-    }
     await $.fs.write(`${root}/bash-${id}.json`, JSON.stringify({
       toolUseId: event.tool_use_id,
       command: event.command,
