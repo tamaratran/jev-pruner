@@ -1,12 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-: "${ANTHROPIC_API_KEY:?Set ANTHROPIC_API_KEY}"
 : "${TYPESAFE_API_KEY:?Set TYPESAFE_API_KEY}"
 : "${EVIDENCE_DIR:?Set an absolute evidence directory outside the repo}"
 harbor="${HARBOR_BIN:-harbor}"
 repo="$(git rev-parse --show-toplevel)"
 export PYTHONPATH="$repo${PYTHONPATH:+:$PYTHONPATH}"
+auth_args=()
+case "${JEV_EVAL_AUTH_MODE:-api}" in
+  api)
+    : "${ANTHROPIC_API_KEY:?Set ANTHROPIC_API_KEY}"
+    ;;
+  subscription)
+    : "${JEV_EVAL_CLAUDE_AUTH_DIR:?Set the private official Claude config directory}"
+    auth_args=(--mounts "$(python3 "$repo/evals/auth.py")")
+    ;;
+  *)
+    printf '%s\n' 'JEV_EVAL_AUTH_MODE must be api or subscription' >&2
+    exit 1
+    ;;
+esac
 [[ "$("$harbor" --version)" == 0.22.0 ]]
 if [[ -n "$(git status --porcelain -- evals .claude-plugin hooks src)" ]]; then
   printf '%s\n' 'Commit evaluation and production sources before running.' >&2
@@ -32,7 +45,7 @@ for task in build-cython-ext chess-best-move configure-git-webserver; do
       --ak version=2.1.274 --ak max_budget_usd=3 --ak max_turns=80 \
       --ak reasoning_effort=high \
       -n 1 -k 1 -r 0 --timeout-multiplier 1.0 \
-      --job-name "pilot-$task-$arm" --jobs-dir "$EVIDENCE_DIR/jobs"; then
+      --job-name "pilot-$task-$arm" --jobs-dir "$EVIDENCE_DIR/jobs" "${auth_args[@]}"; then
       status=1
     fi
   done

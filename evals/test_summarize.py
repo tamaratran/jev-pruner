@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from summarize import summarize_agent, summarize_trial
+from evals.summarize import summarize_agent, summarize_trial
 
 
 class SummaryTests(unittest.TestCase):

@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ "${JEV_EVAL_AUTH_MODE:-api}" != api ]]; then
+  printf '%s\n' 'This smoke launcher supports API mode only; refusing API fallback.' >&2
+  exit 1
+fi
+
 : "${ANTHROPIC_API_KEY:?Set ANTHROPIC_API_KEY}"
 : "${TYPESAFE_API_KEY:?Set TYPESAFE_API_KEY}"
 : "${SMOKE_IMAGE:?Set SMOKE_IMAGE to an image with Claude Code 2.1.274}"

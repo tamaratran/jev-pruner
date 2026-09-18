@@ -9,6 +9,8 @@ from harbor.agents.installed.claude_code import ClaudeCode
 from harbor.environments.base import BaseEnvironment, ExecResult
 from harbor.models.agent.context import AgentContext
 
+from evals.auth import AUTH_OVERRIDES, AUTH_RUNTIME, auth_mode, prepare_subscription
+
 CLAUDE_VERSION = "2.1.274"
 REPO = Path(__file__).resolve().parents[1]
 REMOTE = "/opt/jev-eval"
@@ -26,6 +28,9 @@ class JevClaudeCode(ClaudeCode):
         if self._version != CLAUDE_VERSION:
             raise ValueError(f"Pass --ak version={CLAUDE_VERSION}")
         arm()
+        auth_mode()
+        if auth_mode() == "subscription" and self.config_source is not None:
+            raise ValueError("Subscription evaluation does not accept custom settings")
         await super().setup(environment)
         version = await self.exec_as_agent(
             environment, command=self.get_version_command() or "false"
@@ -37,6 +42,20 @@ class JevClaudeCode(ClaudeCode):
                 REPO / directory, f"{REMOTE}/production/{directory}"
             )
         await environment.upload_dir(REPO / "evals/observer", f"{REMOTE}/observer")
+        await environment.upload_file(
+            REPO / "evals/check_auth.cjs", f"{REMOTE}/check_auth.cjs"
+        )
+        auth_status = None
+        if auth_mode() == "subscription":
+            prepared = await self.exec_as_agent(
+                environment,
+                command=prepare_subscription(self.environment_logs_dir.as_posix()),
+            )
+            if prepared.return_code != 0:
+                raise RuntimeError(
+                    "Could not prepare private subscription configuration"
+                )
+            auth_status = await self.check_subscription(environment)
         (self.logs_dir / "eval-settings.json").write_text(
             json.dumps(
                 {
@@ -44,6 +63,8 @@ class JevClaudeCode(ClaudeCode):
                     "claude_version": CLAUDE_VERSION,
                     "model": self.model_name,
                     "cli_flags": self.build_cli_flags(),
+                    "auth_mode": auth_mode(),
+                    "auth_status": auth_status,
                 },
                 indent=2,
             )
@@ -54,16 +75,35 @@ class JevClaudeCode(ClaudeCode):
         flags += (
             f" --setting-sources '' --strict-mcp-config --plugin-dir {REMOTE}/observer"
         )
-        flags += ' --settings \'{"enabledPlugins":{"plugin-authoring@builtin":false}}\''
+        settings: dict = {"enabledPlugins": {"plugin-authoring@builtin": False}}
+        if auth_mode() == "subscription":
+            settings["forceLoginMethod"] = "claudeai"
+        flags += f" --settings {shlex.quote(json.dumps(settings))}"
         if arm() == "plugin":
             flags += f" --plugin-dir {REMOTE}/production"
         return flags
 
     def _resolve_auth_env(self) -> dict[str, str]:
-        env = super()._resolve_auth_env()
+        env = {} if auth_mode() == "subscription" else super()._resolve_auth_env()
         env["CLAUDE_CODE_ENABLE_FUNCTION_HOOKS"] = "1"
         env["TYPESAFE_API_KEY"] = os.environ["TYPESAFE_API_KEY"]
         return env
+
+    def _resolved_model_name(self) -> str | None:
+        if auth_mode() == "subscription":
+            if not self.model_name or not self.model_name.startswith("anthropic/"):
+                raise ValueError("Subscription mode requires an anthropic/ model")
+            return self.model_name.split("/", 1)[1]
+        return super()._resolved_model_name()
+
+    async def check_subscription(self, environment: BaseEnvironment) -> dict:
+        result = await self.exec_as_agent(
+            environment,
+            command=f'export PATH="$HOME/.local/bin:$PATH"; node {REMOTE}/check_auth.cjs',
+        )
+        if result.return_code != 0:
+            raise RuntimeError("Subscription authentication preflight failed")
+        return json.loads(result.stdout or "{}")
 
     async def exec_as_agent(
         self,
@@ -80,6 +120,11 @@ class JevClaudeCode(ClaudeCode):
             "DISABLE_AUTOUPDATER": "1",
         }
         effective_env.pop("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", None)
+        if auth_mode() == "subscription":
+            for key in AUTH_OVERRIDES:
+                effective_env.pop(key, None)
+            effective_env["CLAUDE_CONFIG_DIR"] = AUTH_RUNTIME
+            command = f"unset {' '.join(AUTH_OVERRIDES)}; {command}"
         return await super().exec_as_agent(
             environment, command, env=effective_env, cwd=cwd, timeout_sec=timeout_sec
         )
@@ -90,6 +135,8 @@ class JevClaudeCode(ClaudeCode):
         environment: BaseEnvironment,
         context: AgentContext,
     ) -> None:
+        if auth_mode() == "subscription":
+            await self.check_subscription(environment)
         await super().run(instruction, environment, context)
         path = (self.environment_logs_dir / "claude-code.txt").as_posix()
         result = await self.exec_as_agent(
