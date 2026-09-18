@@ -52,6 +52,17 @@ interface Replay {
   rollback: { noul: number };
 }
 
+interface ChunkReplay {
+  stage: number;
+  chunkLines: number;
+  wording: string;
+  artifactScore: number;
+  rollbackScore: number;
+  requests: number;
+  durationMs: number;
+  inputTokens: number;
+}
+
 assert(process.argv[2], 'Pass the evidence directory printed by test:long-session.');
 const directory = resolve(process.argv[2]);
 const summary = JSON.parse(await readFile(join(directory, 'summary.json'), 'utf8')) as Summary;
@@ -71,10 +82,19 @@ const points = summary.rows.map((row, i) =>
 const bars = summary.rows.map(row =>
   `<div class="bar" title="Stage ${row.stage}: ${number(row.after)} / ${number(row.before)} characters"><span style="height:${100 * row.after / row.before}%"></span><small>${row.stage}</small></div>`).join('');
 const rows = summary.rows.map(row => `<tr><td>${row.stage}</td><td>${number(row.before)}</td><td>${number(row.after)}</td><td>${reduction(row.before, row.after)}</td><td>${row.historyEntries}</td><td>${number(row.stateTokens)}</td><td>${row.abridged}</td><td>${row.artifactScore.toFixed(2)} ${row.artifactKept ? 'kept' : 'LOST'}</td><td>${row.rollbackScore.toFixed(2)} ${row.rollbackKept ? 'kept' : 'LOST'}</td></tr>`).join('');
-const replays = (await readdir(directory)).includes('ablation-results.json')
+const files = await readdir(directory);
+const replays = files.includes('ablation-results.json')
   ? JSON.parse(await readFile(join(directory, 'ablation-results.json'), 'utf8')) as Replay[]
   : [];
 const replayRows = replays.map(row => `<tr><td>${row.stage}</td><td>${escape(row.variant)}</td><td>${row.artifact.noul.toFixed(2)}</td><td>${row.rollback.noul.toFixed(2)}</td></tr>`).join('');
+const baseline = files.includes('baseline-summary.json')
+  ? JSON.parse(await readFile(join(directory, 'baseline-summary.json'), 'utf8')) as Summary
+  : undefined;
+const chunkReplays = files.includes('retention-comparison.json')
+  ? JSON.parse(await readFile(join(directory, 'retention-comparison.json'), 'utf8')) as ChunkReplay[]
+  : [];
+const chunkRows = chunkReplays.map(row => `<tr><td>${row.stage}</td><td>${row.chunkLines}</td><td>${escape(row.wording)}</td><td>${row.artifactScore.toFixed(2)}</td><td>${row.rollbackScore.toFixed(2)}</td><td>${row.requests}</td><td>${number(row.inputTokens)}</td><td>${row.durationMs}</td></tr>`).join('');
+const runNotes = files.includes('run-notes.txt') ? await readFile(join(directory, 'run-notes.txt'), 'utf8') : '';
 
 const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -98,12 +118,14 @@ summary{cursor:pointer;font-weight:650;padding:12px 0}.note{border-left:4px soli
 <p><span class="badge ${summary.passed ? '' : 'failed'}">${summary.passed ? 'Assertions passed' : 'Retention checks failed'}</span></p>
 <p>One continuous Claude Code process executed a bootstrap command followed by ${summary.stages} noisy Bash commands. The production plugin used live Jev scoring throughout. ${summary.passed ? 'The final answer retained the target bundle, rollback reference, and deployment blocker.' : 'Earlier requirements reached Jev, but some required chunks scored below the 0.5 keep threshold. This run does not establish reliable retention.'}</p>
 <p class="muted">${escape(summary.models.join(', '))} · ${minutes} minutes · ${summary.stages + 1} user turns · ${number(summary.messages)} transcript messages observed</p></header>
+${runNotes ? `<section><h2>Run provenance</h2><pre>${escape(runNotes)}</pre></section>` : ''}
 <div class="metrics">
 <div class="metric"><strong>${reduction(summary.before, summary.after)}</strong><span>less output shown to Claude</span></div>
 <div class="metric"><strong>${number(summary.before - summary.after)}</strong><span>output characters removed</span></div>
 <div class="metric"><strong>${summary.rows.filter(row => row.artifactKept).length}/${summary.stages}</strong><span>target bundles retained</span></div>
 <div class="metric"><strong>${number(Math.max(...summary.rows.map(row => row.stateTokens)))}</strong><span>peak fitted state tokens (estimate)</span></div>
 </div>
+${baseline ? `<section><h2>Before and after the retention fix</h2><p>The same scenario, fixtures, and acceptance checks were used for both sessions. The fix keeps 20-line chunks and the 0.5 threshold, strengthens the per-chunk question, and protects output whose complete text was absent from scoring state.</p><div class="table"><table><thead><tr><th>Measure</th><th>Original session</th><th>This session</th></tr></thead><tbody><tr><td>Target bundles retained</td><td>${baseline.rows.filter(row => row.artifactKept).length}/${baseline.stages}</td><td>${summary.rows.filter(row => row.artifactKept).length}/${summary.stages}</td></tr><tr><td>Rollback references retained</td><td>${baseline.rows.filter(row => row.rollbackKept).length}/${baseline.stages}</td><td>${summary.rows.filter(row => row.rollbackKept).length}/${summary.stages}</td></tr><tr><td>Failed assertions</td><td>${baseline.errors.length}</td><td>${summary.errors.length}</td></tr><tr><td>Output characters removed</td><td>${reduction(baseline.before, baseline.after)}</td><td>${reduction(summary.before, summary.after)}</td></tr></tbody></table></div><p class="muted">The larger reduction in the original session included unwanted losses. Claude responses differ between runs; this is an integration comparison, not a deterministic model evaluation.</p></section>` : ''}
 ${summary.errors.length ? `<section><h2>Observed failures</h2><p>${summary.rows.filter(row => !row.artifactKept).length} target bundles and ${summary.rows.filter(row => !row.rollbackKept).length} rollback references were removed from intermediate results. The final answer is checked separately. The captures do not prove that an answer-selection error was caused by trimming.</p><details><summary>Failed assertions</summary><pre>${escape(summary.errors.join('\n'))}</pre></details></section>` : ''}
 <section><h2>The requirement, and the actual final answer</h2><div class="cols">
 <div><h3>First user message</h3><pre>${escape(summary.firstHistory.find(h => h.role === 'user')?.text ?? '')}</pre><p class="muted">This requirement was present in the final Jev request's history. It was absent from the short “task” field after the first three stages.</p></div>
@@ -124,12 +146,13 @@ ${summary.errors.length ? `<section><h2>Observed failures</h2><p>${summary.rows.
 ${summary.rows.some(row => row.stderrScored) ? `<p class="muted">In ${summary.rows.filter(row => row.stderrScored).length} stages, the fixture’s stderr text was included in the stdout sent to Jev and retained as the final chunk. These stages do not establish separate-stderr handling in the Claude host.</p>` : ''}
 <details><summary>Final trimmed stdout and preserved stderr</summary><pre>${escape(finalToolResult)}</pre></details>
 <details><summary>All ${summary.stages} stages and their measurements</summary><div class="table"><table><thead><tr><th>Stage</th><th>Original chars</th><th>Visible chars</th><th>Removed</th><th>History entries</th><th>Est. state tokens</th><th>Abridged entries</th><th>Target score</th><th>Rollback score</th></tr></thead><tbody>${rows}</tbody></table></div></details></section>
-${replays.length ? `<section><h2>Controlled replays against live Jev</h2><p>Selected captured states were rescored unchanged, with the “do not repeat bundle names or rollback references” instruction removed, or with a standing-requirement clarification appended to scoring context. These trials preserve the per-chunk questions. They do not modify the production plugin or rerun Claude.</p><div class="table"><table><thead><tr><th>Stage</th><th>Variant</th><th>Target score</th><th>Rollback score</th></tr></thead><tbody>${replayRows}</tbody></table></div><p>Scores below 0.5 lose the required chunk. No candidate fix has passed a full-session rerun.</p></section>` : ''}
+${replays.length ? `<section><h2>Controlled replays against live Jev</h2><p>Selected captured states were rescored unchanged, with the “do not repeat bundle names or rollback references” instruction removed, or with a standing-requirement clarification appended to scoring context. These trials preserve the per-chunk questions. They do not modify the production plugin or rerun Claude.</p><div class="table"><table><thead><tr><th>Stage</th><th>Variant</th><th>Target score</th><th>Rollback score</th></tr></thead><tbody>${replayRows}</tbody></table></div><p>Scores below 0.5 lose the required chunk. These context-only trials did not establish reliable retention.</p></section>` : ''}
+${chunkReplays.length ? `<section><h2>Chunk size versus scoring wording</h2><p>Three captured failing states were replayed with the original question at 20, 5, and 1 line per chunk, and with the revised question at 20 lines. History and task text were held unchanged. Scores below 0.5 discard the required value. All question batches were sent concurrently.</p><div class="table"><table><thead><tr><th>Stage</th><th>Lines</th><th>Question</th><th>Target</th><th>Rollback</th><th>Requests</th><th>Input tokens</th><th>Elapsed ms</th></tr></thead><tbody>${chunkRows}</tbody></table></div><p class="muted">These isolated API replays bypass the production 200-chunk cap and history refitting to hold history fixed. Some finer-grained states exceed the production 25,000-token estimate; every request was batched below the 30,000-token estimate. Request counts and usage are measurements of these replays, not predictions for production. Latency is a single sample per case.</p></section>` : ''}
 <section><h2>Reproduce and interpret</h2><pre>export TYPESAFE_API_KEY=...   # provide securely in your environment
 npm run test:long-session
 npm run report:long-session -- &lt;evidence-directory&gt;</pre>
 <p>The harness uses the installed, authenticated Claude CLI, the production plugin, and a separate observer plugin that records Jev request bodies and responses. It never records HTTP headers. Prompts and command output are synthetic, with repetitive progress, selected bundle names, a rollback reference, and a simulated deployment error.</p>
-<p class="note">This is a controlled long-session integration test, not a guarantee across all workloads. History is deliberately abridged under budget pressure. The previously identified secret-forwarding and partially shown chunk risks remain unresolved.</p></section>
+<p class="note">This is a controlled long-session integration test, not a guarantee across all workloads. History is deliberately abridged under budget pressure. Jev scores remain probabilistic. Secret-like output forwarding remains unresolved.</p></section>
 <footer>Claude session ${escape(summary.sessionId)}<br>Started ${escape(summary.started)} · Finished ${escape(summary.finished)}<br>Generated from captured request bodies, API responses, CLI events, and output archives.</footer>
 </main></body></html>`;
 await writeFile(join(directory, 'report.html'), html);
