@@ -35,11 +35,14 @@ verbatim — nothing is rewritten or summarized.
    present in the scoring state (omitted or shortened while fitting).
 7. Each dropped run becomes a marker such as:
    `[fast-jev-output trimmed N lines (M chars); full output: .claude/fast-jev-output/bash-<id>.txt (Read or grep it if needed)]`
-8. The complete output is written under the project's
-   `.claude/fast-jev-output/` directory (self-gitignored) only when trimming
-   happened, and never for credential-like commands or output. Secret markers
-   instruct the agent to re-run the command instead.
-9. Any Jev failure or state that cannot fit leaves the original output untouched.
+8. Before the first scoring request, the complete stdout and stderr are saved
+   under the project's `.claude/fast-jev-output/` directory (self-gitignored).
+   A final `[fast-jev-output full output: <path> (Read or grep it if needed)]`
+   footer follows the trimmed stdout. Archives persist for later recovery,
+   including when scoring ultimately keeps everything or fails.
+   Credential-like commands or output are never archived; their omission
+   markers instruct the agent to re-run the command instead.
+9. Any archive write failure, Jev failure, or state that cannot fit leaves the original output untouched.
    Stderr is never modified.
 
 The hook reads the current transcript for each command; it does not maintain a
@@ -121,7 +124,9 @@ With an authenticated Claude CLI and `TYPESAFE_API_KEY` in the environment, run
 `npm run test:long-session`. This starts one continuous Claude process, loads the
 production plugin plus a test-only observer, and runs a bootstrap followed by
 40 noisy Bash commands against synthetic fixtures. Both Claude and Jev incur
-API usage; the Claude process has a $10 budget.
+API usage; the Claude process has a $10 budget. Each prompt explicitly confirms
+the finite benchmark because Claude may otherwise decline the repeated
+simulated failures. Declined commands fail the command-coverage checks.
 
 The test checks early requirements, result-body omission from tool metadata,
 target bundle and rollback retention, archives, stderr, history fitting, and
