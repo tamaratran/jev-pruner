@@ -48,7 +48,8 @@ verbatim — nothing is rewritten or summarized.
    When Claude already persisted the complete output, that file is reused as the
    archive. Successful pruning replaces Claude's file-preview metadata with the
    retained text and archive footer. Read or scoring failures preserve the original
-   result and its file reference.
+   result and its file reference. Claude may persist the pruned result again if it
+   still exceeds its display limit; the archive footer then lives inside that file.
    A final `[fast-jev-output full output: <path> (Read or grep it if needed)]`
    footer follows the trimmed stdout. Archives persist for later recovery,
    including when scoring ultimately keeps everything or fails.

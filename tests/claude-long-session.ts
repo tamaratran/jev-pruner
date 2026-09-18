@@ -244,7 +244,7 @@ async function analyze(): Promise<void> {
     assert(result.content.includes('[fast-jev-output trimmed'));
     assert(result.content.length < archive.length);
     assert(archive.includes(bundle) && archive.includes(rollback));
-    assert.equal(archive.split('\n').filter(line => line.length > 0).length, 201);
+    assert.equal(archive.split('\n').filter(line => line.length > 0).length, 1001);
     const artifactChunk = chunks.find(c => c.text.includes(bundle));
     assert(artifactChunk);
     const maximumScore = (id: string): number => Math.max(...stageCaptures.flatMap(c => {
@@ -287,7 +287,10 @@ async function analyze(): Promise<void> {
     after: rows.reduce((s, r) => s + r.after, 0), rows, final,
     userTurns: turns.reduce((sum, turn) => sum + 1 + (turn.followUps?.length ?? 0), 0),
     confirmations: turns.filter(turn => turn.followUps?.length).map(turn => turn.stage),
-    firstHistory: captures.find(c => c.request.state.command.endsWith(` ${stages}`))!.request.state.history.slice(0, 4),
+    firstHistory: [...new Map(captures
+      .filter(c => c.response.status === 200 && c.request.state.command.endsWith(` ${stages}`))
+      .map(c => [JSON.stringify(c.request.state.history), c.request.state.history])).values()]
+      .flat().sort((a, b) => a.i - b.i).slice(0, 4),
     compactions: turns.flatMap(t => t.events).filter(e => e.subtype === 'compact_boundary').length,
   };
   await writeFile(join(workspace, 'summary.json'), JSON.stringify(summary, null, 2));
