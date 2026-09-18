@@ -107,6 +107,21 @@ copied. CLI token refresh writes stay in the disposable container and are discar
 on teardown; reauthenticate the source directory if its login stops working.
 Do not archive the login directory or export credential-bearing container images.
 
+For non-mounted Harbor environments (including Modal), the adapter uploads only
+those two login files through `environment.upload_file()` into a fresh mode-700
+staging directory, secures the files with mode 600, then performs the same private
+runtime preparation before Claude installation. It does not put Claude credentials
+in image layers, evidence, or named Modal Secrets. Docker keeps its read-only bind
+mount path. Set `EVIDENCE_DIR` even when invoking Harbor directly so the source
+directory can be checked against the evidence path.
+
+This credential transport alone does not make `evals.full` a Modal launcher:
+that scheduler still defaults to Docker and inspects local Docker image digests.
+A Modal run also needs explicit environment selection, guaranteed task resources,
+bounded sandbox lifetime, remote image provenance, verified evidence downloads,
+and a creation-retry policy; Harbor 0.22.0 retries sandbox creation internally
+despite `--max-retries 0`. Do not use the Docker launcher unchanged for Modal.
+
 The adapter removes API keys, auth tokens, alternate-provider routing, custom
 headers, and OAuth-token overrides both from its environment mapping and at the
 container shell boundary. It ignores user/project settings, rejects custom Harbor

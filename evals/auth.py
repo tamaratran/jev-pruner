@@ -29,7 +29,7 @@ def auth_mode() -> str:
     return mode
 
 
-def subscription_mounts() -> list[dict]:
+def subscription_source() -> Path:
     source = Path(os.environ["JEV_EVAL_CLAUDE_AUTH_DIR"]).expanduser().resolve()
     if not (source / ".credentials.json").is_file():
         raise ValueError("Complete official Claude login in the auth directory first")
@@ -39,6 +39,11 @@ def subscription_mounts() -> list[dict]:
         raise ValueError(
             "Keep the private auth directory outside evidence and the repo"
         )
+    return source
+
+
+def subscription_mounts() -> list[dict]:
+    source = subscription_source()
     return [
         {
             "type": "bind",
