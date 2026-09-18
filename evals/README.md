@@ -69,3 +69,38 @@ Sweep on 2026-09-18, 3 runs per scenario, `jev-latest`:
 
 Unlike the `claude plugin eval` cases above, this exercises the real pruning
 path, because it does not go through the eval harness.
+
+## Accuracy sweeps
+
+Two more manual sweeps, same idea as above but wider:
+
+```sh
+TYPESAFE_API_KEY=... npm run eval:accuracy   # 12 output shapes x 3 needle positions
+evals/manual/capture-real.sh /tmp/real       # capture real command output
+REAL_DIR=/tmp/real TYPESAFE_API_KEY=... npm run eval:real
+```
+
+`accuracy.mts` is synthetic but varied: pytest failures, npm audit counts,
+Docker build errors, Java stack traces, terraform replacements, CrashLoopBackOff
+pods, git log, grep hits, `ps aux`, curl 500s, `du`, tar listings, and one case
+where every line matters and nothing should go.
+
+`real.mts` runs the same measure over output captured from real commands on the
+machine, each with a specific needle: the failing pytest case, the test count,
+a `TS2322` error among `--listFiles` noise, an express version in `npm ls`, a
+commit subject in `git log --stat`, a `.d.ts` path in `find`, the largest
+directory in `du`, `ls -laR`, a rate-limit header among 60 responses, and
+`docker images`.
+
+Results on 2026-09-18:
+
+| Sweep | Retention | Mean reduction |
+| --- | --- | --- |
+| Standard (12 scenarios) | 8/8 | 83% |
+| Accuracy (36 runs) | 36/36 | 87% |
+| Real output (10 captures) | 10/10 | 54% |
+| Needle matrix (sizes to 2.8 MB) | 9/9 | — |
+
+Real output reduces less because three captures are correctly left whole:
+pytest and vitest output below the threshold, and `docker images`, where Jev
+wanted every line.

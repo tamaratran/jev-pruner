@@ -25,7 +25,9 @@
     "test:live": "tsx --test tests/jev-live.ts",
     "typecheck:hooks": "tsc -p tsconfig.hooks.json",
     "validate:plugin": "claude plugin validate .claude-plugin/plugin.json",
-    "eval:manual": "tsx evals/manual/run.mts"
+    "eval:manual": "tsx evals/manual/run.mts",
+    "eval:real": "tsx evals/manual/real.mts",
+    "eval:accuracy": "tsx evals/manual/accuracy.mts"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
