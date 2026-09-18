@@ -360,13 +360,34 @@ async function trimOutputAttempt(
   if (maxChars > 0) {
     const size = () =>
       [...keptIndexes].reduce((sum, index) => sum + chunks[index]!.chars + 1, 0);
-    // First and last stay; the rest go lowest score first.
+    // First and last stay, and so does anything that looks like an error or a
+    // failure: a budget must never be the reason the one line the agent needs
+    // disappears. The rest goes lowest score first, and the budget is missed
+    // rather than met if that is not enough.
     const droppable = [...keptIndexes]
-      .filter((index) => index !== 0 && index !== chunks.length - 1)
+      .filter(
+        (index) =>
+          index !== 0 &&
+          index !== chunks.length - 1 &&
+          !ERROR_PATTERN.test(chunks[index]!.text),
+      )
       .sort((a, b) => (scores[a] ?? 0) - (scores[b] ?? 0));
     for (const index of droppable) {
       if (size() <= maxChars) break;
       keptIndexes.delete(index);
+    }
+  }
+  const shrunk = new Map<number, string>();
+  if (maxChars > 0) {
+    const kept = [...keptIndexes].sort((a, b) => a - b);
+    const size = () =>
+      kept.reduce((sum, index) => sum + (shrunk.get(index) ?? chunks[index]!.text).length + 1, 0);
+    for (const index of [...kept].sort(
+      (a, b) => chunks[b]!.chars - chunks[a]!.chars,
+    )) {
+      if (size() <= maxChars) break;
+      const text = shrinkChunkText(chunks[index]!.text);
+      if (text.length < chunks[index]!.chars) shrunk.set(index, text);
     }
   }
   const droppedIndexes = chunks
@@ -377,7 +398,7 @@ async function trimOutputAttempt(
   const parts: string[] = [];
   for (let index = 0; index < chunks.length;) {
     if (keptIndexes.has(index)) {
-      parts.push(chunks[index]!.text);
+      parts.push(shrunk.get(index) ?? chunks[index]!.text);
       index += 1;
       continue;
     }
@@ -396,6 +417,39 @@ async function trimOutputAttempt(
     charsAfter: output.length,
     scores,
   };
+}
+
+
+/**
+ * Last resort when the kept chunks alone exceed the budget: inside a chunk,
+ * keep the lines that look like errors plus a little context, and say how many
+ * lines went. Better than handing back a chunk that will be replaced by a
+ * head-of-file preview anyway.
+ */
+function shrinkChunkText(text: string, keepEdge = 2): string {
+  const lines = text.split('\n');
+  const keep = new Set<number>();
+  lines.forEach((line, index) => {
+    if (ERROR_PATTERN.test(line)) {
+      for (let at = index - 1; at <= index + 1; at += 1) if (at >= 0 && at < lines.length) keep.add(at);
+    }
+  });
+  for (let index = 0; index < Math.min(keepEdge, lines.length); index += 1) keep.add(index);
+  for (let index = Math.max(0, lines.length - keepEdge); index < lines.length; index += 1) keep.add(index);
+  if (keep.size === lines.length) return text;
+  const parts: string[] = [];
+  let removed = 0;
+  for (let index = 0; index < lines.length; index += 1) {
+    if (keep.has(index)) {
+      if (removed > 0) {
+        parts.push(`[fast-jev-output trimmed ${removed} more lines from this section]`);
+        removed = 0;
+      }
+      parts.push(lines[index]!);
+    } else removed += 1;
+  }
+  if (removed > 0) parts.push(`[fast-jev-output trimmed ${removed} more lines from this section]`);
+  return parts.join('\n');
 }
 
 export async function trimOutput(

@@ -253,3 +253,49 @@ describe('trimOutput safety', () => {
     expect(r.chunks).toBeGreaterThan(2);
   });
 });
+
+describe('budget for engine-saved output', () => {
+  const asker = (score: number) => ({
+    ask: async (_state: unknown, questions: Record<string, unknown>) => ({
+      answers: Object.fromEntries(Object.keys(questions).map((id) => [id, { type: 'noul' as const, noul: score }])),
+    }),
+  });
+  const withNeedle = (n: number, at: number) =>
+    Array.from({ length: n }, (_, i) => (i === at ? 'ERROR worker-4 KeyError discount order=ORD-77341' : `INFO request ${i} ok`)).join('\n');
+
+  it('keeps the output within the budget', async () => {
+    const r = await trimOutput(
+      { command: 'tail -n +1 big.log', goal: 'g', output: withNeedle(3000, 1700) },
+      asker(0.9),
+      { maxChars: 4_000 },
+    );
+    expect(r.charsAfter).toBeLessThanOrEqual(4_000);
+  });
+
+  it('never drops an error line to meet the budget', async () => {
+    for (const lines of [900, 3000, 12000]) {
+      const r = await trimOutput(
+        { command: 'tail -n +1 big.log', goal: 'g', output: withNeedle(lines, Math.floor(lines * 0.57)) },
+        asker(0.01),
+        { maxChars: 2_000 },
+      );
+      expect(r.output).toContain('ORD-77341');
+    }
+  });
+
+  it('shrinks an oversized chunk instead of dropping it, and says how many lines went', async () => {
+    const r = await trimOutput(
+      { command: 'tail -n +1 big.log', goal: 'g', output: withNeedle(40_000, 22_800) },
+      asker(0.01),
+      { maxChars: 8_000 },
+    );
+    expect(r.output).toContain('ORD-77341');
+    expect(r.output).toMatch(/trimmed \d+ more lines from this section/);
+    expect(r.charsAfter).toBeLessThanOrEqual(8_000);
+  });
+
+  it('leaves output alone when no budget is set', async () => {
+    const r = await trimOutput({ command: 'x', goal: 'g', output: withNeedle(900, 500) }, asker(0.9));
+    expect(r.trimmed).toBe(false);
+  });
+});
