@@ -43,10 +43,12 @@ of `filename`/`sha256` entries. Obtain checksums from APT's authenticated packag
 metadata and retrieve the exact package versions from an official archive.
 
 The adapter verifies each local checksum, seeds only matching distributions, and
-records the manifest in agent evidence. Harbor's normal dependency installation
-still selects and verifies packages using APT; repository signatures and package
-validation remain enabled. Record the cache manifest and setup change in the
-evaluation protocol before resuming. Never repeat completed inference.
+records the manifest in agent evidence. For matching images, it refreshes APT
+indexes before staging the cache, then installs Harbor's required packages.
+This ordering supports Docker images whose post-update hooks clear downloaded
+archives. APT still selects and verifies packages; repository signatures and
+package validation remain enabled. Record the cache manifest and setup change
+in the evaluation protocol before resuming. Never repeat completed inference.
 
 ## Activation smoke
 
