@@ -117,9 +117,15 @@ def trial_blocker(job: Path) -> str | None:
             return reason
     for result in job.glob("*/result.json"):
         try:
-            exception = json.loads(result.read_text()).get("exception_info") or {}
+            trial = json.loads(result.read_text())
         except json.JSONDecodeError:
             continue
+        exception = trial.get("exception_info") or {}
+        if exception and not trial.get("agent_execution"):
+            text = str(exception.get("exception_message", "")).lower()
+            if "docker" in text and "429" in text:
+                return "Docker registry rate limit blocked environment startup"
+            return "Environment or agent setup failed before inference"
         if "subscription" in str(exception.get("exception_message", "")).lower():
             return "Subscription preflight failed"
     return None
@@ -128,6 +134,10 @@ def trial_blocker(job: Path) -> str | None:
 def failure_category(row: dict) -> str | None:
     exception = row.get("exception") or {}
     kind = exception.get("exception_type", "")
+    if exception and row.get("exception_phase") == "environment_setup":
+        return "infrastructure"
+    if exception and row.get("exception_phase") == "agent_setup":
+        return "agent_setup"
     if kind.startswith("Environment") or "Build" in kind or "Download" in kind:
         return "infrastructure"
     if "Verifier" in kind or "Reward" in kind:
@@ -336,6 +346,7 @@ def run(root: Path, benchmark: Path, harbor: str) -> None:
             row["state"] = "infrastructure_error"
             row["failure_category"] = "infrastructure"
             row["error"] = f"Expected one trial result, found {len(paths)}"
+            reason = reason or row["error"]
         inspected = subprocess.run(
             ["docker", "image", "inspect", image, "--format", "{{json .RepoDigests}}"],
             capture_output=True,

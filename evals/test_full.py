@@ -1,9 +1,79 @@
+import json
+import tempfile
 import unittest
+from pathlib import Path
 
-from evals.full import access_blocker, aggregate, failure_category
+from evals.full import access_blocker, aggregate, failure_category, trial_blocker
+from evals.summarize import summarize_trial
 
 
 class FullTests(unittest.TestCase):
+    def test_summary_preserves_setup_phase_for_generic_exceptions(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            trial = Path(directory) / "full-task-control" / "trial"
+            trial.mkdir(parents=True)
+            path = trial / "result.json"
+            value = {
+                "task_name": "task",
+                "trial_name": "trial",
+                "task_id": {"git_commit_id": "revision"},
+                "task_checksum": "checksum",
+                "exception_info": {"exception_type": "RuntimeError"},
+                "environment_setup": {"started_at": "2026-09-18T08:00:00Z"},
+            }
+            path.write_text(json.dumps(value))
+            self.assertEqual(
+                summarize_trial(path)["exception_phase"], "environment_setup"
+            )
+            path.write_text(
+                json.dumps(
+                    {
+                        **value,
+                        "agent_setup": {"started_at": "2026-09-18T08:01:00Z"},
+                    }
+                )
+            )
+            self.assertEqual(summarize_trial(path)["exception_phase"], "agent_setup")
+
+    def test_setup_errors_stop_without_inference_events(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            job = Path(directory)
+            trial = job / "trial"
+            trial.mkdir()
+            for text in (
+                "Docker compose failed: 429 Too Many Requests",
+                "Command failed: test ! -e /opt/jev-eval/auth",
+            ):
+                (trial / "result.json").write_text(
+                    json.dumps(
+                        {
+                            "exception_info": {"exception_message": text},
+                            "agent_execution": None,
+                        }
+                    )
+                )
+                self.assertIsNotNone(trial_blocker(job))
+            (trial / "result.json").write_text("{")
+            self.assertIsNone(trial_blocker(job))
+        self.assertEqual(
+            failure_category(
+                {
+                    "exception": {"exception_type": "RuntimeError"},
+                    "exception_phase": "environment_setup",
+                }
+            ),
+            "infrastructure",
+        )
+        self.assertEqual(
+            failure_category(
+                {
+                    "exception": {"exception_type": "NonZeroAgentExitCodeError"},
+                    "exception_phase": "agent_setup",
+                }
+            ),
+            "agent_setup",
+        )
+
     def test_account_errors_stop_but_task_text_does_not(self) -> None:
         self.assertIsNone(
             access_blocker(
