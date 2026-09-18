@@ -226,6 +226,8 @@ def summarize_trial(path: Path) -> dict:
         "task_checksum": trial["task_checksum"],
         "reward": (trial.get("verifier_result") or {}).get("rewards", {}).get("reward"),
         "exception": exception,
+        "agent_setup": trial.get("agent_setup"),
+        "agent_execution": trial.get("agent_execution"),
         "wall_seconds": elapsed(trial),
         "agent_seconds": elapsed(trial.get("agent_execution") or {}),
         "verifier_seconds": elapsed(trial.get("verifier") or {}),
