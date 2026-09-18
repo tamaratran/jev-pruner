@@ -1,0 +1,4 @@
+{
+  "extends": "../tsconfig.hooks.json",
+  "include": ["observer/hooks", "../types"]
+}

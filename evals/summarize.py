@@ -1,0 +1,197 @@
+"""Summarize saved Harbor trials without making network requests."""
+
+import argparse
+import json
+import re
+from datetime import datetime
+from pathlib import Path
+from statistics import median
+
+TRIM_LOG = re.compile(r"kept (\d+)/(\d+) chunks \((\d+)→(\d+) chars\)")
+TRIM_MARKER = re.compile(r"\[fast-jev-output trimmed (\d+) lines \((\d+) chars\)")
+
+
+def read_events(path: Path) -> list[dict]:
+    events = []
+    for line in path.read_text().splitlines() if path.exists() else []:
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(item, dict):
+            events.append(item)
+    return events
+
+
+def elapsed(timing: dict) -> float | None:
+    if not timing.get("started_at") or not timing.get("finished_at"):
+        return None
+    return (
+        datetime.fromisoformat(timing["finished_at"])
+        - datetime.fromisoformat(timing["started_at"])
+    ).total_seconds()
+
+
+def summarize_agent(agent: Path, arm: str, stream: str = "claude-code.txt") -> dict:
+    events = read_events(agent / stream)
+    final = next((e for e in reversed(events) if e.get("type") == "result"), {})
+    init = next((e for e in events if e.get("subtype") == "init"), {})
+    plugins = sorted(p["name"] for p in init.get("plugins", []))
+    expected = sorted(
+        ["jev-eval-observer"] + (["fast-jev-output"] if arm == "plugin" else [])
+    )
+    issues = []
+    if plugins != expected:
+        issues.append(f"Unexpected plugins: {plugins}")
+    evidence = agent / "jev"
+    if not (evidence / "activated.json").exists():
+        issues.append("Observer activation missing")
+    if not final:
+        issues.append("Final Claude result missing; usage totals unavailable")
+    logs = [
+        json.loads(path.read_text())["text"]
+        for path in sorted(evidence.glob("log-*.json"))
+    ]
+    trims = [match for text in logs if (match := TRIM_LOG.search(text))]
+    results = [
+        block
+        for event in events
+        if isinstance(event.get("message"), dict)
+        for block in event["message"].get("content", [])
+        if isinstance(block, dict)
+        and block.get("type") == "tool_result"
+        and isinstance(block.get("content"), str)
+        and TRIM_MARKER.search(block["content"])
+    ]
+    if len(results) != len(trims):
+        issues.append("Pruning logs and transcript tool-result counts disagree")
+    for result in results:
+        archive = evidence / "archives" / f"bash-{result['tool_use_id']}.txt"
+        if not archive.exists():
+            issues.append(f"Missing original output for {result['tool_use_id']}")
+    markers = [m for result in results for m in TRIM_MARKER.finditer(result["content"])]
+    requests = [
+        json.loads(path.read_text())
+        for path in sorted(evidence.glob("request-*.json"))
+        if not path.name.endswith("-started.json")
+    ]
+    started = len(list(evidence.glob("request-*-started.json")))
+    latencies = [request["durationMs"] for request in requests]
+    responses = []
+    for request in requests:
+        response = request.get("response")
+        if response:
+            try:
+                body = json.loads(response["body"])
+            except json.JSONDecodeError:
+                body = {}
+            responses.append({**response, "body": body})
+    errors = [text for text in logs if "trim skipped" in text]
+    if started != len(requests):
+        issues.append("Jev requests without captured responses")
+    if errors or any(response["status"] != 200 for response in responses):
+        issues.append(
+            "Jev errors occurred; inspect captures before interpreting savings"
+        )
+    if arm == "control" and (started or trims):
+        issues.append("Control unexpectedly invoked pruning")
+    return {
+        "model": init.get("model"),
+        "plugins": plugins,
+        "observer_loaded": (evidence / "activated.json").exists(),
+        "measurement_issues": issues,
+        "claude_result_subtype": final.get("subtype"),
+        "claude_is_error": final.get("is_error"),
+        "claude_usage": final.get("usage"),
+        "claude_cost_usd_reported": final.get("total_cost_usd"),
+        "claude_model_usage": final.get("modelUsage"),
+        "claude_duration_ms": final.get("duration_ms"),
+        "bash_calls_observed": len(list(evidence.glob("bash-*.json"))),
+        "jev_requests_started": started,
+        "jev_responses": len(responses),
+        "jev_http_statuses": [response["status"] for response in responses],
+        "jev_models": sorted(
+            {
+                response["body"]["model"]
+                for response in responses
+                if response["body"].get("model")
+            }
+        ),
+        "jev_latency_total_ms": sum(latencies),
+        "jev_latency_median_ms": median(latencies) if latencies else None,
+        "jev_usage": [response["body"].get("usage") for response in responses],
+        "jev_cost_usd": None,
+        "jev_cost_note": "No price or billed cost returned; not assumed free",
+        "hook_errors": errors,
+        "pruned_outputs": len(trims),
+        "pruned_results_in_transcript": len(results),
+        "chunks_before": sum(int(m[2]) for m in trims),
+        "chunks_kept": sum(int(m[1]) for m in trims),
+        "chars_before_pruned_outputs": sum(int(m[3]) for m in trims),
+        "chars_after_pruned_outputs": sum(int(m[4]) for m in trims),
+        "net_chars_saved": sum(int(m[3]) - int(m[4]) for m in trims),
+        "raw_chars_removed": sum(int(m[2]) for m in markers),
+        "lines_removed": sum(int(m[1]) for m in markers),
+    }
+
+
+def summarize_trial(path: Path) -> dict:
+    trial = json.loads(path.read_text())
+    settings_path = path.parent / "agent/eval-settings.json"
+    settings = (
+        json.loads(settings_path.read_text())
+        if settings_path.exists()
+        else {"arm": path.parent.parent.name.rsplit("-", 1)[-1]}
+    )
+    exception = trial.get("exception_info")
+    return {
+        "task": trial["task_name"],
+        "arm": settings["arm"],
+        "trial_name": trial["trial_name"],
+        "task_revision": trial["task_id"]["git_commit_id"],
+        "task_checksum": trial["task_checksum"],
+        "reward": (trial.get("verifier_result") or {}).get("rewards", {}).get("reward"),
+        "exception": exception,
+        "wall_seconds": elapsed(trial),
+        "agent_seconds": elapsed(trial.get("agent_execution") or {}),
+        "verifier_seconds": elapsed(trial.get("verifier") or {}),
+        "harbor_agent_metrics": trial.get("agent_result"),
+        **summarize_agent(path.parent / "agent", settings["arm"]),
+    }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("evidence", type=Path)
+    args = parser.parse_args()
+    paths = sorted((args.evidence / "jobs").glob("pilot-*/*/result.json"))
+    rows = [summarize_trial(path) for path in paths]
+    paired = []
+    for task in sorted({row["task"] for row in rows}):
+        arms = {row["arm"]: row for row in rows if row["task"] == task}
+        control, plugin = arms.get("control"), arms.get("plugin")
+        complete = bool(
+            control
+            and plugin
+            and all(row["reward"] is not None for row in (control, plugin))
+        )
+        paired.append(
+            {
+                "task": task,
+                "both_rewards_available": complete,
+                "control_reward": control["reward"] if control else None,
+                "plugin_reward": plugin["reward"] if plugin else None,
+                "disagreement": control["reward"] != plugin["reward"]
+                if complete and control and plugin
+                else None,
+            }
+        )
+    output = {"trials": rows, "pairs": paired, "expected_trials": 6}
+    (args.evidence / "results.json").write_text(json.dumps(output, indent=2) + "\n")
+    print(json.dumps({"trials": len(rows), "pairs": paired}, indent=2))
+    if len(rows) != 6 or any(row["measurement_issues"] for row in rows):
+        raise SystemExit("Incomplete or invalid measurements; inspect results.json")
+
+
+if __name__ == "__main__":
+    main()
