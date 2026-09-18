@@ -209,6 +209,16 @@ unstarted tasks. Subscription/account/model errors and instrumentation/Jev failu
 pause new launches and create `blocker.json`; other already-running trials finish
 and checkpoint before the launcher exits. Ordinary task failures remain
 in the results. A paused run must be inspected before any separate continuation.
+For a live coordinator handoff on Linux, suspend the old coordinator without
+signaling its Harbor process groups. Construct an `evals.process.AdoptedProcess`
+for each live child using its PID, the old coordinator PID, and its checkpointed
+command; then call `run(..., resume=True, concurrency=32, inflight={job_name:
+process, ...})`. The process wrapper verifies the parent, process group, and
+command, and tracks process start time to avoid following a reused PID. Keep the
+old coordinator stopped until it is terminated; only the replacement may write
+checkpoints. It counts adopted jobs toward the concurrency limit and retains
+their launch commit and concurrency, recording the handoff separately. Exit codes
+of adopted children remain unavailable; Harbor result files determine outcomes.
 After inspecting and resolving a pause, stop the previous launcher and pass
 `--resume` with the same evidence directory. Completed trials are retained, never
 retried; only pending manifest rows execute. A checkpoint interrupted after Harbor
