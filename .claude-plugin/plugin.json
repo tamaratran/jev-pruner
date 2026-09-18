@@ -10,11 +10,11 @@
       "description": "TypeSafe API key. Leave unset to use TYPESAFE_API_KEY.",
       "sensitive": true
     },
-    "minChars": {
+    "minTokens": {
       "type": "number",
-      "title": "Minimum Bash output characters",
-      "description": "Bash output at or below this length passes through untouched.",
-      "default": 4000
+      "title": "Minimum Bash output tokens",
+      "description": "Stdout at or below this estimated token count passes through untouched. Minimum: 10000.",
+      "default": 10000
     },
     "persistedOutputs": {
       "type": "boolean",
@@ -25,7 +25,7 @@
     "persistedMaxChars": {
       "type": "number",
       "title": "Budget for engine-saved output",
-      "description": "Maximum characters of pruned output to hand back when the engine saved the full output; lowest-scoring chunks go until it fits.",
+      "description": "Rendered character budget including omission markers and the archive footer. If errors or unscored content cannot fit safely, the original result passes through. 0 disables the cap.",
       "default": 8000
     },
     "chunkLines": {

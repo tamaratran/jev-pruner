@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { trimOutput } from '../src/output.js';
-import { estimateStateTokens, type JevAsker, type JevQuestions } from '../src/jev.js';
+import { estimateStateTokens, estimateTokens, type JevAsker, type JevQuestions } from '../src/jev.js';
 
 function answersFor(questions: JevQuestions, score: (id: string) => number) {
   return {
@@ -84,6 +84,29 @@ describe('complete scoring and request limits', () => {
     );
     expect(result.output).toContain('serial=unseen-release');
   });
+
+  it('preserves chunks not scored against every history segment', async () => {
+    const output = Array.from({ length: 200 }, (_, index) =>
+      `module ${index} ${'cache '.repeat(55)}`,
+    ).join('\n');
+    let calls = 0;
+    const result = await trimOutput(
+      {
+        command: 'build', goal: '', output,
+        messages: Array.from({ length: 30 }, () => ({
+          role: 'user' as const, text: 'details '.repeat(200), toolUses: [],
+        })),
+      },
+      { async ask(_state, questions) {
+        calls += 1;
+        return answersFor(questions, () => 0);
+      } },
+      { maxStateTokens: 6_000, maxScoringRequests: 0 },
+    );
+    expect(calls).toBe(1);
+    expect(result.output).toBe(output);
+    expect(result.trimmed).toBe(false);
+  });
 });
 
 describe('rendered output budgets', () => {
@@ -117,9 +140,10 @@ describe('rendered output budgets', () => {
   });
 
   it('returns within-chunk shrinking even when no whole chunk is dropped', async () => {
-    const output = Array.from({ length: 60 }, (_, index) =>
+    const output = Array.from({ length: 300 }, (_, index) =>
       `INFO ${String(index).padStart(3, '0')} ${'x'.repeat(200)}`,
     ).join('\n');
+    expect(estimateTokens(output)).toBeGreaterThan(10_000);
     let refinements = 0;
     const result = await trimOutput(
       { command: 'build', goal: 'g', output },
@@ -130,17 +154,18 @@ describe('rendered output budgets', () => {
         if (Object.keys(questions)[0]!.startsWith('g')) refinements += 1;
         return answersFor(questions, id => id.startsWith('g') ? 0.01 : 0.99);
       } },
-      { maxChars: 8_000 },
+      { chunkLines: 100, maxChars: 35_000 },
     );
     expect(refinements).toBeGreaterThan(0);
     expect(result.dropped).toBe(0);
     expect(result.trimmed).toBe(true);
     expect(result.output).not.toBe(output);
-    expect(result.output.length).toBeLessThanOrEqual(8_000);
+    expect(result.output.length).toBeLessThanOrEqual(35_000);
   });
 
   it('preserves every failure when the failures alone exceed the budget', async () => {
-    const output = Array.from({ length: 200 }, (_, index) => `ERROR ${index} ${'detail '.repeat(20)}`).join('\n');
+    const output = Array.from({ length: 600 }, (_, index) => `ERROR ${index} ${'detail '.repeat(20)}`).join('\n');
+    expect(estimateTokens(output)).toBeGreaterThan(10_000);
     const result = await trimOutput(
       { command: 'build', goal: 'Find all failures', output },
       keepEverything,
@@ -148,6 +173,38 @@ describe('rendered output budgets', () => {
     );
     expect(result.output).toBe(output);
     expect(result.trimmed).toBe(false);
+  });
+
+  it('uses every history segment when refining a kept chunk', async () => {
+    const needle = 'serial=SN-88431-XQ';
+    const lines = Array.from({ length: 300 }, (_, index) => `item ${index} ${'x'.repeat(200)}`);
+    lines[130] = needle;
+    let refinedWithRequirement = false;
+    const result = await trimOutput(
+      {
+        command: 'inventory', goal: '', output: lines.join('\n'),
+        messages: [
+          ...Array.from({ length: 30 }, () => ({
+            role: 'assistant' as const, text: 'details '.repeat(200), toolUses: [],
+          })),
+          { role: 'user', text: 'retain serial', toolUses: [] },
+        ],
+      },
+      { async ask(state, questions) {
+        const { chunks, history } = state as { chunks: { id: string; text: string }[]; history: unknown };
+        expect(estimateStateTokens(JSON.stringify(state))).toBeLessThanOrEqual(8_000);
+        const requirement = JSON.stringify(history).includes('retain serial');
+        refinedWithRequirement ||= requirement && Object.keys(questions)[0]!.startsWith('g');
+        return answersFor(questions, id => (
+          id.startsWith('c') || requirement && chunks.find(chunk => chunk.id === id)!.text.includes(needle)
+        ) ? 0.99 : 0.01);
+      } },
+      { chunkLines: 100, maxStateTokens: 8_000, maxChars: 20_000 },
+    );
+    expect(refinedWithRequirement).toBe(true);
+    expect(result.trimmed).toBe(true);
+    expect(result.output).toContain(needle);
+    expect(result.output.length).toBeLessThanOrEqual(20_000);
   });
 
   it('does not discard unscored content to meet the output budget', async () => {

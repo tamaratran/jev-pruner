@@ -4,7 +4,7 @@ import { getApiKey, looksSecret, resolveHookConfig } from '../hooks/fast-jev-out
 describe('hook configuration', () => {
   it('uses the documented defaults', () => {
     expect(resolveHookConfig({})).toMatchObject({
-      minChars: 4_000,
+      minTokens: 10_000,
       chunkLines: 20,
       keepThreshold: 0.5,
       maxStateTokens: 25_000,
@@ -20,7 +20,7 @@ describe('hook configuration', () => {
     expect(
       resolveHookConfig({
         apiKey: 'key',
-        minChars: 100,
+        minTokens: 15_000,
         chunkLines: 5,
         keepThreshold: 0.8,
         maxStateTokens: 5_000,
@@ -28,7 +28,7 @@ describe('hook configuration', () => {
       }),
     ).toEqual({
       apiKey: 'key',
-      minChars: 100,
+      minTokens: 15_000,
       persistedOutputs: true,
       persistedMaxChars: 8000,
       chunkLines: 5,

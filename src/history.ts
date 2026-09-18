@@ -29,103 +29,117 @@ export interface HistoryEntry {
     input: string;
     result: string;
   }[];
+  tool_results?: { id: string; result: string }[];
+  part?: {
+    field: 'text' | 'tool_calls.input' | 'tool_calls.result' | 'tool_results.result';
+    offset: number;
+    total_chars: number;
+  };
 }
 
-function truncate(text: string, limit: number): string {
-  return text.length <= limit ? text : `${text.slice(0, limit - 1)}…`;
+function resultText(result: { text?: string; result?: unknown; isError?: boolean }): string {
+  return JSON.stringify({ text: result.text, data: result.result, isError: result.isError ?? false });
 }
 
-function inputText(input: Record<string, unknown>): string {
-  try {
-    return truncate(JSON.stringify(input), 1_000);
-  } catch {
-    return '[unserializable input]';
-  }
-}
-
-function historyEntries(messages: readonly ConversationMessage[]): HistoryEntry[] {
+export function historyEntries(messages: readonly ConversationMessage[]): HistoryEntry[] {
   const results = new Map(
     messages.flatMap((message) =>
-      (message.toolResults ?? []).map((result) => [result.tool_use_id, result] as const),
+      (message.toolResults ?? []).map((result) => [result.tool_use_id, resultText(result)] as const),
     ),
   );
-  let callId = 0;
   return messages.flatMap((message, i) => {
     const toolCalls = message.toolUses.map((tool) => {
-      const result = results.get(tool.tool_use_id) ??
-        (tool.text !== undefined || tool.result !== undefined || tool.isError ? tool : undefined);
+      const embedded = tool.text !== undefined || tool.result !== undefined || tool.isError !== undefined;
+      const result = embedded ? resultText(tool) : undefined;
       return {
-        id: `t${++callId}`,
+        id: tool.tool_use_id,
         tool: tool.tool,
-        input: inputText(tool.input),
-        result: result
-          ? `${result.isError ? 'error' : 'ok'}, ${result.text?.length ?? 0} chars (omitted)`
-          : 'pending',
+        input: JSON.stringify(tool.input),
+        result: results.has(tool.tool_use_id) && (!embedded || results.get(tool.tool_use_id) === result)
+          ? 'see tool_results with this id'
+          : result ?? 'pending',
       };
     });
-    if (message.text.trim().length === 0 && toolCalls.length === 0) return [];
+    const toolResults = (message.toolResults ?? []).map(result => ({
+      id: result.tool_use_id,
+      result: resultText(result),
+    }));
+    if (message.text.length === 0 && toolCalls.length === 0 && toolResults.length === 0) return [];
     const entry: HistoryEntry = { i, role: message.role, text: message.text };
     if (toolCalls.length > 0) entry.tool_calls = toolCalls;
+    if (toolResults.length > 0) entry.tool_results = toolResults;
     return [entry];
   });
 }
 
-export function fitHistory(
+function splitEntry(entry: HistoryEntry, maxTokens: number): HistoryEntry[] {
+  const fits = (part: HistoryEntry): boolean =>
+    estimateStateTokens(JSON.stringify([part])) <= maxTokens;
+  if (fits(entry)) return [entry];
+  const fragments: HistoryEntry[] = [];
+  const splitField = (
+    text: string,
+    field: NonNullable<HistoryEntry['part']>['field'],
+    make: (text: string) => HistoryEntry,
+  ): void => {
+    let offset = 0;
+    const fragment = (length: number): HistoryEntry => ({
+      ...make(text.slice(offset, offset + length)),
+      part: { field, offset, total_chars: text.length },
+    });
+    do {
+      let low = 0;
+      let high = text.length - offset;
+      while (low < high) {
+        const mid = Math.ceil((low + high) / 2);
+        if (fits(fragment(mid))) low = mid;
+        else high = mid - 1;
+      }
+      if (low > 0 && /[\uD800-\uDBFF]/.test(text[offset + low - 1]!) && offset + low < text.length) low -= 1;
+      if ((low === 0 && offset < text.length) || !fits(fragment(low))) {
+        throw new Error(`history fragment cannot fit in ${maxTokens} tokens`);
+      }
+      if (offset + low < text.length) {
+        const newline = text.lastIndexOf('\n', offset + low - 1);
+        if (newline >= offset + low / 2) low = newline - offset + 1;
+      }
+      fragments.push(fragment(low));
+      offset += low;
+    } while (offset < text.length);
+  };
+  const base = { i: entry.i, role: entry.role, text: '' };
+  if (entry.text.length > 0) splitField(entry.text, 'text', text => ({ ...base, text }));
+  for (const call of entry.tool_calls ?? []) {
+    splitField(call.input, 'tool_calls.input', input => ({
+      ...base, tool_calls: [{ ...call, input, result: '' }],
+    }));
+    splitField(call.result, 'tool_calls.result', result => ({
+      ...base, tool_calls: [{ ...call, input: '', result }],
+    }));
+  }
+  for (const result of entry.tool_results ?? []) {
+    splitField(result.result, 'tool_results.result', text => ({
+      ...base, tool_results: [{ id: result.id, result: text }],
+    }));
+  }
+  return fragments;
+}
+
+export function splitHistory(
   messages: readonly ConversationMessage[],
   maxTokens: number,
-): HistoryEntry[] {
-  const history = historyEntries(messages);
-  if (history.length === 0) return history;
-  const entryTokens = (entry: HistoryEntry): number =>
-    estimateStateTokens(JSON.stringify(entry)) + 1;
-  const perEntry = history.map(entryTokens);
-  let tokens = estimateStateTokens('[]') + perEntry.reduce((sum, count) => sum + count, 0);
-  const fits = (): boolean => tokens <= maxTokens;
-  const updateTokens = (index: number): void => {
-    const now = entryTokens(history[index]!);
-    tokens += now - perEntry[index]!;
-    perEntry[index] = now;
-  };
-  if (fits()) return history;
-
-  for (const limit of [200, 60]) {
-    history.forEach((entry, index) => {
-      for (const call of entry.tool_calls ?? []) call.input = truncate(call.input, limit);
-      updateTokens(index);
-    });
-    if (fits()) return history;
+): HistoryEntry[][] {
+  const segments: HistoryEntry[][] = [];
+  let current: HistoryEntry[] = [];
+  for (const entry of historyEntries(messages)) {
+    for (const fragment of splitEntry(entry, maxTokens)) {
+      if (current.length > 0 && estimateStateTokens(JSON.stringify([...current, fragment])) > maxTokens) {
+        segments.push(current);
+        current = [];
+      }
+      current.push(fragment);
+    }
   }
-
-  const pinned = (entry: HistoryEntry): boolean =>
-    entry.i === 0 || entry.i >= messages.length - 6;
-  const indices = history.map((_, index) => index);
-  const order = [
-    ...indices.filter((index) => !pinned(history[index]!)),
-    ...indices.filter((index) => pinned(history[index]!)),
-  ];
-  for (const index of order) {
-    const entry = history[index]!;
-    if (entry.text.length <= 590) continue;
-    entry.text = `${entry.text.slice(0, 400)}\n[… ${entry.text.length - 550} chars omitted …]\n${entry.text.slice(-150)}`;
-    updateTokens(index);
-    if (fits()) return history;
-  }
-
-  for (const index of order) {
-    const entry = history[index]!;
-    if (pinned(entry) || entry.text.length === 0) continue;
-    entry.text = `[… ${messages[entry.i]!.text.length} chars omitted …]`;
-    updateTokens(index);
-    if (fits()) return history;
-  }
-
-  const omitted = new Set<number>();
-  for (const index of order) {
-    const entry = history[index]!;
-    if (pinned(entry) || entry.tool_calls) continue;
-    omitted.add(index);
-    tokens -= perEntry[index]!;
-    if (fits()) return history.filter((_, i) => !omitted.has(i));
-  }
-  throw new Error(`history too large for Jev (~${tokens} tokens, limit ${maxTokens})`);
+  if (current.length > 0 || segments.length === 0) segments.push(current);
+  return segments;
 }

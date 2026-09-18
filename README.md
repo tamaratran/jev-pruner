@@ -8,9 +8,69 @@ reduces the output carried into later turns without generating a summary.
 Claude requests a Bash command → Command runs → Jev prunes stdout → Claude receives the result
 ```
 
-Only Bash stdout is pruned; stderr is unchanged. Short output, failed tool
-results, and recognized structured output are left alone. If trimming fails or
-no API key is configured, the original result passes through unchanged.
+1. A `tool.call` hook wraps the Bash tool's `next()` result.
+2. Stdout of **10,000 estimated tokens or fewer** passes through untouched,
+   without reading history, writing an archive, or calling Jev. The gate uses
+   `estimateTokens` on raw stdout, not a character count or an exact model tokenizer.
+   `minTokens` can raise this threshold but cannot lower it. If Claude already saved
+   the output to a file, the hook reads and counts that full output instead of its
+   short preview. Errors, JSON/XML/YAML/diff/binary output,
+   whole-document commands (`cat`, `jq`, `git diff`, `git show`, `base64`, and
+   `openssl`) are left untouched.
+3. Output is split into chunks of `chunkLines` lines, capped at 200 chunks;
+   lines longer than 2,000 characters are split first.
+4. Jev receives `{ context, task, history, command, chunks }` and one noul question
+   per chunk: “does any line in this chunk need to remain available?”. A single
+   needed line protects the chunk, including values required by earlier
+   instructions even when the next reply must not repeat them. `history` includes
+   user/assistant text, complete tool inputs, and tool-result text and structured
+   data from the current session. Identical results attached to both a tool call
+   and a result message are sent once, linked by their tool-use ID.
+   Questions are batched so each request stays under 30,000 estimated tokens.
+5. History and output share `maxStateTokens`, using a digit-aware estimate.
+   History gets at least half the budget, with more available when the current
+   output is small. Oversized history is partitioned in order across requests,
+   without truncating or omitting message text, tool arguments, or results.
+   Individual oversized fields become continuations labeled with their field
+   name and character offset. Complete output chunks are grouped to fit alongside
+   each history segment. Scoring requests run in parallel within the request
+   allowance. A chunk is fully scored only after evaluation against every
+   history segment. A `max_tokens_exceeded` response
+   retries twice with a halved state budget and repartitions the original history.
+6. A chunk stays when **any query** gives it a noul of at least `keepThreshold`, it is first or
+   last, it matches an error or warning pattern, or its complete text was not
+   scored against every history segment (for example, a single chunk that cannot
+   fit beside a segment). No partially shown chunk can be discarded.
+7. Each dropped run becomes a marker such as:
+   `[fast-jev-output trimmed N lines (M chars); full output: .claude/fast-jev-output/bash-<id>.txt (Read or grep it if needed)]`
+8. Before the first scoring request, the complete stdout and stderr are saved
+   under the project's `.claude/fast-jev-output/` directory (self-gitignored).
+   When Claude already persisted the complete output, that file is reused as the
+   archive. Successful pruning replaces Claude's file-preview metadata with the
+   retained text and archive footer. Read or scoring failures preserve the original
+   result and its file reference. Claude may persist the pruned result again if it
+   still exceeds its display limit; the archive footer then lives inside that file.
+   A final `[fast-jev-output full output: <path> (Read or grep it if needed)]`
+   footer follows the trimmed stdout. Archives persist for later recovery,
+   including when scoring ultimately keeps everything or fails.
+   Credential-like commands or output are not archived by the plugin; their omission
+   markers instruct the agent to re-run the command instead.
+9. Any archive write failure, Jev failure, or state that cannot fit leaves the original output untouched.
+   Separate inline stderr is left unchanged. Host-persisted output is scored as
+   the combined stream supplied by Claude.
+
+The hook reads the current transcript for each command; it does not maintain a
+separate history store. Claude Code's `session.messages()` returns the main
+conversation's user/assistant messages (up to the newest 4,096), not the system
+prompt or a subagent's own transcript. `task` is still a short extract of the
+last three user prompts; `history` supplies the earlier instructions and
+assistant decisions and tool results as returned by the host, including any
+pruning already applied to earlier results. Archived originals are not reloaded.
+Partitioning preserves coverage, but a query sees only its own history segment;
+facts that require combining distant segments are not guaranteed to be recognized.
+More segments and output groups mean more Jev requests.
+Library callers can pass the same transcript shape through
+`trimOutput({ command, goal, output, messages }, asker)`.
 
 ## Install
 
@@ -78,7 +138,7 @@ The plugin prunes that saved file instead, caps the result at
 the markers, so nothing becomes unrecoverable. Set `persistedOutputs` to false
 to leave those results alone.
 
-The budget includes omission markers. Error lines and output that could not be
+The budget includes omission markers and the archive footer. Error lines and output that could not be
 scored are preserved; if they cannot fit, the original result passes through.
 Scoring uses complete chunks and allows one initial Jev request plus at most 40
 additional requests, shared by scoring, retries, and refinement. Library callers
@@ -96,7 +156,7 @@ Use `/plugin configure fast-jev-output` inside Claude Code, or merge a
 {
   "pluginConfigs": {
     "fast-jev-output@fast-jev-output": {
-      "options": { "minChars": 4000, "chunkLines": 20, "keepThreshold": 0.5 }
+      "options": { "minTokens": 10000, "chunkLines": 20, "keepThreshold": 0.5 }
     }
   }
 }
@@ -105,19 +165,23 @@ Use `/plugin configure fast-jev-output` inside Claude Code, or merge a
 | Option | Default | Description |
 | --- | ---: | --- |
 | `apiKey` | `TYPESAFE_API_KEY` | TypeSafe API key |
-| `minChars` | `4000` | Stdout at or below this length is left untouched |
-| `chunkLines` | `20` | Lines grouped into each pruning decision |
-| `keepThreshold` | `0.5` | Minimum Jev probability to keep a chunk; lower values keep more output |
-| `maxStateTokens` | `25000` | Estimated token budget for the context sent to Jev |
+| `minTokens` | `10000` | Estimated stdout token threshold; minimum 10,000; equality skips pruning |
+| `persistedOutputs` | `true` | Prune eligible output saved by Claude |
+| `persistedMaxChars` | `8000` | Rendered budget for saved output, including markers and the footer; 0 disables the cap |
+| `chunkLines` | `20` | Lines grouped into each Jev decision chunk |
+| `keepThreshold` | `0.5` | Minimum Jev probability for a chunk to remain |
+| `maxStateTokens` | `25000` | Estimated token budget for the Jev state |
 | `model` | `jev-latest` | TypeSafe Jev model name |
+
+The old `minChars` option is no longer used; replace it with `minTokens`.
 
 ## Data and privacy
 
-Jev receives command output and fitted conversation context through the TypeSafe
+Jev receives command output and partitioned conversation context through the TypeSafe
 API to decide what to keep. The main LLM receives the pruned result when trimming
 succeeds. Jev requests incur API usage.
 
-Full output is saved locally only when trimming happens. The archive directory
+Full output is saved locally before the first scoring request. The archive directory
 is self-gitignored. Credential-like commands or output detected by the plugin
 are not archived; their markers say to re-run the command instead. **This check
 only prevents local archiving—it does not redact secrets or prevent content
@@ -130,11 +194,94 @@ Run the offline checks with `npm test`, `npm run typecheck`, and `npm run build`
 
 For live Jev checks, provide `TYPESAFE_API_KEY` in the environment and run
 `npm run test:live`. This makes billable requests using synthetic conversation
-and output fixtures. It checks task-dependent retention, tool-result filtering,
-question batching, digit-heavy state fitting, and the hook's behavior when Jev
+and output fixtures. It checks task-dependent retention, tool-result inclusion,
+parallel history/output batching, digit-heavy state budgets, and the hook's behavior when Jev
 rejects authentication. It runs separately from `npm test` and does not exercise
 the Claude Code host itself.
+
+### Long Claude Code session
+
+With an authenticated Claude CLI and `TYPESAFE_API_KEY` in the environment, run
+`npm run test:long-session`. This starts one continuous Claude process, loads the
+production plugin plus a test-only observer, and runs a bootstrap followed by
+40 noisy Bash commands against synthetic fixtures. Both Claude and Jev incur
+API usage; the Claude process has a $10 budget. Each prompt explicitly confirms
+the finite benchmark because Claude may otherwise decline the repeated
+simulated failures. If a stage contains no tool call, the runner sends one
+direct confirmation in the same session; a second refusal stops the run.
+Confirmations are saved in the evidence and counted as additional user turns.
+The one-command-per-stage and retention assertions still apply.
+Set `JEV_LONG_SESSION_BUDGET_USD` to override the Claude cap for longer runs,
+for example `JEV_LONG_SESSION_TURNS=100 JEV_LONG_SESSION_BUDGET_USD=25 npm run test:long-session`.
+The selected cap and stage count are saved with the evidence; the cap excludes Jev charges.
+
+`npm run test:archive-recovery` runs a separate two-turn Claude session. It checks
+that an unpredictable cache hash is absent from the compacted output, then asks
+Claude to recover it using `Read` and the archive footer. Each CLI invocation
+has a $2 Claude cap; this billable test requires the same authentication as the
+long-session test.
+
+The test checks early requirements, tool-result inclusion,
+target bundle and rollback retention, archives, stderr, history partitioning, and
+the final answer. Conversation text that quotes tool output is preserved.
+Raw events and header-free Jev request/response captures are saved under
+`~/jev-long-sessions/`. The path is printed when the run starts.
+
+Run `npm run report:long-session -- <evidence-directory>` to generate a
+self-contained HTML evidence report. For a quick harness smoke check,
+set `JEV_LONG_SESSION_TURNS=2`; runs of at least 40 stages require history-partitioning coverage.
+Use `JEV_LONG_SESSION_DIR` to choose a different persistent output directory.
+The long test is separate from the offline suite and `test:live`.
+Retention failures produce a failing exit status and a summary containing all
+misses. To reanalyze saved evidence without making API calls, run
+`npm run test:long-session -- --analyze <evidence-directory>`.
 
 Related: [fast-jev-compaction](https://github.com/tamaratran/fast-jev-compaction)
 (same author) applies Jev to session compaction; the two are independent and
 can be installed together.
+
+## Animated demo (macOS)
+
+`demo/JevPrunerDemo` matches the dark terminal, scanning beam and collapsing
+output of the fast-jev-compaction demo. An `npm install` is followed by a scan,
+pruning, and a pause on the retained summary. The terminal's top bar
+shows estimated output tokens. There are no surrounding captions or sidebar.
+Retained text stays verbatim and a saved-log card shows where the original
+output can be read.
+
+`npm-install.json` records each output line's arrival time and the process
+duration from an actual install of a small React project with
+`npm_config_loglevel=verbose`; the displayed command remains `npm install`.
+Machine-specific CLI, log-file and working-directory metadata were removed.
+The original install takes **4.648 seconds**. Playback shortens gaps between
+visible output arrivals to at most **0.35 seconds**, so the preview does not
+appear stalled while unshown lines arrive. Shorter intervals retain their
+recorded timing. The same time mapping drives the token count and completion.
+The install now plays in approximately **1.85 seconds**; the complete animation
+is approximately **5.6 seconds**, including scanning, a smooth shared collapse
+and a 1.25-second final hold.
+
+Representative rows append and stay in place, instead of cycling a scrolling
+viewport or switching to a different layout at completion. The status labels
+the shortened pauses. Export plays once; Space manually replays the native app.
+
+This is recorded playback, not a live install or benchmark; it makes no API
+requests. The pruning animation and keep/drop decisions are illustrative at
+line granularity, rather than the default 20-line chunks.
+Token estimates use one token per four characters of the capture and the
+illustrated compact text, including its archive marker; they are not measured
+model usage. Omission markers are shortened for readability.
+The full-output path uses the plugin's existing `fast-jev-output` directory.
+
+Requires macOS 14+ and the Xcode command-line tools. No extra packages are needed.
+
+```sh
+demo/JevPrunerDemo/build.sh             # build and open; Space replays
+demo/JevPrunerDemo/build.sh --no-launch # build without opening a window
+demo/JevPrunerDemo/build.sh --export "$PWD/demo/JevPrunerDemo/build/jev-pruner.mp4"
+demo/JevPrunerDemo/build.sh --frame 5 "$PWD/demo/JevPrunerDemo/build/poster.png"
+```
+
+Export renders the same timeline directly to a 1100×720 H.264 MP4 at 30 fps.
+Use a new output filename for each movie export; existing movies are not
+overwritten. Build products and exports under the demo's `build/` are ignored.
