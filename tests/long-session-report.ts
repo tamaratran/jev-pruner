@@ -25,6 +25,7 @@ interface Summary {
     historyEntries: number;
     stateTokens: number;
     abridged: number;
+    historySegments?: number;
     http: number;
     artifactScore: number;
     rollbackScore: number;
@@ -78,6 +79,8 @@ const escape = (value: string): string => value.replace(/[&<>"']/g, char => ({
 const number = (value: number): string => Math.round(value).toLocaleString('en-US');
 const reduction = (before: number, after: number): string => `${(100 * (1 - after / before)).toFixed(1)}%`;
 const firstFitted = summary.rows.find(row => row.abridged > 0);
+const firstPartitioned = summary.rows.find(row => (row.historySegments ?? 1) > 1);
+const includesToolResults = summary.rows.every(row => row.historySegments !== undefined);
 const minutes = ((Date.parse(summary.finished) - Date.parse(summary.started)) / 60_000).toFixed(1);
 const points = summary.rows.map((row, i) =>
   `${30 + i * 740 / Math.max(summary.rows.length - 1, 1)},${190 - row.stateTokens / 25_000 * 160}`).join(' ');
@@ -131,20 +134,20 @@ ${runNotes ? `<section><h2>Run provenance</h2><pre>${escape(runNotes)}</pre></se
 ${baseline ? `<section><h2>Before and after the retention fix</h2><p>The same scenario, fixtures, and acceptance checks were used for both sessions. The fix keeps 20-line chunks and the 0.5 threshold, strengthens the per-chunk question, and protects output whose complete text was absent from scoring state.</p><div class="table"><table><thead><tr><th>Measure</th><th>Original session</th><th>This session</th></tr></thead><tbody><tr><td>Target bundles retained</td><td>${baseline.rows.filter(row => row.artifactKept).length}/${baseline.stages}</td><td>${summary.rows.filter(row => row.artifactKept).length}/${summary.stages}</td></tr><tr><td>Rollback references retained</td><td>${baseline.rows.filter(row => row.rollbackKept).length}/${baseline.stages}</td><td>${summary.rows.filter(row => row.rollbackKept).length}/${summary.stages}</td></tr><tr><td>Failed assertions</td><td>${baseline.errors.length}</td><td>${summary.errors.length}</td></tr><tr><td>Output characters removed</td><td>${reduction(baseline.before, baseline.after)}</td><td>${reduction(summary.before, summary.after)}</td></tr></tbody></table></div><p class="muted">The larger reduction in the original session included unwanted losses. Claude responses differ between runs; this is an integration comparison, not a deterministic model evaluation.</p></section>` : ''}
 ${summary.errors.length ? `<section><h2>Observed failures</h2><p>${summary.rows.filter(row => !row.artifactKept).length} target bundles and ${summary.rows.filter(row => !row.rollbackKept).length} rollback references were removed from intermediate results. The final answer is checked separately. The captures do not prove that an answer-selection error was caused by trimming.</p><details><summary>Failed assertions</summary><pre>${escape(summary.errors.join('\n'))}</pre></details></section>` : ''}
 <section><h2>The requirement, and the actual final answer</h2><div class="cols">
-<div><h3>First user message</h3><pre>${escape(summary.firstHistory.find(h => h.role === 'user')?.text ?? '')}</pre><p class="muted">This requirement was present in the final Jev request's history. It was absent from the short “task” field after the first three stages.</p></div>
+<div><h3>First user message</h3><pre>${escape(summary.firstHistory.find(h => h.role === 'user')?.text ?? '')}</pre><p class="muted">This requirement was present in the final stage’s Jev history. The test checks its retention independently of the short “task” field.</p></div>
 <div><h3>Claude’s final answer</h3><pre>${escape(summary.final)}</pre><p class="muted">Only supplied fixture commands were executed; no archive reads appeared in the captured tool calls.</p></div></div></section>
-<section><h2>Trimming continued through the whole session</h2><p>${number(summary.before)} archived output characters became ${number(summary.after)} visible characters, including omission markers and preserved stderr. All archives contained 201 nonempty lines and the required values.</p>
+<section><h2>Trimming continued through the whole session</h2><p>${number(summary.before)} archived output characters became ${number(summary.after)} visible characters, including omission markers and preserved stderr. All archives matched the expected line count and contained the required values.</p>
 <div class="legend"><span class="swatch"></span>Visible output<span class="swatch original"></span>Original output</div><div class="bars">${bars}</div>
 <p class="muted">Each bar is one stage, normalized to that stage’s original output. Savings are measured in characters, not billable model tokens.</p></section>
 <section><h2>History grew; scoring state stayed bounded</h2>
-<p>Conversation text reached ${number(summary.rawHistoryTextChars)} characters. ${firstFitted ? `History abridgment began at stage ${firstFitted.stage}; the final request abridged ${summary.rows.at(-1)!.abridged} older entries.` : 'This run did not need history abridgment.'} Successful scoring states stayed within the configured 25,000-token estimate.</p>
+<p>Conversation text reached ${number(summary.rawHistoryTextChars)} characters. ${firstPartitioned ? `History partitioning began at stage ${firstPartitioned.stage}; the final stage used ${summary.rows.at(-1)!.historySegments} history segments without discarding history.` : firstFitted ? `History abridgment began at stage ${firstFitted.stage}; the final request abridged ${summary.rows.at(-1)!.abridged} older entries.` : 'This run used a single complete history segment.'} Successful scoring states stayed within the configured 25,000-token estimate.</p>
 <svg viewBox="0 0 800 220" role="img" aria-label="Estimated Jev state tokens by stage" style="width:100%">
 <line x1="30" y1="30" x2="770" y2="30" stroke="#b27a20" stroke-dasharray="5 5"/><text x="30" y="20" fill="#795722" font-size="12">25,000 estimated-token limit</text>
 <line x1="30" y1="190" x2="770" y2="190" stroke="#d4e1e3"/><polyline points="${points}" fill="none" stroke="#14694f" stroke-width="3"/>
 <text x="30" y="212" fill="#526872" font-size="12">Stage 1</text><text x="700" y="212" fill="#526872" font-size="12">Stage ${summary.stages}</text></svg>
 <p class="muted">${summary.requests} Jev requests; ${summary.recoveredRejections} rejected requests recovered through retry; ${summary.compactions} Claude auto-compaction events observed.</p>
-<details><summary>Inspect early history from the final Jev request</summary><pre>${escape(JSON.stringify(summary.firstHistory, null, 2))}</pre></details>
-<p>Tool-call history contains names, inputs, and status/length notes instead of result bodies. Assistant text that quotes a result remains conversation text; the test checks omission from tool metadata rather than claiming those quotations are removed.</p></section>
+<details><summary>Inspect early history from the final stage</summary><pre>${escape(JSON.stringify(summary.firstHistory, null, 2))}</pre></details>
+<p>${includesToolResults ? 'History includes tool names, complete inputs, and result bodies. The test verifies that the earlier bootstrap result reaches Jev and that every history segment scores every output chunk.' : 'This older run excluded tool-result bodies from history. Assistant text quoting a result remained conversation text.'}</p></section>
 <section><h2>Inspect what Claude received</h2><p>The following is the exact final tool result from the CLI event stream.</p>
 ${summary.rows.some(row => row.stderrScored) ? `<p class="muted">In ${summary.rows.filter(row => row.stderrScored).length} stages, the fixture’s stderr text was included in the stdout sent to Jev and retained as the final chunk. These stages do not establish separate-stderr handling in the Claude host.</p>` : ''}
 <details><summary>Final trimmed stdout and preserved stderr</summary><pre>${escape(finalToolResult)}</pre></details>
@@ -155,7 +158,7 @@ ${chunkReplays.length ? `<section><h2>Chunk size versus scoring wording</h2><p>T
 npm run test:long-session
 npm run report:long-session -- &lt;evidence-directory&gt;</pre>
 <p>The harness uses the installed, authenticated Claude CLI, the production plugin, and a separate observer plugin that records Jev request bodies and responses. It never records HTTP headers. Prompts and command output are synthetic, with repetitive progress, selected bundle names, a rollback reference, and a simulated deployment error.</p>
-<p class="note">This is a controlled long-session integration test, not a guarantee across all workloads. History is deliberately abridged under budget pressure. Jev scores remain probabilistic. Secret-like output forwarding remains unresolved.</p></section>
+<p class="note">This is a controlled long-session integration test, not a guarantee across all workloads. Jev scores remain probabilistic, and separate history segments may hide relationships between distant facts. Secret-like output forwarding remains unresolved.</p></section>
 <footer>Claude session ${escape(summary.sessionId)}<br>Started ${escape(summary.started)} · Finished ${escape(summary.finished)}<br>Generated from captured request bodies, API responses, CLI events, and output archives.</footer>
 </main></body></html>`;
 await writeFile(join(directory, 'report.html'), html);

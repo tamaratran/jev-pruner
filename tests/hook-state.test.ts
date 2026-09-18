@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { MatchedHook } from 'claude-code';
+import type { BuiltinToolResults, MatchedHook } from 'claude-code';
 import { register } from '../hooks/fast-jev-output.js';
 import type { HookConfig, HookFetchInit } from '../hooks/fast-jev-output.js';
 import type { ConversationMessage } from '../src/history.js';
@@ -32,23 +32,24 @@ function harness(options: Partial<HookConfig> = {}) {
     };
   });
   const readMessages = vi.fn(async () => messages);
+  const read = vi.fn(async (_path: string) => '');
   const write = vi.fn(async (_path: string, _content: string) => {});
   const host = {
     session: { messages: readMessages },
     http: { fetch },
-    fs: { exists: async () => false, write },
+    fs: { exists: async () => false, read, write },
     ui: { log: vi.fn(), toast: vi.fn() },
   };
-  const original = {
+  const original: { result: BuiltinToolResults['Bash'] } = {
     result: {
-      stdout: Array.from({ length: 200 }, (_, i) => `compiled module ${i} successfully`).join('\n'),
+      stdout: Array.from({ length: 200 }, (_, i) => `${'cache '.repeat(55)}compiled module ${i} successfully`).join('\n'),
       stderr: 'stderr stays intact',
       interrupted: false,
     },
   };
   const next = vi.fn(async () => original);
   return {
-    bodies, messages, readMessages, fetch, write, original, next,
+    bodies, messages, readMessages, read, fetch, write, original, next,
     run: () => hook(
       host as unknown as Parameters<BashHook>[0],
       { tool: 'Bash', command: 'build', tool_use_id: 'bash-test' },
@@ -94,9 +95,60 @@ describe('Bash hook conversation state', () => {
     expect(h.fetch).not.toHaveBeenCalled();
     expect(h.write).not.toHaveBeenCalled();
   });
+
+  it('keeps the original output if one parallel history query fails', async () => {
+    const h = harness({ maxStateTokens: 6_000 });
+    h.messages.push({
+      role: 'user', text: '', toolUses: [],
+      toolResults: [{ tool_use_id: 'prior-read', text: 'tool result detail '.repeat(4_000) }],
+    });
+    h.fetch.mockRejectedValueOnce(new Error('network unavailable'));
+    expect(await h.run()).toBe(h.original);
+    expect(h.fetch.mock.calls.length).toBeGreaterThan(1);
+    expect(h.write.mock.calls.filter(([path]) => path.endsWith('bash-bash-test.txt'))).toHaveLength(1);
+  });
 });
 
 describe('Bash output archives', () => {
+  it('scores complete host-persisted output and reuses its archive', async () => {
+    const h = harness();
+    const complete = `${h.original.result.stdout}\n${h.original.result.stderr}`;
+    const path = '/project/.claude/tool-results/large-output.txt';
+    h.original.result.persistedOutputPath = path;
+    h.original.result.persistedOutputSize = complete.length;
+    h.original.result.stdout = 'short host preview';
+    h.original.result.stderr = '';
+    h.read.mockResolvedValue(complete);
+    const result = await h.run();
+    expect(h.read).toHaveBeenCalledWith(path);
+    expect(h.write).not.toHaveBeenCalled();
+    expect(h.fetch).toHaveBeenCalled();
+    expect(result.result).toMatchObject({ stdout: expect.stringContaining('stderr stays intact') });
+    expect(result.result).toMatchObject({
+      stdout: expect.stringContaining(`[fast-jev-output full output: ${path} (Read or grep it if needed)]`),
+    });
+    expect(result.result).not.toHaveProperty('persistedOutputPath');
+    expect(result.result).not.toHaveProperty('persistedOutputSize');
+    expect(h.original.result.persistedOutputPath).toBe(path);
+  });
+
+  it.each(['small', 'unreadable', 'scoring fails'])('preserves the host archive when %s', async condition => {
+    const h = harness();
+    h.original.result.persistedOutputPath = '/project/tool-results/original.txt';
+    if (condition === 'small') h.read.mockResolvedValue('small output');
+    if (condition === 'unreadable') h.read.mockRejectedValue(new Error('file unavailable'));
+    if (condition === 'scoring fails') {
+      h.read.mockResolvedValue(h.original.result.stdout);
+      h.fetch.mockRejectedValue(new Error('network unavailable'));
+    }
+    expect(await h.run()).toBe(h.original);
+    expect(h.write).not.toHaveBeenCalled();
+    if (condition !== 'scoring fails') {
+      expect(h.readMessages).not.toHaveBeenCalled();
+      expect(h.fetch).not.toHaveBeenCalled();
+    }
+  });
+
   it('saves complete output before scoring and appends its reference after the last retained line', async () => {
     const h = harness({ chunkLines: 1 });
     const path = '.claude/fast-jev-output/bash-bash-test.txt';

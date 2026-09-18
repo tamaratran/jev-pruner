@@ -10,11 +10,11 @@
       "description": "TypeSafe API key. Leave unset to use TYPESAFE_API_KEY.",
       "sensitive": true
     },
-    "minChars": {
+    "minTokens": {
       "type": "number",
-      "title": "Minimum Bash output characters",
-      "description": "Bash output at or below this length passes through untouched.",
-      "default": 4000
+      "title": "Minimum Bash output tokens",
+      "description": "Stdout at or below this estimated token count passes through untouched. Minimum: 10000.",
+      "default": 10000
     },
     "chunkLines": {
       "type": "number",

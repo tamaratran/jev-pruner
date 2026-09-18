@@ -24,7 +24,7 @@ interface Event {
 }
 
 interface Capture {
-  request: { state: { chunks: { text: string }[] } };
+  request: { state: { chunks: { id: string; text: string }[] } };
   response: { status: number };
 }
 
@@ -33,7 +33,7 @@ const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const root = resolve(process.env.JEV_LONG_SESSION_DIR ?? join(homedir(), 'jev-long-sessions'));
 mkdirSync(root, { recursive: true });
 const workspace = mkdtempSync(join(root, 'recovery-'));
-const command = `node -e 'const {randomUUID}=require("node:crypto"); const lines=Array.from({length:200},(_,i)=>"progress: module "+i+" cache already current and no changes needed"); lines[88]="progress: module 88 cache hash "+randomUUID(); lines[199]="Build succeeded."; console.log(lines.join("\\n"));'`;
+const command = `node -e 'const {randomUUID}=require("node:crypto"); const lines=Array.from({length:200},(_,i)=>"progress: module "+i+" cache already current "+"unchanged ".repeat(55)); lines[88]="progress: module 88 cache hash "+randomUUID(); lines[199]="Build succeeded."; console.log(lines.join("\\n"));'`;
 
 function run(prompt: string, label: string, sessionId?: string): Event[] {
   const args = [
@@ -73,10 +73,13 @@ const archivePath = resolve(workspace, relative);
 const archive = readFileSync(archivePath, 'utf8');
 const evidence = join(workspace, '.claude/jev-long-session-evidence');
 const requests = readdirSync(evidence).filter(name => name.startsWith('request-'));
-assert.equal(requests.length, 1);
-const capture = JSON.parse(readFileSync(join(evidence, requests[0]!), 'utf8')) as Capture;
-assert.equal(capture.response.status, 200);
-assert.equal(archive, capture.request.state.chunks.map(chunk => chunk.text).join('\n'));
+assert(requests.length > 0);
+const captures = requests.map(file => JSON.parse(readFileSync(join(evidence, file), 'utf8')) as Capture);
+assert(captures.every(capture => capture.response.status === 200));
+const chunks = [...new Map(captures.flatMap(capture =>
+  capture.request.state.chunks.map(chunk => [chunk.id, chunk] as const))).values()]
+  .sort((a, b) => Number(a.id.slice(1)) - Number(b.id.slice(1)));
+assert.equal(archive, chunks.map(chunk => chunk.text).join('\n'));
 const hash = archive.match(/progress: module 88 cache hash ([a-f0-9-]+)/)?.[1];
 assert(hash);
 assert(!output.content.includes(hash), 'Recovery value was already visible');
