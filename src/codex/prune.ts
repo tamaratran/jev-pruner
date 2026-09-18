@@ -17,6 +17,7 @@ export async function pruneCodexOutput(
     apiKey?: string;
     home?: string;
     asker?: JevAsker;
+    signal?: AbortSignal;
   },
 ): Promise<Buffer> {
   const apiKey = options.apiKey;
@@ -41,18 +42,29 @@ export async function pruneCodexOutput(
       { command, goal, messages, output: text, fullOutputPath: path },
       {
         async ask(state, questions) {
+          if (options.signal?.aborted) throw new Error('Command interrupted');
           await (archived ??= archive());
           if (options.asker) return options.asker.ask(state, questions);
           const request = buildJevRequest({ apiKey }, state, questions);
-          const response = await fetch(request.url, {
-            method: request.method, headers: request.headers, body: request.body,
-            signal: AbortSignal.timeout(30_000),
-          });
-          return parseJevResponse(response.status, response.ok, await response.text());
+          const controller = new AbortController();
+          const cancel = () => controller.abort();
+          options.signal?.addEventListener('abort', cancel, { once: true });
+          const timeout = setTimeout(cancel, 30_000);
+          try {
+            if (options.signal?.aborted) cancel();
+            const response = await fetch(request.url, {
+              method: request.method, headers: request.headers, body: request.body,
+              signal: controller.signal,
+            });
+            return parseJevResponse(response.status, response.ok, await response.text());
+          } finally {
+            clearTimeout(timeout);
+            options.signal?.removeEventListener('abort', cancel);
+          }
         },
       },
     );
-    return result.trimmed
+    return result.trimmed && !options.signal?.aborted
       ? Buffer.from(`${result.output}\n\n[fast-jev-output full output: ${path} (Read or grep it if needed)]`)
       : output;
   } catch {

@@ -51,6 +51,7 @@ async function fixture() {
 
 afterEach(async () => {
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
   await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true })));
 });
 
@@ -150,6 +151,21 @@ describe('Codex output pruning', () => {
     expect(await pruneCodexOutput(binary, 'npm test', options)).toBe(binary);
     expect(discard).not.toHaveBeenCalled();
   });
+
+  it('aborts in-flight scoring and returns the original output on cancellation', async () => {
+    const options = await fixture();
+    const controller = new AbortController();
+    const fetch = vi.fn((_url: string, init: RequestInit) => new Promise((_resolve, reject) => {
+      init.signal!.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+      controller.abort();
+    }));
+    vi.stubGlobal('fetch', fetch);
+    expect(await pruneCodexOutput(output, 'npm test', {
+      ...options, asker: undefined, signal: controller.signal,
+    })).toBe(output);
+    expect(fetch).toHaveBeenCalled();
+    expect(fetch.mock.calls.every(([, init]) => init.signal!.aborted)).toBe(true);
+  });
 });
 
 async function run(parameters: string[]) {
@@ -198,5 +214,50 @@ describe('Codex command wrapper', () => {
     const missing = await run(['jev-pruner-command-that-does-not-exist']);
     expect(missing.code).toBe(127);
     expect(missing.stderr).toContain('unable to start command');
+  });
+
+  it('flushes buffered output before propagating a terminating signal', async () => {
+    const result = await run([process.execPath, '-e', `
+      process.stdout.write('x'.repeat(512 * 1024), () => process.kill(process.pid, 'SIGTERM'));
+    `]);
+    expect(result.signal).toBe('SIGTERM');
+    expect(result.stdout.equals(Buffer.alloc(512 * 1024, 'x'))).toBe(true);
+  });
+
+  it('terminates with the received signal when cancelled after the command finishes', async () => {
+    const options = await fixture();
+    const transport = join(options.cwd, 'waiting-fetch.mjs');
+    await writeFile(transport, `
+      globalThis.fetch = (_url, init) => new Promise((_resolve, reject) => {
+        init.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+        process.stderr.write('waiting-for-jev\\n');
+      });
+    `);
+    const child = spawn(process.execPath, [
+      '--import', 'tsx', '--import', transport, resolve('src/codex/run.ts'), '--',
+      process.execPath, '-e', 'process.stdout.write(("cache ".repeat(35) + "\\n").repeat(400))',
+    ], {
+      env: {
+        ...process.env, HOME: options.home,
+        CODEX_THREAD_ID: sessionId, TYPESAFE_API_KEY: 'synthetic',
+      },
+    });
+    const buffers: Buffer[] = [];
+    let cancelled = false;
+    child.stdout.on('data', (chunk: Buffer) => buffers.push(chunk));
+    child.stderr.on('data', () => {
+      if (!cancelled) {
+        cancelled = true;
+        child.kill('SIGTERM');
+      }
+    });
+    child.stdin.end();
+    const result = await new Promise((resolve, reject) => {
+      child.on('error', reject);
+      child.on('close', (code, signal) => resolve({ code, signal }));
+    });
+    expect(cancelled).toBe(true);
+    expect(result).toEqual({ code: null, signal: 'SIGTERM' });
+    expect(Buffer.concat(buffers)).toEqual(output);
   });
 });
