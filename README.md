@@ -134,6 +134,12 @@ Set `JEV_LONG_SESSION_BUDGET_USD` to override the Claude cap for longer runs,
 for example `JEV_LONG_SESSION_TURNS=100 JEV_LONG_SESSION_BUDGET_USD=25 npm run test:long-session`.
 The selected cap and stage count are saved with the evidence; the cap excludes Jev charges.
 
+`npm run test:archive-recovery` runs a separate two-turn Claude session. It checks
+that an unpredictable cache hash is absent from the compacted output, then asks
+Claude to recover it using `Read` and the archive footer. Each CLI invocation
+has a $2 Claude cap; this billable test requires the same authentication as the
+long-session test.
+
 The test checks early requirements, result-body omission from tool metadata,
 target bundle and rollback retention, archives, stderr, history fitting, and
 the final answer. Conversation text that quotes tool output is preserved.
