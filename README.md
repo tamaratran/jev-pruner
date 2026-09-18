@@ -152,8 +152,9 @@ can be installed together.
 `demo/JevPrunerDemo` matches the dark terminal, scanning beam and collapsing
 output of the fast-jev-compaction demo. A scripted `npm install` fills the
 terminal, Jev marks chunks to keep or drop, and the tool result shrinks from
-10,000 to 100 illustrative tokens. Retained text stays verbatim and a saved-log
-card shows where the original output can be read.
+10,000 to 100 illustrative tokens in the terminal's top bar. The animation shows
+only the terminal, with no surrounding captions or sidebar. Retained text stays
+verbatim and a saved-log card shows where the original output can be read.
 
 This is a 25-second animation, not a live install or benchmark. Output, scores,
 timings and token counts are scripted; it makes no API requests. Rows represent
@@ -169,6 +170,6 @@ demo/JevPrunerDemo/build.sh --export "$PWD/demo/JevPrunerDemo/build/jev-pruner.m
 demo/JevPrunerDemo/build.sh --frame 18 "$PWD/demo/JevPrunerDemo/build/poster.png"
 ```
 
-Export renders the same timeline directly to a 1440×900 H.264 MP4 at 30 fps.
+Export renders the same timeline directly to a 1100×720 H.264 MP4 at 30 fps.
 Use a new output filename for each movie export; existing movies are not
 overwritten. Build products and exports under the demo's `build/` are ignored.

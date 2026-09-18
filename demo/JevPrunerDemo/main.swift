@@ -5,8 +5,8 @@ import ImageIO
 import SwiftUI
 
 enum Style {
-    static let width = 1440.0
-    static let height = 900.0
+    static let width = 1100.0
+    static let height = 720.0
     static let duration = 25.0
     static let background = Color(red: 0.055, green: 0.055, blue: 0.07)
     static let panel = Color(red: 0.09, green: 0.09, blue: 0.11)
@@ -62,48 +62,10 @@ struct DemoFrame: View {
     private var stage: Int {
         time < 3.2 ? 0 : time < 8.8 ? 1 : time < 13 ? 2 : time < 17 ? 3 : 4
     }
-    private var stageTitle: String {
-        ["Run the command.", "Here comes the noise.", "Jev finds the signal.",
-         "Prune before the model sees it.", "10,000 tokens. Only 100 sent."][stage]
-    }
-    private var stageDetail: String {
-        ["The Bash tool runs normally.",
-         "Verbose install logs pile up at the tool-result boundary.",
-         "Score output chunks against the conversation and task.",
-         "Keep useful chunks verbatim. Save the complete output.",
-         "A smaller tool result, with the full log available when needed."][stage]
-    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            header
-            HStack(alignment: .top, spacing: 20) {
-                terminal
-                sidebar
-            }
-            footer
-        }
-        .padding(36)
-        .frame(width: Style.width, height: Style.height)
-        .background(Style.background)
-        .foregroundStyle(Style.text)
-    }
-
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 10) {
-                Text("✻").font(.system(size: 27)).foregroundStyle(Style.orange)
-                Text("jev-pruner").font(Style.mono(20)).bold()
-                Text("/").foregroundStyle(Style.border).padding(.horizontal, 5)
-                Text("CLAUDE CODE PLUGIN").font(Style.mono(12)).foregroundStyle(Style.dim)
-                Spacer()
-                Text(String(format: "%02d / 05", stage + 1))
-                    .font(Style.mono(13)).foregroundStyle(Style.dim)
-            }
-            Text(stageTitle).font(.system(size: 34, weight: .semibold))
-            Text(stageDetail).font(.system(size: 17)).foregroundStyle(Style.dim)
-        }
-        .frame(height: 116, alignment: .top)
+        terminal
+            .foregroundStyle(Style.text)
     }
 
     private var terminal: some View {
@@ -112,12 +74,14 @@ struct DemoFrame: View {
                 ForEach([Style.red, Style.amber, Style.green], id: \.self) { color in
                     Circle().fill(color.opacity(0.85)).frame(width: 10, height: 10)
                 }
+                Text("claude — storefront")
+                    .font(Style.mono(12)).foregroundStyle(Style.dim)
+                    .padding(.leading, 12)
                 Spacer()
-                Text("claude — storefront").font(Style.mono(12)).foregroundStyle(Style.dim)
-                Spacer()
-                Text("Bash").font(Style.mono(11)).foregroundStyle(Style.dim)
+                tokenMeter
             }
-            .padding(.horizontal, 20).frame(height: 42).background(Style.panel)
+            .padding(.horizontal, 20).frame(height: 48).background(Style.panel)
+            Rectangle().fill(Style.border).frame(height: 1)
             VStack(alignment: .leading, spacing: 14) {
                 HStack(spacing: 10) {
                     Text(">").foregroundStyle(Style.orange)
@@ -147,15 +111,33 @@ struct DemoFrame: View {
                 output
                     .frame(height: 405, alignment: .top)
                     .clipped()
+                Spacer(minLength: 0)
                 status
                     .frame(height: 52, alignment: .leading)
             }
             .padding(20)
         }
-        .frame(width: 992, height: 650)
-        .background(Style.panel.opacity(0.50))
+        .frame(width: Style.width, height: Style.height)
+        .background(Style.background)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(Style.border))
+    }
+
+    private var tokenMeter: some View {
+        let color = done ? Style.green : flow > 0.6 ? Style.amber : Style.dim
+        return HStack(spacing: 10) {
+            Text("Output tokens").font(Style.mono(12)).foregroundStyle(Style.dim)
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 3).fill(Style.border)
+                RoundedRectangle(cornerRadius: 3).fill(color)
+                    .frame(width: tokens == 0 ? 0 : max(3, 120 * Double(tokens) / 10_000))
+            }
+            .frame(width: 120, height: 8)
+            Text(tokens.formatted())
+                .font(Style.mono(18)).bold().monospacedDigit()
+                .foregroundStyle(color)
+                .frame(width: 78, alignment: .trailing)
+        }
     }
 
     private var output: some View {
@@ -274,89 +256,13 @@ struct DemoFrame: View {
                 ][stage])
                 .font(Style.mono(12)).foregroundStyle(done ? Style.green : Style.cyan)
             }
-            Text(done ? "Warnings + final result kept · original log available" : "No text rewriting. No generated summary.")
-                .font(Style.mono(11)).foregroundStyle(Style.dim)
-        }
-    }
-
-    private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            VStack(alignment: .leading, spacing: 14) {
-                Text("TOOL-RESULT TOKENS").font(Style.mono(11)).foregroundStyle(Style.dim)
-                Text(tokens.formatted())
-                    .font(.system(size: 53, weight: .medium, design: .monospaced))
-                    .foregroundStyle(done ? Style.green : flow > 0.6 ? Style.amber : Style.text)
-                    .monospacedDigit()
-                tokenBlocks
-                Text(done ? "99% less in this example" : "Before entering model context")
-                    .font(.system(size: 12)).foregroundStyle(done ? Style.green : Style.dim)
+            HStack {
+                Text("Scripted demo · illustrative scores and token counts")
+                Spacer()
+                Text("Space to replay")
             }
-            .padding(20)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 10).fill(Style.panel))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Style.border))
-            VStack(alignment: .leading, spacing: 13) {
-                pipelineItem("01", "Bash output", detail: "10,000 tokens", active: stage >= 1, color: Style.amber)
-                Rectangle().fill(Style.border).frame(width: 1, height: 23).padding(.leading, 12)
-                pipelineItem("02", "Jev Pruner", detail: stage >= 2 ? "Score → keep → prune" : "Waiting for output", active: stage >= 2, color: Style.cyan)
-                Rectangle().fill(Style.border).frame(width: 1, height: 23).padding(.leading, 12)
-                pipelineItem("03", "Model context", detail: done ? "100 tokens delivered" : "Nothing delivered yet", active: done, color: Style.green)
-            }
-            .padding(.horizontal, 10).padding(.vertical, 10)
-            Spacer(minLength: 0)
-            VStack(alignment: .leading, spacing: 8) {
-                Text(done ? "10,000 → 100" : "Noise stays out.")
-                    .font(Style.mono(20)).foregroundStyle(done ? Style.green : Style.text)
-                Text(done ? "Same retained text.\nMore room for the task." : "The command still runs.\nThe useful output stays.")
-                    .font(.system(size: 14)).foregroundStyle(Style.dim)
-                    .lineSpacing(4)
-            }
-            .padding(20)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(done ? Style.green.opacity(0.35) : Style.border))
+            .font(Style.mono(11)).foregroundStyle(Style.dim)
         }
-        .frame(width: 356, height: 650, alignment: .top)
-    }
-
-    private var tokenBlocks: some View {
-        VStack(spacing: 4) {
-            ForEach(0..<4, id: \.self) { row in
-                HStack(spacing: 4) {
-                    ForEach(0..<20, id: \.self) { column in
-                        let lit = row * 20 + column < max(tokens > 0 ? 1 : 0, Int(Double(tokens) / 125))
-                        RoundedRectangle(cornerRadius: 2)
-                            .fill(lit ? (done ? Style.green : Style.amber) : Style.border.opacity(0.4))
-                            .frame(height: 8)
-                    }
-                }
-            }
-        }
-    }
-
-    private func pipelineItem(_ index: String, _ name: String, detail: String, active: Bool, color: Color) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            Text(index).font(Style.mono(11))
-                .foregroundStyle(active ? color : Style.dim)
-                .frame(width: 26, height: 26)
-                .background(Circle().fill(active ? color.opacity(0.12) : Style.border.opacity(0.4)))
-            VStack(alignment: .leading, spacing: 6) {
-                Text(name).font(.system(size: 17, weight: .medium))
-                Text(detail).font(Style.mono(11)).foregroundStyle(active ? color : Style.dim)
-            }
-        }
-        .opacity(active ? 1 : 0.5)
-    }
-
-    private var footer: some View {
-        HStack {
-            Text("ILLUSTRATIVE ANIMATION")
-                .font(Style.mono(10)).foregroundStyle(Style.orange)
-            Text("Scripted output, scores and token counts · not a benchmark")
-                .font(.system(size: 12)).foregroundStyle(Style.dim)
-            Spacer()
-            Text("SPACE TO REPLAY").font(Style.mono(10)).foregroundStyle(Style.dim)
-        }
-        .frame(height: 14)
     }
 }
 
