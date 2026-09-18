@@ -134,6 +134,30 @@ No user/project settings or MCP configuration is loaded.
 
 ## Evidence
 
+### Full serial comparison
+
+`python -m evals.full EVIDENCE --benchmark-source PINNED_TASK_CHECKOUT` executes
+a predeclared `EVIDENCE/manifest.json` with 178 rows across all 89 tasks. Each row
+contains `task`, `arm`, a unique `job_name`, and a `resource_blocked` boolean from
+the resource audit. Keep blocked tasks in the manifest. Alternate arm ordering
+by task before starting, and store the complete protocol/provenance with it.
+Use the same subscription environment described above and a committed checkout.
+The optional `--harbor` argument selects the pinned virtual environment's CLI.
+
+The launcher runs serially with the pilot's model, version, limits, and zero
+Harbor retries. It refuses reused run directories and checks source hashes before
+each trial. Results checkpoint after every trial, preserving missing rewards and
+unstarted tasks. Subscription/account/model errors and instrumentation/Jev failures
+pause further execution and create `blocker.json`; ordinary task failures remain
+in the results. A paused run must be inspected before any separate continuation.
+The launcher stops before another trial when less than 20 GiB disk is free.
+CLI-native request retries, if any, are not additional Harbor trial attempts.
+
+`execution-provenance.json` pins the actual execution commit and flags. The
+separate preflight provenance can refer to the preceding adapter commit when
+only orchestration was added after the smoke; production and observer hashes must
+match across preflight and execution. Never edit sources while a run is active.
+
 The observer adapts `tests/fixtures/long-session-observer`. It never modifies
 requests/results and never captures HTTP headers. It captures activation,
 started/completed Jev requests with response usage/latency, production log
