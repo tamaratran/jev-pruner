@@ -7,7 +7,8 @@ import SwiftUI
 enum Style {
     static let width = 1100.0
     static let height = 720.0
-    static let duration = 5.0
+    static let frameCount = Int(ceil((Timing.done + 1.7) * 30))
+    static let duration = Double(frameCount) / 30
     static let background = Color(red: 0.055, green: 0.055, blue: 0.07)
     static let panel = Color(red: 0.09, green: 0.09, blue: 0.11)
     static let text = Color(red: 0.91, green: 0.91, blue: 0.93)
@@ -30,27 +31,50 @@ func ease(_ value: Double) -> Double { value * value * (3 - 2 * value) }
 struct OutputRow: Identifiable {
     let id: Int
     let text: String
+    let appearedAt: Double
     let keep: Bool
     let reason: String
 }
 
+struct InstallEvent: Decodable {
+    let time: Double
+    let text: String
+}
+
+struct InstallRecording: Decodable {
+    let duration: Double
+    let events: [InstallEvent]
+}
+
+enum Timing {
+    static let installStart = 0.6
+    static let installEnd = installStart + InstallExample.recording.duration
+    static let scanStart = installEnd + 0.3
+    static let scanEnd = scanStart + 1.5
+    static let pruneStart = scanEnd + 0.2
+    static let pruneEnd = pruneStart + 0.9
+    static let done = pruneEnd + 0.2
+}
+
 enum InstallExample {
-    static let log: String = {
-        guard let url = Bundle.main.url(forResource: "npm-install", withExtension: "txt"),
-              let text = try? String(contentsOf: url, encoding: .utf8) else {
-            fatalError("Missing npm-install.txt in the demo bundle")
+    static let recording: InstallRecording = {
+        guard let url = Bundle.main.url(forResource: "npm-install", withExtension: "json"),
+              let data = try? Data(contentsOf: url),
+              let recording = try? JSONDecoder().decode(InstallRecording.self, from: data) else {
+            fatalError("Missing or invalid npm-install.json in the demo bundle")
         }
-        return text
+        return recording
     }()
-    static let lines = log.components(separatedBy: .newlines)
+    static let log = recording.events.map(\.text).joined(separator: "\n")
     static let marker = "[trimmed output; full log: .claude/fast-jev-output/bash-<id>.txt]"
     static let rows: [OutputRow] = {
-        let samples = Array(lines.prefix(1))
-            + Array(lines.filter { $0.hasPrefix("npm http fetch GET") }.prefix(9))
-            + lines.filter { $0.hasPrefix("added ") || $0.hasPrefix("found ") || $0 == "npm info ok" }
-        return samples.enumerated().map { index, text in
-            let keep = !text.hasPrefix("npm http")
-            return OutputRow(id: index, text: text, keep: keep, reason: keep ? "KEEP" : "DROP")
+        let events = recording.events
+        let samples = Array(events.prefix(1))
+            + Array(events.filter { $0.text.hasPrefix("npm http fetch GET") }.prefix(9))
+            + events.filter { $0.text.hasPrefix("added ") || $0.text.hasPrefix("found ") || $0.text == "npm info ok" }
+        return samples.enumerated().map { index, event in
+            let keep = !event.text.hasPrefix("npm http")
+            return OutputRow(id: index, text: event.text, appearedAt: event.time, keep: keep, reason: keep ? "KEEP" : "DROP")
         }
     }()
     static let compactText = rows.filter(\.keep).map(\.text).joined(separator: "\n") + "\n" + marker
@@ -60,17 +84,18 @@ enum InstallExample {
 struct DemoFrame: View {
     let time: Double
 
-    private var flow: Double { progress(time, from: 0.35, to: 1.65) }
-    private var revealedLines: Int { Int(Double(InstallExample.lines.count) * flow) }
-    private var collapse: Double { ease(progress(time, from: 2.4, to: 3.1)) }
-    private var done: Bool { time >= 3.2 }
+    private var collapse: Double { ease(progress(time, from: Timing.pruneStart, to: Timing.pruneEnd)) }
+    private var done: Bool { time >= Timing.done }
     private var tokens: Int {
-        let before = InstallExample.tokens(InstallExample.lines.prefix(revealedLines).joined(separator: "\n"))
+        let received = InstallExample.recording.events
+            .prefix { $0.time <= time - Timing.installStart }
+            .map(\.text).joined(separator: "\n")
+        let before = InstallExample.tokens(received)
         let after = InstallExample.tokens(InstallExample.compactText)
         return Int((Double(before) * (1 - collapse) + Double(after) * collapse).rounded())
     }
     private var stage: Int {
-        time < 0.35 ? 0 : time < 1.75 ? 1 : time < 2.4 ? 2 : time < 3.2 ? 3 : 4
+        time < Timing.installStart ? 0 : time < Timing.scanStart ? 1 : time < Timing.pruneStart ? 2 : time < Timing.done ? 3 : 4
     }
 
     var body: some View {
@@ -103,17 +128,20 @@ struct DemoFrame: View {
                 .padding(.horizontal, 12)
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(Style.border))
                 HStack(spacing: 9) {
-                    Circle().fill(Style.green).frame(width: 7, height: 7)
+                    if time < Timing.installEnd {
+                        Circle().trim(from: 0.1, to: 0.85)
+                            .stroke(Style.dim, lineWidth: 1.5)
+                            .frame(width: 9, height: 9)
+                            .rotationEffect(.degrees(time * 180))
+                    } else {
+                        Circle().fill(Style.green).frame(width: 9, height: 9)
+                    }
                     Text("Bash").bold()
                     Text("(").foregroundStyle(Style.dim)
-                    Text(String("npm install".prefix(Int(11 * progress(time, from: 0.05, to: 0.3)))))
+                    Text("npm install")
                     Text(")").foregroundStyle(Style.dim)
-                    if time < 0.35 {
-                        Rectangle().fill(Style.text).frame(width: 8, height: 18)
-                            .opacity(Int(time * 3) % 2 == 0 ? 1 : 0)
-                    }
                     Spacer()
-                    Text(time < 1.65 ? "RUNNING" : done ? "DELIVERED" : "INTERCEPTED")
+                    Text(time < Timing.installEnd ? "RUNNING" : done ? "DELIVERED" : "INTERCEPTED")
                         .font(Style.mono(10))
                         .foregroundStyle(done ? Style.green : Style.dim)
                 }
@@ -134,7 +162,7 @@ struct DemoFrame: View {
     }
 
     private var tokenMeter: some View {
-        let color = done ? Style.green : flow > 0.6 ? Style.amber : Style.dim
+        let color = done ? Style.green : tokens > 0 ? Style.amber : Style.dim
         return HStack(spacing: 10) {
             Text("Output tokens").font(Style.mono(12)).foregroundStyle(Style.dim)
             ZStack(alignment: .leading) {
@@ -152,16 +180,14 @@ struct DemoFrame: View {
 
     private var output: some View {
         ZStack(alignment: .topLeading) {
-            if time >= 0.35 && time < 1.65 {
-                installOutput
-            } else if time >= 1.65 {
+            if time >= Timing.installStart {
                 VStack(alignment: .leading, spacing: 0) {
-                    ForEach(InstallExample.rows) { row in
-                        let remove = row.keep ? 0 : ease(progress(time, from: 2.4 + Double(row.id) * 0.025, to: 2.78 + Double(row.id) * 0.025))
-                        let scanned = time >= 1.75 + Double(row.id) * 0.045
+                    ForEach(InstallExample.rows.filter { $0.appearedAt <= time - Timing.installStart }) { row in
+                        let remove = row.keep ? 0 : collapse
+                        let scanned = time >= Timing.scanStart + Double(row.id) * (Timing.scanEnd - Timing.scanStart) / Double(InstallExample.rows.count)
                         line(row, scanned: scanned)
                             .opacity(1 - remove)
-                            .offset(x: remove * 130)
+                            .offset(x: remove * 30)
                             .frame(height: 29 * (1 - remove), alignment: .top)
                             .clipped()
                         if row.id == 0 {
@@ -173,39 +199,23 @@ struct DemoFrame: View {
                                 .clipped()
                         }
                     }
-                    if time >= 2.9 {
+                    if time >= Timing.pruneEnd {
                         archive
                             .padding(.top, 18)
-                            .opacity(ease(progress(time, from: 2.9, to: 3.2)))
-                            .offset(y: 12 * (1 - ease(progress(time, from: 2.9, to: 3.2))))
+                            .opacity(ease(progress(time, from: Timing.pruneEnd, to: Timing.done)))
                     }
                 }
             }
-            if time >= 1.75 && time <= 2.35 {
+            if time >= Timing.scanStart && time <= Timing.scanEnd {
                 VStack(spacing: 0) {
                     LinearGradient(colors: [.clear, Style.cyan.opacity(0.20)], startPoint: .top, endPoint: .bottom)
                         .frame(height: 24)
                     Rectangle().fill(Style.cyan).frame(height: 2)
                         .shadow(color: Style.cyan.opacity(0.8), radius: 10)
                 }
-                .offset(y: -24 + progress(time, from: 1.75, to: 2.35) * 377)
+                .offset(y: -24 + progress(time, from: Timing.scanStart, to: Timing.scanEnd) * 377)
             }
         }
-    }
-
-    private var installOutput: some View {
-        let first = max(0, revealedLines - 14)
-        return VStack(alignment: .leading, spacing: 0) {
-            ForEach(first..<revealedLines, id: \.self) { index in
-                Text(InstallExample.lines[index])
-                    .font(Style.mono(12))
-                    .foregroundStyle(Style.dim)
-                    .lineLimit(1)
-                    .frame(height: 27, alignment: .leading)
-            }
-        }
-        .frame(height: 405, alignment: .top)
-        .clipped()
     }
 
     private func line(_ row: OutputRow, scanned: Bool) -> some View {
@@ -249,7 +259,7 @@ struct DemoFrame: View {
                 Text(done ? "✓" : "✻").foregroundStyle(done ? Style.green : Style.cyan)
                 Text([
                     "Ready to run Bash.",
-                    "Collecting the tool result…",
+                    "Installing dependencies…",
                     "Jev Pruner · checking the output…",
                     "Dropping repetitive chunks · kept text stays verbatim",
                     "Pruned. The model receives the compact tool result."
@@ -257,7 +267,7 @@ struct DemoFrame: View {
                 .font(Style.mono(12)).foregroundStyle(done ? Style.green : Style.cyan)
             }
             HStack {
-                Text("Scripted demo · estimated tokens")
+                Text("Recorded install · illustrative pruning · estimated tokens")
                 Spacer()
                 Text("Space to replay")
             }
@@ -340,7 +350,7 @@ enum Export {
         guard writer.startWriting() else { throw writer.error ?? ExportError.cannotWriteFrame }
         writer.startSession(atSourceTime: .zero)
         do {
-            let frameCount = Int(Style.duration * 30)
+            let frameCount = Style.frameCount
             for frame in 0..<frameCount {
                 while !input.isReadyForMoreMediaData {
                     guard writer.status == .writing else { throw writer.error ?? ExportError.cannotWriteFrame }
@@ -400,7 +410,7 @@ enum JevPrunerDemo {
                     }
                     exit(0)
                 } catch {
-                    fputs("Demo export failed: \(error)\nUsage: --export movie.mp4 | --frame <0…\(Int(Style.duration))> image.png\n", stderr)
+                    fputs("Demo export failed: \(error)\nUsage: --export movie.mp4 | --frame <0…\(Style.duration)> image.png\n", stderr)
                     exit(1)
                 }
             }
