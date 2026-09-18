@@ -1,0 +1,6 @@
+{
+  "name": "jev-long-session-observer",
+  "version": "0.1.0",
+  "description": "Capture synthetic live-test evidence without changing Jev requests.",
+  "author": { "name": "Jev integration tests" }
+}

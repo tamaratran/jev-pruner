@@ -134,10 +134,10 @@ function questionFor(chunk: OutputChunk): JevQuestions {
   return {
     [chunk.id]: {
       type: 'noul',
-      instructions: `Chunk c${n} must stay visible to the agent for it to understand the result of the command and continue its task.`,
+      instructions: `Chunk c${n} contains at least one line that should remain available to the agent for its ongoing task. Evaluate every line against instructions and decisions anywhere in history, not only what the next reply should say.`,
       criteria: {
-        true: 'The chunk contains an error, failure, warning, summary, final result, or information the task depends on.',
-        false: 'The chunk is repetitive, verbose, or boilerplate output the agent can act without.',
+        true: 'At least one line contains an error, warning, summary, final result, or a value needed by a standing requirement. One needed line is sufficient even when all other lines are noise. Reply-format instructions do not cancel retention requirements. Do not rely on recovering information from an archive.',
+        false: 'Every line is disposable progress, repetitive boilerplate, or irrelevant noise. Removing the entire chunk loses no result or task-dependent information.',
       },
     },
   };
@@ -267,6 +267,27 @@ async function trimOutputAttempt(
   }
 
   if (stateTokens > maxStateTokens) {
+    const middle = (chunks.length - 1) / 2;
+    const candidates = chunks
+      .map((_, index) => index)
+      .filter(
+        (index) =>
+          index !== 0 &&
+          index !== chunks.length - 1 &&
+          !omitted.has(index) &&
+          !ERROR_PATTERN.test(chunks[index]!.text),
+      )
+      .sort((left, right) => {
+        const distance = Math.abs(left - middle) - Math.abs(right - middle);
+        return distance || left - right;
+      });
+    for (let start = 0; stateTokens > maxStateTokens && start < candidates.length; start += 10) {
+      for (const index of candidates.slice(start, start + 10)) omitted.add(index);
+      stateChunks = chunks.filter((_, index) => !omitted.has(index));
+      state = stateFor(input, stateChunks, history);
+      stateTokens = estimateStateTokens(JSON.stringify(state));
+    }
+
     let perChunkChars = 400;
     while (stateTokens > maxStateTokens) {
       stateChunks = chunks
@@ -276,31 +297,6 @@ async function trimOutputAttempt(
       stateTokens = estimateStateTokens(JSON.stringify(state));
       if (stateTokens <= maxStateTokens || perChunkChars === 50) break;
       perChunkChars = Math.max(50, Math.floor(perChunkChars / 2));
-    }
-
-    if (stateTokens > maxStateTokens) {
-      const middle = (chunks.length - 1) / 2;
-      const candidates = chunks
-        .map((_, index) => index)
-        .filter(
-          (index) =>
-            index !== 0 &&
-            index !== chunks.length - 1 &&
-            !omitted.has(index) &&
-            !ERROR_PATTERN.test(chunks[index]!.text),
-        )
-        .sort((left, right) => {
-          const distance = Math.abs(left - middle) - Math.abs(right - middle);
-          return distance || left - right;
-        });
-      for (let start = 0; stateTokens > maxStateTokens && start < candidates.length; start += 10) {
-        for (const index of candidates.slice(start, start + 10)) omitted.add(index);
-        stateChunks = chunks
-          .filter((_, index) => !omitted.has(index))
-          .map((chunk) => ({ ...chunk, text: chunk.text.slice(0, 50) }));
-        state = stateFor(input, stateChunks, history);
-        stateTokens = estimateStateTokens(JSON.stringify(state));
-      }
     }
   }
 
@@ -338,10 +334,11 @@ async function trimOutputAttempt(
     throw error;
   }
 
+  const scoredText = new Map(stateChunks.map(({ id, text }) => [id, text]));
   const keptIndexes = new Set<number>();
   for (let index = 0; index < chunks.length; index += 1) {
     if (
-      omitted.has(index) ||
+      scoredText.get(chunks[index]!.id) !== chunks[index]!.text ||
       index === 0 ||
       index === chunks.length - 1 ||
       ERROR_PATTERN.test(chunks[index]!.text) ||

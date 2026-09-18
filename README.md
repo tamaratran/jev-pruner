@@ -16,7 +16,9 @@ verbatim — nothing is rewritten or summarized.
 3. Output is split into chunks of `chunkLines` lines, capped at 200 chunks;
    lines longer than 2,000 characters are split first.
 4. Jev receives `{ context, task, history, command, chunks }` and one noul question
-   per chunk: “must this chunk stay visible?”. `history` follows the
+   per chunk: “does any line in this chunk need to remain available?”. A single
+   needed line protects the chunk, including values required by earlier
+   instructions even when the next reply must not repeat them. `history` follows the
    fast-jev-compaction approach: user and assistant text in conversation order,
    with tool names and inputs; result bodies are replaced by status/length notes.
    Questions are batched so each request stays under 30,000 estimated tokens.
@@ -29,8 +31,8 @@ verbatim — nothing is rewritten or summarized.
    fitted history; the actual conversation is never edited by this fitting. A
    `max_tokens_exceeded` response retries twice with a halved state budget.
 6. A chunk stays when its noul is at least `keepThreshold`, it is first or
-   last, it matches an error or warning pattern, or it was unscored because it
-   was omitted while fitting state.
+   last, it matches an error or warning pattern, or its complete text was not
+   present in the scoring state (omitted or shortened while fitting).
 7. Each dropped run becomes a marker such as:
    `[fast-jev-output trimmed N lines (M chars); full output: .claude/fast-jev-output/bash-<id>.txt (Read or grep it if needed)]`
 8. The complete output is written under the project's
@@ -112,6 +114,29 @@ and output fixtures. It checks task-dependent retention, tool-result filtering,
 question batching, digit-heavy state fitting, and the hook's behavior when Jev
 rejects authentication. It runs separately from `npm test` and does not exercise
 the Claude Code host itself.
+
+### Long Claude Code session
+
+With an authenticated Claude CLI and `TYPESAFE_API_KEY` in the environment, run
+`npm run test:long-session`. This starts one continuous Claude process, loads the
+production plugin plus a test-only observer, and runs a bootstrap followed by
+40 noisy Bash commands against synthetic fixtures. Both Claude and Jev incur
+API usage; the Claude process has a $10 budget.
+
+The test checks early requirements, result-body omission from tool metadata,
+target bundle and rollback retention, archives, stderr, history fitting, and
+the final answer. Conversation text that quotes tool output is preserved.
+Raw events and header-free Jev request/response captures are saved under
+`~/jev-long-sessions/`. The path is printed when the run starts.
+
+Run `npm run report:long-session -- <evidence-directory>` to generate a
+self-contained HTML evidence report. For a quick harness smoke check,
+set `JEV_LONG_SESSION_TURNS=2`; history-fitting coverage requires at least 40.
+Use `JEV_LONG_SESSION_DIR` to choose a different persistent output directory.
+The long test is separate from the offline suite and `test:live`.
+Retention failures produce a failing exit status and a summary containing all
+misses. To reanalyze saved evidence without making API calls, run
+`npm run test:long-session -- --analyze <evidence-directory>`.
 
 Related: [fast-jev-compaction](https://github.com/tamaratran/fast-jev-compaction)
 (same author) applies Jev to session compaction; the two are independent and
