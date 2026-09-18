@@ -218,6 +218,8 @@ struct DemoFrame: View {
             }
         }
         .offset(y: -(offset - Double(first)) * 27)
+        .frame(height: 405, alignment: .top)
+        .clipped()
         .overlay(alignment: .bottomTrailing) {
             Text("… hundreds more lines")
                 .font(Style.mono(11)).foregroundStyle(Style.amber)
