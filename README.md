@@ -19,7 +19,9 @@ Claude requests a Bash command → Command runs → Jev prunes stdout → Claude
    `openssl`) are left untouched.
 3. Output is split into chunks of `chunkLines` lines, capped at 200 chunks;
    lines longer than 2,000 characters are split first.
-4. Jev receives `{ context, task, history, command, chunks }` and one noul question
+4. Jev receives `{ context, task, history, command, chunks }`, plus `category` and
+   `categoryGuidance` for recognized build/test/install or search/excerpt commands,
+   and one noul question
    per chunk: “does any line in this chunk need to remain available?”. A single
    needed line protects the chunk, including values required by earlier
    instructions even when the next reply must not repeat them. `history` includes
@@ -71,6 +73,25 @@ facts that require combining distant segments are not guaranteed to be recognize
 More segments and output groups mean more Jev requests.
 Library callers can pass the same transcript shape through
 `trimOutput({ command, goal, output, messages }, asker)`.
+
+### Command categories
+
+Categories add guidance to the same relevance question; they never mark an entire
+command's output as disposable or change the keep threshold.
+
+| Category | Examples | Behavior |
+| --- | --- | --- |
+| Build, install, test | `npm run build`, `pnpm test`, `npm ci`, `make`, `pytest`, `cargo test` | Ask Jev to retain diagnostics, failing tests, result counts, final status, artifact paths, and task-required values; repeated progress may be dropped. |
+| Search or file excerpt | `rg`, `grep`, `git grep`, `find`, `head`, `tail`, `sed` | Treat paths, line numbers, matches, and surrounding source as evidence. Repeated matches can still matter, particularly when the task requires complete results or counts. |
+| Whole document | JSON objects/arrays, recognized XML/YAML headers, diffs; `cat`, `bat`, `jq`, `yq`, `git diff`, `git show`, `diff`, `base64`, `openssl` | Preserve the output verbatim without scoring. Format detection takes precedence over a build or search command. |
+| Unknown | Custom scripts, unrecognized subcommands, wrappers, pipelines, compound commands | Use the existing general scoring guidance. Existing whole-document safeguards still take precedence. |
+
+Command recognition is deliberately limited to simple invocations. Executable
+paths and leading environment assignments are recognized; shell operators,
+substitutions, and wrappers fall back to general guidance unless a whole-document
+safeguard applies. This is a heuristic, not a shell parser. All categories keep
+the strict **over 10,000 estimated tokens** gate. Category guidance counts toward
+the state budget in every history segment and output batch.
 
 ## Install
 
@@ -195,7 +216,8 @@ Run the offline checks with `npm test`, `npm run typecheck`, and `npm run build`
 For live Jev checks, provide `TYPESAFE_API_KEY` in the environment and run
 `npm run test:live`. This makes billable requests using synthetic conversation
 and output fixtures. It checks task-dependent retention, tool-result inclusion,
-parallel history/output batching, digit-heavy state budgets, and the hook's behavior when Jev
+parallel history/output batching, digit-heavy state budgets, paired comparisons
+of general versus category guidance on build and search fixtures, and the hook's behavior when Jev
 rejects authentication. It runs separately from `npm test` and does not exercise
 the Claude Code host itself.
 

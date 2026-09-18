@@ -7,7 +7,7 @@ import type { HookFetch } from '../hooks/fast-jev-output.js';
 import type { ConversationMessage } from '../src/history.js';
 import { estimateStateTokens } from '../src/jev.js';
 import type { JevAsker, JevQuestions, JevState } from '../src/jev.js';
-import { trimOutput } from '../src/output.js';
+import { classifyOutput, trimOutput } from '../src/output.js';
 
 const apiKey = process.env.TYPESAFE_API_KEY;
 assert(apiKey, 'Set TYPESAFE_API_KEY before running the live Jev tests.');
@@ -66,6 +66,61 @@ function transcript(): ConversationMessage[] {
       toolUses: [],
     })),
   ];
+}
+
+for (const fixture of [
+  {
+    command: 'npm run build',
+    category: 'build',
+    goal: 'Keep the alpha artifact filename for deployment.',
+    required: 'alpha artifact filename: release-alpha-6d81.tar.gz',
+    noise: (i: number) => `progress: cached module ${i}; ${'unchanged '.repeat(55)}`,
+    final: 'Build complete: 200 modules compiled.',
+  },
+  {
+    command: 'rg -n expiry src vendor',
+    category: 'search',
+    goal: 'Locate the source line computing session expiry from the configured session TTL; preserve its path and line number.',
+    required: 'src/session.ts:87: const expiry = now + config.sessionTtl;',
+    noise: (i: number) => `vendor/generated/cache.ts:${i + 1}: // ${'asset expiry cache entry unchanged; '.repeat(16)}`,
+    final: 'Search finished.',
+  },
+]) {
+  test(`live Jev compares general and ${fixture.category} guidance`, { timeout: 180_000 }, async t => {
+    const lines = Array.from({ length: 200 }, (_, i) => fixture.noise(i));
+    lines[65] = fixture.required;
+    lines[199] = fixture.final;
+    const input = {
+      command: fixture.command, goal: fixture.goal, output: lines.join('\n'),
+      messages: [{ role: 'user' as const, text: fixture.goal, toolUses: [] }],
+    };
+    assert.equal(classifyOutput(input.command, input.output), fixture.category);
+    for (const guidance of ['general', 'categorized'] as const) {
+      const { asker, requests } = liveAsker(t);
+      const result = await trimOutput(input, {
+        async ask(state, questions) {
+          assert.equal(typeof state, 'object');
+          const { category, categoryGuidance, ...generalState } = state as {
+            category: string; categoryGuidance: string;
+          };
+          assert.equal(category, fixture.category);
+          assert(categoryGuidance);
+          return asker.ask(guidance === 'general' ? generalState : state, questions);
+        },
+      });
+      const retained = result.output.includes(fixture.required);
+      t.diagnostic(JSON.stringify({
+        category: fixture.category, guidance, retained, requests: requests.length,
+        kept: result.kept, chunks: result.chunks, scores: result.scores,
+        charsBefore: result.charsBefore, charsAfter: result.charsAfter,
+      }));
+      if (guidance === 'categorized') {
+        assert(retained, `${fixture.category} guidance lost the required evidence`);
+        assert(result.trimmed, `${fixture.category} guidance did not prune repetitive noise`);
+        assert(result.output.includes(fixture.final));
+      }
+    }
+  });
 }
 
 test('live Jev preserves earlier task requirements and errors while pruning noise', { timeout: 180_000 }, async (t) => {
