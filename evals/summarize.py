@@ -97,6 +97,18 @@ def summarize_agent(agent: Path, arm: str, stream: str = "claude-code.txt") -> d
         )
     if arm == "control" and (started or trims):
         issues.append("Control unexpectedly invoked pruning")
+    bash_outputs = [
+        json.loads(path.read_text()).get("answer", {}).get("result")
+        for path in evidence.glob("bash-*.json")
+    ]
+    output_lengths = [
+        len(
+            output.get("stdout", "")
+            + ("\n" + output["stderr"] if output.get("stderr") else "")
+        )
+        for output in bash_outputs
+        if isinstance(output, dict) and isinstance(output.get("stdout"), str)
+    ]
     model_usage = final.get("modelUsage") or {}
     totals = (
         {
@@ -132,6 +144,9 @@ def summarize_agent(agent: Path, arm: str, stream: str = "claude-code.txt") -> d
         ),
         "claude_duration_ms": final.get("duration_ms"),
         "bash_calls_observed": len(list(evidence.glob("bash-*.json"))),
+        "bash_structured_outputs_observed": len(output_lengths),
+        "bash_max_observed_chars": max(output_lengths, default=0),
+        "bash_observed_outputs_above_min_chars": sum(n > 4000 for n in output_lengths),
         "jev_requests_started": started,
         "jev_responses": len(responses),
         "jev_http_statuses": [response["status"] for response in responses],

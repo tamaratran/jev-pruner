@@ -7,6 +7,25 @@ from summarize import summarize_agent, summarize_trial
 
 
 class SummaryTests(unittest.TestCase):
+    def test_output_threshold_counts_stderr_and_excludes_references(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            agent = Path(directory)
+            evidence = agent / "jev"
+            evidence.mkdir()
+            (evidence / "bash-1.json").write_text(
+                json.dumps(
+                    {"answer": {"result": {"stdout": "a" * 3999, "stderr": "b"}}}
+                )
+            )
+            (evidence / "bash-2.json").write_text(
+                json.dumps({"answer": {"result": "reference"}})
+            )
+            row = summarize_agent(agent, "plugin")
+            self.assertEqual(row["bash_calls_observed"], 2)
+            self.assertEqual(row["bash_structured_outputs_observed"], 1)
+            self.assertEqual(row["bash_max_observed_chars"], 4001)
+            self.assertEqual(row["bash_observed_outputs_above_min_chars"], 1)
+
     def test_cost_basis_and_auxiliary_model_tokens_are_retained(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             agent = Path(directory)
