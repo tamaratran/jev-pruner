@@ -11,8 +11,23 @@ const MAX_REQUEST_TOKENS = 30_000;
 
 const MAX_CHUNKS = 200;
 const MAX_LINE_CHARS = 2_000;
-const ERROR_PATTERN =
-  /\b(error|errors|failed|failure|fatal|exception|traceback|panic|assert|denied|refused|timeout|cannot|unable|warning)\b/i;
+// Deliberately narrow: this is the floor that overrides Jev and the budget, so
+// it must catch a reported failure without catching a file called
+// serialize-error.js in a directory listing.
+const ERROR_PATTERN = new RegExp(
+  [
+    '\\b(ERROR|FATAL|FAILED|FAILURE|PANIC)\\b', // shouted, as loggers write them
+    '\\b(error|failure|exception|panic|traceback|assertion)s?\\s*:', // "error: ..."
+    '\\b(failed|failing|cannot|could not|unable to|denied|refused|timed out)\\s+\\w', // a sentence about it
+    '\\b\\w*(Error|Exception)\\b\\s*[:(]', // TypeError:, NullPointerException(
+    '\\bTraceback \\(most recent call last\\)',
+    '^\\s*at\\s+\\S+\\(.*:\\d+', // stack frames
+    '\\b(severity )?vulnerabilit(y|ies)\\b',
+    '\\bCrashLoopBackOff\\b|\\bOOMKilled\\b',
+    '\\bHTTP/[0-9.]+ [45]\\d\\d\\b|\\bstatus[=: ]\\s*[45]\\d\\d\\b',
+  ].join('|'),
+  'm',
+);
 const OUTPUT_CONTEXT =
   'A coding agent ran a shell command. `history` is the conversation so far, oldest first, with tool outputs replaced by status and length notes; long inputs and texts may be abridged and older text-only messages may be omitted. Use its instructions and decisions to judge what the task needs. The current command output is split into numbered chunks. The agent will only see the chunks that are kept; the full output is saved to a file it can read later. Decide which chunks the agent needs to understand the outcome of the command and continue its task: errors, failures, warnings, summaries, final results, and lines the task depends on are needed; repetitive progress output, verbose listings, download/install noise and boilerplate are not.';
 

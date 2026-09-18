@@ -372,3 +372,33 @@ describe('budget ordering', () => {
     expect(r.charsAfter).toBeLessThanOrEqual(8_000);
   });
 });
+
+describe('error floor is narrow', () => {
+  const asker = {
+    ask: async (_s: unknown, q: Record<string, unknown>) => ({
+      answers: Object.fromEntries(Object.keys(q).map((id) => [id, { type: 'noul' as const, noul: 0.01 }])),
+    }),
+  };
+
+  it('does not treat a file listing full of error-named files as errors', async () => {
+    const listing = Array.from({ length: 400 }, (_, i) => `-rw-r--r--  1 me staff  ${i} Sep 18 node_modules/serialize-error/error-${i}.js`).join('\n');
+    const r = await trimOutput({ command: 'ls -laR node_modules', goal: 'check the tree', output: listing }, asker, { maxChars: 4_000 });
+    expect(r.charsAfter).toBeLessThanOrEqual(4_000);
+  });
+
+  it('still protects a reported failure', async () => {
+    const noise = Array.from({ length: 400 }, (_, i) => `[${i}] compiled module ${i}`);
+    for (const line of [
+      'ERROR worker-3 failed to link checkout_v2',
+      'TypeError: Cannot read properties of undefined',
+      'error: could not find a version satisfying pandas==99.9',
+      '7 high severity vulnerabilities found',
+      'payments checkout-77 0/1 CrashLoopBackOff 14 22m',
+    ]) {
+      const rows = [...noise];
+      rows[200] = line;
+      const r = await trimOutput({ command: 'build', goal: 'fix the build', output: rows.join('\n') }, asker, { maxChars: 2_000 });
+      expect(r.output).toContain(line);
+    }
+  });
+});
