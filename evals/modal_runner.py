@@ -41,6 +41,7 @@ from evals.full import (
 from evals.modal_images import resolve_image
 from evals.modal_provider import (
     CLEANUP_SECONDS,
+    ROLE_TRANSFER_OVERHEAD,
     TRANSFER_SECONDS,
     PinnedModalEnvironment,
     verify_downloads,
@@ -135,7 +136,7 @@ def task_spec(path: Path) -> dict:
     ):
         raise ValueError("Task differs from the audited public Linux profile")
     rate = config.cpus * CPU_RATE + config.memory_mb / 1024 * RAM_RATE
-    overhead = 360 + TRANSFER_SECONDS + CLEANUP_SECONDS + 60
+    overhead = 360 + TRANSFER_SECONDS + CLEANUP_SECONDS + ROLE_TRANSFER_OVERHEAD + 60
     return {
         "task": path.parent.name,
         "image": config.docker_image,
@@ -289,8 +290,19 @@ def campaign_order(rows: list[dict], preflights: list[dict]) -> list[dict]:
 def eligible_rows(rows: list[dict], setups: list[dict]) -> list[dict]:
     ready = []
     for setup in setups:
+        if setup.get("deferred"):
+            continue
         group = [setup, *(row for row in rows if row["task"] == setup["task"])]
-        unfinished = next((row for row in group if row["state"] != "finished"), None)
+        unfinished = next(
+            (
+                row
+                for row in group
+                if row["state"] != "finished"
+                and row.get("continuation", {}).get("kind")
+                != "preserved_failed_attempt"
+            ),
+            None,
+        )
         if unfinished is None:
             continue
         if unfinished["state"] in ACTIVE_STATES:
@@ -411,7 +423,11 @@ def seed_images(
 
 
 def continue_trials(
-    source: Path, document: dict, prior_accounted: float, images: dict
+    source: Path,
+    document: dict,
+    prior_accounted: float,
+    images: dict,
+    retain_failed_attempts: bool = False,
 ) -> list[dict]:
     previous = load(source / "provenance.json")
     if {k: v for k, v in previous.items() if k not in {"commit", "sources"}} != {
@@ -427,6 +443,8 @@ def continue_trials(
     rows = document["trials"]
     if set(prior) != {row["job_name"] for row in rows}:
         raise ValueError("Continuation task/arm inventory differs")
+    if any(row["state"] in ACTIVE_STATES for row in prior.values()):
+        raise ValueError("Wait for all active trials before continuing")
     for row in rows:
         old = prior[row["job_name"]]
         history_before = old.get("continuation", {})
@@ -434,14 +452,51 @@ def continue_trials(
             row["continuation"] = history_before
         if old["state"] == "pending":
             continue
+        if old.get("deferred_preflight") and not old.get("agent_attempts"):
+            row["continuation"] = {
+                "kind": "retry_before_first_agent_attempt",
+                "prior_preflight": old["deferred_preflight"],
+            }
+            continue
         location = (
             Path(history_before["source"])
-            if history_before.get("kind") == "preserved_scored_result"
+            if history_before.get("kind")
+            in {"preserved_scored_result", "preserved_failed_attempt"}
             else source / "trials" / row["job_name"]
         )
         result_path = location / "result.json"
         result = load(result_path)
         lifecycle = load(location / "modal-lifecycle.json")
+        if (
+            retain_failed_attempts
+            and old["state"] != "finished"
+            and lifecycle["termination_confirmed"]
+            and (result.get("agent_execution") or result.get("verifier"))
+        ):
+            identity = {key: row[key] for key in ("task", "arm", "job_name")}
+            row.update(old)
+            row.update(identity)
+            row.update(
+                reward=None,
+                modal=lifecycle,
+                continuation={
+                    "kind": "preserved_failed_attempt",
+                    "source": str(location),
+                    "harness_commit": history_before.get(
+                        "harness_commit", previous["commit"]
+                    ),
+                    "checkpoint_state": old["state"],
+                    "agent_attempts": int(bool(result.get("agent_execution"))),
+                    "verifier_attempts": int(bool(result.get("verifier"))),
+                    "result_sha256": hashlib.sha256(
+                        result_path.read_bytes()
+                    ).hexdigest(),
+                    "observed_reward": old.get("reward"),
+                    "earlier_continuation": history_before,
+                    "excluded_from_scoring": True,
+                },
+            )
+            continue
         if not lifecycle["evidence_verified"] or not lifecycle["termination_confirmed"]:
             raise ValueError("Continuation requires verified evidence and termination")
         hashes = load(location / "modal-evidence-sha256.json")
@@ -503,8 +558,19 @@ def continue_trials(
                 == ["Final Claude result missing; usage totals unavailable"]
                 and not access_blocker(read_events(location / "agent/claude-code.txt"))
             )
+            retained_agent_error = (
+                retain_failed_attempts
+                and row.get("exception")
+                and row["measurement_issues"]
+                and all(
+                    issue.startswith("Claude did not finish successfully:")
+                    for issue in row["measurement_issues"]
+                )
+                and not access_blocker(read_events(location / "agent/claude-code.txt"))
+            )
             if row["reward"] is None or (
-                row["measurement_issues"] and not timeout_without_usage
+                row["measurement_issues"]
+                and not (timeout_without_usage or retained_agent_error)
             ):
                 raise ValueError("Historical scored measurements are incomplete")
             row.update(
@@ -599,6 +665,12 @@ async def execute(args: argparse.Namespace) -> None:
         raise ValueError("Seed preflights require a new campaign")
     if args.continue_from and (not campaign or not args.seed_preflight):
         raise ValueError("Continuation requires a campaign with verified image seeds")
+    retain_failed_attempts = vars(args).get("retain_failed_attempts", False)
+    deferred_tasks = vars(args).get("defer_task", [])
+    if (retain_failed_attempts or deferred_tasks) and not args.continue_from:
+        raise ValueError(
+            "Retaining failed attempts and deferring tasks require continuation"
+        )
     root, benchmark = args.evidence.resolve(), args.benchmark_source.resolve()
     if root.is_relative_to(REPO):
         raise ValueError("Evidence must be outside the repository")
@@ -636,6 +708,8 @@ async def execute(args: argparse.Namespace) -> None:
         "continue_from": str(args.continue_from.resolve())
         if args.continue_from
         else None,
+        "retain_failed_attempts": retain_failed_attempts,
+        "deferred_tasks": deferred_tasks,
         "billing_start_date": (
             args.billing_start_date.isoformat() if args.billing_start_date else None
         ),
@@ -691,8 +765,44 @@ async def execute(args: argparse.Namespace) -> None:
         )
         if args.continue_from:
             rows = continue_trials(
-                args.continue_from.resolve(), document, args.prior_accounted_usd, images
+                args.continue_from.resolve(),
+                document,
+                args.prior_accounted_usd,
+                images,
+                retain_failed_attempts=retain_failed_attempts,
             )
+            for task in deferred_tasks:
+                previous_setups = load(args.continue_from / "preflight-progress.json")
+                failed = next(
+                    (row for row in previous_setups if row["task"] == task), None
+                )
+                if (
+                    failed is None
+                    or failed["state"] in ACTIVE_STATES | {"pending", "finished"}
+                    or not failed.get("modal", {}).get("termination_confirmed")
+                ):
+                    raise ValueError(
+                        "Deferred task requires a terminated failed preflight"
+                    )
+                setup = next(row for row in setups if row["task"] == task)
+                setup.update(failed)
+                setup.update(
+                    state=failed["state"],
+                    deferred=True,
+                    deferred_preflight={
+                        "source": str(args.continue_from),
+                        "row": failed,
+                    },
+                )
+                for row in rows:
+                    if row["task"] == task and row["state"] == "pending":
+                        row.update(
+                            state="setup_error",
+                            failure_category="setup",
+                            agent_attempts=0,
+                            verifier_attempts=0,
+                            deferred_preflight=setup["deferred_preflight"],
+                        )
             setups[0] = {
                 **preflight_manifest(document["tasks"][:1])[0],
                 "subscription_recheck": True,
@@ -1015,12 +1125,13 @@ async def execute(args: argparse.Namespace) -> None:
                     else [row for row in rows if row["state"] != "finished"][:1]
                 )
                 active_tasks = {row["task"] for row in started.values()}
-                row = next(
+                candidate = next(
                     (row for row in candidates if row["task"] not in active_tasks),
                     None,
                 )
-                if row is None:
+                if candidate is None:
                     break
+                row = candidate
                 exclusive = bool(row.get("subscription_recheck")) or (
                     expiry is not None
                     and not fits_before_refresh(
@@ -1085,6 +1196,8 @@ def main() -> None:
     parser.add_argument("--preflight", type=Path)
     parser.add_argument("--seed-preflight", type=Path)
     parser.add_argument("--continue-from", type=Path)
+    parser.add_argument("--retain-failed-attempts", action="store_true")
+    parser.add_argument("--defer-task", action="append", default=[])
     parser.add_argument("--prior-accounted-usd", type=float, default=0)
     parser.add_argument("--budget-usd", type=float)
     parser.add_argument("--no-budget-limit", action="store_true")

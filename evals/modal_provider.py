@@ -9,6 +9,7 @@ import tempfile
 import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
+from uuid import uuid4
 
 from harbor.environments.base import ExecResult
 from harbor.environments.modal import ModalEnvironment
@@ -25,6 +26,8 @@ from evals.registry_auth import registry_credentials
 
 TRANSFER_SECONDS = 300
 CLEANUP_SECONDS = 90
+ROLE_TRANSFER_SECONDS = 90
+ROLE_TRANSFER_OVERHEAD = 4 * ROLE_TRANSFER_SECONDS
 
 
 def verify_downloads(root: Path, manifest: str) -> dict[str, str]:
@@ -250,17 +253,42 @@ class PinnedModalEnvironment(ModalEnvironment):
         )
 
     async def collect_evidence(self) -> None:
+        self.evidence_root.mkdir(parents=True, exist_ok=True)
+        snapshot = f"/logs/.jev-evidence-{uuid4().hex}"
         result = await self._sdk_exec(
-            "find /logs/agent /logs/verifier /logs/artifacts -type f -exec sha256sum -z {} +",
+            f"mkdir -m 700 {snapshot} && "
+            f"cp -a /logs/agent /logs/verifier /logs/artifacts {snapshot}/ && "
+            f"find {snapshot} -type f -exec sha256sum -z {{}} +",
             timeout_sec=60,
         )
         if result.return_code:
             raise RuntimeError("Remote evidence inventory failed")
-        for name in ("agent", "verifier", "artifacts"):
-            await self.download_dir(f"/logs/{name}", self.evidence_root / name)
-        hashes = verify_downloads(self.evidence_root, result.stdout or "")
+        inventory = (result.stdout or "").replace(f"  {snapshot}/", "  /logs/")
+        save(
+            self.evidence_root / "modal-evidence-inventory.json",
+            {"snapshot": snapshot, "sha256sum": inventory},
+        )
+        await self.download_dir(snapshot, self.evidence_root)
+        hashes = verify_downloads(self.evidence_root, inventory)
         save(self.evidence_root / "modal-evidence-sha256.json", hashes)
         self.lifecycle["evidence_verified"] = True
+
+    async def _sdk_download_dir(self, source_dir: str, target_dir: Path | str) -> None:
+        if source_dir == "/logs/agent" and self.subscription_checkpoint is not None:
+            try:
+                await asyncio.wait_for(self.preserve_subscription(), timeout=30)
+            except Exception as error:
+                self.record(
+                    "early_subscription_checkpoint",
+                    "failed",
+                    error=type(error).__name__,
+                )
+        async with asyncio.timeout(ROLE_TRANSFER_SECONDS):
+            await super()._sdk_download_dir(source_dir, target_dir)
+
+    async def _sdk_upload_dir(self, source_dir: Path | str, target_dir: str) -> None:
+        async with asyncio.timeout(ROLE_TRANSFER_SECONDS):
+            await super()._sdk_upload_dir(source_dir, target_dir)
 
     async def preserve_subscription(self) -> None:
         checkpoint = self.subscription_checkpoint
