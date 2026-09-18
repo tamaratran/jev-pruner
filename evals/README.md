@@ -1,0 +1,91 @@
+# Terminal-Bench paired pilot
+
+Requires Linux, Docker, Python 3.12+, and API access to `claude-sonnet-5` and Jev.
+Production source is uploaded unchanged. This adapter subclasses Harbor's
+Claude Code agent; Harbor owns task installation, instructions, timeouts,
+agent execution, transcripts, and verification.
+
+```sh
+python3 -m venv ~/harbor-venv
+~/harbor-venv/bin/pip install harbor==0.22.0
+export HARBOR_BIN="$HOME/harbor-venv/bin/harbor"
+# Inject ANTHROPIC_API_KEY and TYPESAFE_API_KEY from your secret manager.
+export EVIDENCE_DIR="$HOME/jev-eval-$(date +%s)"
+bash evals/pilot.sh
+~/harbor-venv/bin/python evals/summarize.py "$EVIDENCE_DIR"
+```
+
+Before the pilot, verify Docker and run official oracles:
+
+```sh
+docker run --rm hello-world
+"$HARBOR_BIN" run -d terminal-bench@2.0 -a oracle -i build-cython-ext -n 1 -r 0
+"$HARBOR_BIN" run -d terminal-bench@2.0 -a oracle -i configure-git-webserver -n 1 -r 0
+```
+
+The fixed pilot is `build-cython-ext`, `chess-best-move`,
+`configure-git-webserver` (the first three names in the official 2.0 sample).
+It uses full dataset tasks from a pinned official registry revision, one
+attempt per arm, no retries, fresh containers, default task resource/time
+limits, Claude Code 2.1.274, high effort, 80 turns, and a $3 Claude budget per
+trial. The budget may overshoot by a final API request and excludes Jev.
+Ordering alternates between arms. Do not replace tasks after observing results.
+The six runs are an integration pilot, not a full benchmark or significance test.
+Full Terminal-Bench 2.0 has 89 tasks, hence 178 trials for a single paired run.
+
+## Activation smoke
+
+Build a separate Docker image with Claude Code 2.1.274 installed from npm,
+record its base digest, set `SMOKE_IMAGE` to that image, and run
+`bash evals/smoke.sh` with a **new** `EVIDENCE_DIR`. Both arms execute the same
+synthetic fixture. Assert control has no Jev requests or pruning markers;
+plugin must show HTTP 200 captures, production trim logs, original archives,
+and matching pruned tool results. A CLI exit code of zero alone proves nothing.
+The smoke is not included in benchmark scores.
+
+Harbor sets `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`, which prevents
+function-hook HTTP requests. The adapter removes this variable in both arms;
+even the string `"0"` blocked requests with the pinned CLI. Telemetry, error
+reporting, and auto-update are individually disabled instead. The bundled
+`plugin-authoring` plugin is disabled explicitly. Both arms load only the
+pass-through observer; treatment additionally loads `fast-jev-output`.
+No user/project settings or MCP configuration is loaded.
+
+## Evidence
+
+The observer adapts `tests/fixtures/long-session-observer`. It never modifies
+requests/results and never captures HTTP headers. It captures activation,
+started/completed Jev requests with response usage/latency, production log
+messages, Bash results, and copies of the production original-output archives
+under Harbor's agent logs. Native Claude transcripts remain authoritative for
+what the model saw. Plugin presence is checked in Claude's init event.
+Missing final events and CLI errors are failures, not successful agent runs.
+
+`summarize.py` preserves missing values, failures, cache creation/read tokens,
+CLI-reported Claude cost, Jev usage, timing, and actual pruning counts. Jev
+pricing is unknown unless independently supplied; it is never counted as free.
+Cache sharing at the provider is possible across fresh containers; compare
+uncached, cache-write and cache-read tokens separately and disclose run order.
+Oracle failure is a task-validity caveat, not automatically an agent failure.
+
+Review and sanitize all evidence before sharing: although headers are omitted,
+task output or debug logs could contain credentials. Never commit transcripts,
+settings caches, or bulky reports. Keep the dependency lock, task locks/image
+digests, exact commands, and separate infra errors with the delivered artifacts.
+
+## Checks
+
+```sh
+npm test
+npm run typecheck
+npm run build
+npx tsc -p evals/tsconfig.json
+ruff check evals
+ruff format --check evals
+mypy --follow-imports=silent --disable-error-code=import-untyped evals
+python -m unittest discover -s evals -p 'test_*.py'
+bash -n evals/pilot.sh evals/smoke.sh
+```
+
+Harbor 0.22.0 does not ship `py.typed`; only that third-party import diagnostic
+is disabled for mypy.

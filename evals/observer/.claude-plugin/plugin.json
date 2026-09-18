@@ -1,0 +1,5 @@
+{
+  "name": "jev-eval-observer",
+  "version": "0.1.0",
+  "description": "Pass-through evaluation instrumentation; never changes tool results."
+}
