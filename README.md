@@ -26,7 +26,8 @@ verbatim — nothing is rewritten or summarized.
    History gets at least half the budget, with more available when the current
    output is small. Tool inputs are capped at 1,000, then 200, then 60 characters;
    long texts are abridged to head + tail, oldest first (the first and newest six
-   messages last). Older text is then collapsed to omission notes, and older
+   messages last). Older text is then collapsed to omission notes, longest first
+   to favor concise earlier messages, and only when the note saves tokens. Older
    text-only entries are left out if necessary. Every batch receives the same
    fitted history; the actual conversation is never edited by this fitting. A
    `max_tokens_exceeded` response retries twice with a halved state budget.
