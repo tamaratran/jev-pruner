@@ -126,7 +126,10 @@ production plugin plus a test-only observer, and runs a bootstrap followed by
 40 noisy Bash commands against synthetic fixtures. Both Claude and Jev incur
 API usage; the Claude process has a $10 budget. Each prompt explicitly confirms
 the finite benchmark because Claude may otherwise decline the repeated
-simulated failures. Declined commands fail the command-coverage checks.
+simulated failures. If a stage contains no tool call, the runner sends one
+direct confirmation in the same session; a second refusal stops the run.
+Confirmations are saved in the evidence and counted as additional user turns.
+The one-command-per-stage and retention assertions still apply.
 
 The test checks early requirements, result-body omission from tool metadata,
 target bundle and rollback retention, archives, stderr, history fitting, and
