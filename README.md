@@ -172,14 +172,17 @@ output can be read.
 duration from an actual install of a small React project with
 `npm_config_loglevel=verbose`; the displayed command remains `npm install`.
 Machine-specific CLI, log-file and working-directory metadata were removed.
-The recorded install takes **4.648 seconds**, replayed at its original speed.
-The complete animation is approximately **10.1 seconds**, allowing time for
-the scan, a smooth shared collapse and a final pause. Its duration follows the
-recording rather than compressing the install into a fixed five-second clip.
+The original install takes **4.648 seconds**. Playback shortens gaps between
+visible output arrivals to at most **0.35 seconds**, so the preview does not
+appear stalled while unshown lines arrive. Shorter intervals retain their
+recorded timing. The same time mapping drives the token count and completion.
+The install now plays in approximately **1.85 seconds**; the complete animation
+is approximately **5.6 seconds**, including scanning, a smooth shared collapse
+and a 1.25-second final hold.
 
-The preview appends representative rows at their recorded timestamps and keeps
-them in place, instead of cycling a scrolling viewport or switching to a
-different layout at completion. Natural pauses are preserved.
+Representative rows append and stay in place, instead of cycling a scrolling
+viewport or switching to a different layout at completion. The status labels
+the shortened pauses. Export plays once; Space manually replays the native app.
 
 This is recorded playback, not a live install or benchmark; it makes no API
 requests. The pruning animation and keep/drop decisions are illustrative at
@@ -195,7 +198,7 @@ Requires macOS 14+ and the Xcode command-line tools. No extra packages are neede
 demo/JevPrunerDemo/build.sh             # build and open; Space replays
 demo/JevPrunerDemo/build.sh --no-launch # build without opening a window
 demo/JevPrunerDemo/build.sh --export "$PWD/demo/JevPrunerDemo/build/jev-pruner.mp4"
-demo/JevPrunerDemo/build.sh --frame 9 "$PWD/demo/JevPrunerDemo/build/poster.png"
+demo/JevPrunerDemo/build.sh --frame 5 "$PWD/demo/JevPrunerDemo/build/poster.png"
 ```
 
 Export renders the same timeline directly to a 1100×720 H.264 MP4 at 30 fps.
