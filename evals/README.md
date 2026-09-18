@@ -238,8 +238,7 @@ do not reset the ledger to work around that stop. Image-builder charges can be
 delayed, and local reservations cannot enforce a provider spending cap.
 
 After all 89 preflights pass and their final usage is reconciled, use the following
-**separately inference-approved** command (the current user has approved both
-preflight and inference within $30 total). Inject `TYPESAFE_API_KEY` securely in the
+**separately inference-approved** command. Inject `TYPESAFE_API_KEY` securely in the
 process environment first; never put its value in commands or files:
 
 ```sh
