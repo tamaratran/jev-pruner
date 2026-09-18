@@ -1,4 +1,4 @@
-"""Offline planning, approval-gated Modal preflight, and serial matched trials."""
+"""Offline planning, approval-gated Modal preflight, and matched trial waves."""
 
 import argparse
 import asyncio
@@ -26,12 +26,13 @@ from harbor.models.trial.paths import TrialPaths
 from harbor.trial.trial import Trial
 from modal import Workspace
 
-from evals.auth import AUTH_OVERRIDES, subscription_source
+from evals.auth import AUTH_OVERRIDES, SubscriptionCheckpoint, subscription_source
 from evals.full import (
     MODEL,
     REGISTRY,
     REPO,
     access_blocker,
+    aggregate,
     checkpoint,
     failure_category,
     save,
@@ -173,6 +174,7 @@ def trial_config(
                 "max_budget_usd": 3,
                 "max_turns": 80,
                 "reasoning_effort": "high",
+                "eval_arm": "control" if preflight else row["arm"],
             },
         ),
         environment=EnvironmentConfig(
@@ -250,7 +252,10 @@ def budget_reservation(spec: dict, preflight: bool, build_reserve: float) -> flo
 def ensure_budget(ledger: dict, reserve: float) -> None:
     if ledger["unreconciled_import"]:
         raise ValueError("Reconcile observed Modal usage before another image import")
-    if ledger["accounted_usd"] + reserve > ledger["budget_usd"]:
+    if (
+        ledger["budget_usd"] is not None
+        and ledger["accounted_usd"] + reserve > ledger["budget_usd"]
+    ):
         raise ValueError("Next sandbox reservation exceeds approved credit budget")
 
 
@@ -277,6 +282,40 @@ def campaign_order(rows: list[dict], preflights: list[dict]) -> list[dict]:
         for setup in preflights
         for item in [setup, *(row for row in rows if row["task"] == setup["task"])]
     ]
+
+
+def ready_wave(
+    rows: list[dict],
+    setups: list[dict],
+    specs: dict,
+    concurrency: int,
+    expires_at: float,
+) -> list[dict]:
+    ready = []
+    for setup in setups:
+        group = [setup, *(row for row in rows if row["task"] == setup["task"])]
+        unfinished = next((row for row in group if row["state"] != "finished"), None)
+        if unfinished is not None:
+            if unfinished["state"] != "pending":
+                raise ValueError("A failed or running trial cannot be scheduled again")
+            if unfinished.get("subscription_recheck"):
+                return [unfinished]
+            ready.append(unfinished)
+    wave = ready[:concurrency]
+    if not wave:
+        return []
+    maximum = max(
+        specs[row["task"]]["build_seconds"]
+        + specs[row["task"]][
+            "preflight_lifetime_seconds"
+            if row["arm"] == "preflight"
+            else "full_lifetime_seconds"
+        ]
+        for row in wave
+    )
+    if expires_at / 1000 - time.time() <= maximum + 600:
+        return wave[:1]
+    return wave
 
 
 def retain_trial_summary(row: dict, summary: dict) -> None:
@@ -525,8 +564,18 @@ async def execute(args: argparse.Namespace) -> None:
     campaign = args.command == "campaign"
     if not args.approve_modal_compute or (not preflight and not args.approve_inference):
         raise ValueError("Explicit separate compute/inference approval flags required")
-    if not math.isfinite(args.budget_usd) or args.budget_usd <= 0:
+    if args.no_budget_limit and args.budget_usd is not None:
+        raise ValueError("Choose a spending limit or explicit no-limit approval")
+    if not args.no_budget_limit and (
+        args.budget_usd is None
+        or not math.isfinite(args.budget_usd)
+        or args.budget_usd <= 0
+    ):
         raise ValueError("Positive finite credit budget required")
+    if not 1 <= args.concurrency <= 8 or (not campaign and args.concurrency != 1):
+        raise ValueError("Concurrency 1–8 is supported only for campaign execution")
+    if not 0 <= args.checkpoint_tasks <= 89:
+        raise ValueError("Checkpoint size must be between 0 and 89 tasks")
     if (preflight or campaign) and (
         not math.isfinite(args.build_reserve_usd) or args.build_reserve_usd <= 0
     ):
@@ -567,6 +616,9 @@ async def execute(args: argparse.Namespace) -> None:
         ).hexdigest(),
         "mode": args.command,
         "budget_usd": args.budget_usd,
+        "no_budget_limit": args.no_budget_limit,
+        "concurrency": args.concurrency,
+        "checkpoint_tasks": args.checkpoint_tasks,
         "build_reserve_usd": args.build_reserve_usd if preflight or campaign else 0,
         "prior_accounted_usd": args.prior_accounted_usd,
         "seed_preflight": str(args.seed_preflight.resolve())
@@ -714,17 +766,35 @@ async def execute(args: argparse.Namespace) -> None:
         if campaign:
             save(root / "preflight-progress.json", setups)
             save(root / "images.json", images)
+            if args.checkpoint_tasks and not (root / "small-results.json").exists():
+                selected = {
+                    spec["task"] for spec in document["tasks"][: args.checkpoint_tasks]
+                }
+                subset = [row for row in rows if row["task"] in selected]
+                if all(row["state"] == "finished" for row in subset):
+                    save(
+                        root / "small-results.json",
+                        {
+                            **aggregate(subset),
+                            "selection": "First tasks in the frozen manifest",
+                            "provenance": document["provenance"],
+                            "scheduler": identity,
+                        },
+                    )
+                    print(
+                        f"Small checkpoint complete: {len(subset)} matched rows",
+                        flush=True,
+                    )
         save(root / "budget.json", ledger)
 
     persist()
     verified_images: set[str] = set()
-    for row in campaign_order(rows, setups) if campaign else rows:
+    halted = asyncio.Event()
+
+    async def execute_row(row: dict) -> bool:
         if row["state"] == "finished":
-            continue
+            return True
         preflight = row["arm"] == "preflight"
-        if args.billing_start_date:
-            await refresh_budget(ledger, args.billing_start_date)
-            persist()
         spec = specs[row["task"]]
         build_margin = (
             identity["build_reserve_usd"]
@@ -732,7 +802,6 @@ async def execute(args: argparse.Namespace) -> None:
             else 0
         )
         reserve = budget_reservation(spec, preflight, build_margin)
-        ensure_budget(ledger, reserve)
         if shutil.disk_usage(root).free < 20 * 1024**3:
             raise ValueError("Less than 20 GiB free for local evidence")
         if document["provenance"] != provenance(benchmark):
@@ -761,23 +830,26 @@ async def execute(args: argparse.Namespace) -> None:
                 error=type(error).__name__,
             )
             persist()
-            return
+            halted.set()
+            return False
+        if halted.is_set():
+            row["state"] = "pending"
+            persist()
+            return False
         row.update(state="running", agent_attempts=0, verifier_attempts=0)
         ledger["accounted_usd"] += reserve
-        ledger["unreconciled_import"] = bool(build_margin)
+        ledger["unreconciled_import"] |= bool(build_margin)
         if preflight:
             ledger["held_build_reserve_usd"] += build_margin
-        ledger["entries"].append(
-            {
-                "task": row["task"],
-                "arm": row["arm"],
-                "reserved_usd": reserve,
-                "image_build_usd": None if build_margin else 0,
-            }
-        )
+        entry = {
+            "task": row["task"],
+            "arm": row["arm"],
+            "reserved_usd": reserve,
+            "image_build_usd": None if build_margin else 0,
+        }
+        ledger["entries"].append(entry)
         persist()
         print(f"Starting {row['task']} {row['arm']}", flush=True)
-        os.environ["JEV_EVAL_ARM"] = "control" if preflight else row["arm"]
         config = trial_config(root, benchmark, row, spec, resolved, approved=True)
         trial = None
         try:
@@ -848,7 +920,7 @@ async def execute(args: argparse.Namespace) -> None:
         if lifecycle.get("termination_confirmed"):
             estimate = lifecycle["elapsed_seconds"] * spec["runtime_usd_per_second"]
             ledger["accounted_usd"] += estimate + build_margin - reserve
-            ledger["entries"][-1]["runtime_estimate_usd"] = estimate
+            entry["runtime_estimate_usd"] = estimate
         if lifecycle.get("subscription_state_saved") is not True:
             row["authentication_continuation_blocked"] = True
         persist()
@@ -858,7 +930,8 @@ async def execute(args: argparse.Namespace) -> None:
                 "Stopped after one image. Reconcile observed Modal usage before resuming.",
                 flush=True,
             )
-            return
+            halted.set()
+            return False
         if (
             row["state"] != "finished"
             or row.get("authentication_continuation_blocked")
@@ -866,10 +939,62 @@ async def execute(args: argparse.Namespace) -> None:
             in {"infrastructure", "agent_setup", "instrumentation"}
             or access_blocker(read_events(location / "agent/claude-code.txt"))
         ):
-            if args.billing_start_date:
-                await refresh_budget(ledger, args.billing_start_date)
-                persist()
-            return
+            halted.set()
+            return False
+        return True
+
+    wave_index = 0
+    while not halted.is_set():
+        if (root / "PAUSE").exists():
+            print("Paused at a completed wave; no active trials remain.", flush=True)
+            break
+        if campaign:
+            expiry = SubscriptionCheckpoint(
+                subscription_source() / ".credentials.json"
+            ).expires_at
+            wave = ready_wave(rows, setups, specs, args.concurrency, expiry)
+        else:
+            wave = [row for row in rows if row["state"] != "finished"][:1]
+        if not wave:
+            break
+        if args.billing_start_date:
+            await refresh_budget(ledger, args.billing_start_date)
+            persist()
+        reserve = sum(
+            budget_reservation(
+                specs[row["task"]],
+                row["arm"] == "preflight",
+                identity["build_reserve_usd"]
+                if row["arm"] == "preflight" and not row.get("subscription_recheck")
+                else 0,
+            )
+            for row in wave
+        )
+        ensure_budget(ledger, reserve)
+        wave_index += 1
+        for row in wave:
+            row.update(scheduler_wave=wave_index, wave_concurrency=len(wave))
+        save(
+            root / "active-wave.json",
+            {
+                "wave": wave_index,
+                "jobs": [row["job_name"] for row in wave],
+                "reserved_usd": reserve,
+                "concurrency": len(wave),
+            },
+        )
+        outcomes = await asyncio.gather(
+            *(execute_row(row) for row in wave), return_exceptions=True
+        )
+        errors = [outcome for outcome in outcomes if isinstance(outcome, BaseException)]
+        if args.billing_start_date:
+            await refresh_budget(ledger, args.billing_start_date)
+            persist()
+        if errors:
+            raise RuntimeError(
+                "Wave stopped after draining all trials: "
+                + ", ".join(type(error).__name__ for error in errors)
+            )
     if args.billing_start_date:
         await refresh_budget(ledger, args.billing_start_date)
         persist()
@@ -885,7 +1010,10 @@ def main() -> None:
     parser.add_argument("--seed-preflight", type=Path)
     parser.add_argument("--continue-from", type=Path)
     parser.add_argument("--prior-accounted-usd", type=float, default=0)
-    parser.add_argument("--budget-usd", type=float, default=0)
+    parser.add_argument("--budget-usd", type=float)
+    parser.add_argument("--no-budget-limit", action="store_true")
+    parser.add_argument("--concurrency", type=int, default=1)
+    parser.add_argument("--checkpoint-tasks", type=int, default=0)
     parser.add_argument("--build-reserve-usd", type=float, default=0)
     parser.add_argument("--approve-modal-compute", action="store_true")
     parser.add_argument("--approve-inference", action="store_true")
