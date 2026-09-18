@@ -186,7 +186,7 @@ separate preflight provenance can refer to the preceding adapter commit when
 only orchestration was added after the smoke; production and observer hashes must
 match across preflight and execution. Never edit sources while a run is active.
 
-### Modal: pinned preflight and serial execution
+### Modal: pinned preflight and matched execution
 
 Use `evals.modal_runner` to select the bounded Modal provider. It uses Harbor's
 `Trial.create` and `install_only` APIs, not the Docker subprocess launcher.
@@ -373,6 +373,47 @@ python -m evals.modal_runner campaign \
 
 The example rounds the v6 cumulative reservation up to $4.10. Reconcile any later
 setup spending before reusing it; it is not the actual provider bill.
+
+### Parallel campaigns and a small checkpoint
+
+Campaigns accept `--concurrency 1..8` (default 1). Each wave takes at most one
+ready row from each task: verified preflight, then the two arms in the frozen
+order. The continuation's fresh subscription recheck completes alone before
+any other row. Arms are instance-local, so overlapping setup cannot change
+another agent's plugin selection. Per-sandbox resources, prompts and limits
+remain unchanged.
+
+The controller reserves the whole wave before starting it, associates runtime
+settlements with the individual ledger entries, and reads provider billing
+after the wave drains. A failure prevents another wave; already-started trials
+finish and retain their evidence. Create `PAUSE` in the evidence directory to
+stop after the current wave without interrupting an agent attempt.
+
+Parallel waves require the private access expiry to exceed every selected
+trial's full build/runtime bound plus ten minutes. Near expiry the runner falls
+back to one trial so a runtime refresh can be checkpointed without concurrent
+writers. Unexpected competing credential updates still fail closed. This
+does not bypass Claude subscription limits; access failures stop scheduling.
+
+Use `--checkpoint-tasks 10` to save `small-results.json` once the first ten
+manifest tasks finish both arms. These are the first tasks in alphabetical
+manifest order, not a representative random sample. The full campaign continues
+and never reruns them merely to produce the checkpoint.
+
+`--no-budget-limit` replaces the local credit ceiling only with explicit user
+authorization. It cannot be combined with `--budget-usd`. Provider usage,
+runtime reservations, unknown image-build margins and billing failures are
+still tracked; provider billing settings are not changed. For example:
+
+```sh
+python -m evals.modal_runner campaign \
+  --benchmark-source "$BENCHMARK" --plan "$NEW_PLAN" \
+  --seed-preflight "$PREVIOUS_EVIDENCE" --continue-from "$PREVIOUS_EVIDENCE" \
+  --evidence "$NEW_EVIDENCE" --prior-accounted-usd "$PRIOR_RESERVATION" \
+  --concurrency 3 --checkpoint-tasks 10 --no-budget-limit \
+  --build-reserve-usd 0.25 --billing-start-date "$BILLING_START" \
+  --approve-modal-compute --approve-inference
+```
 
 The observer adapts `tests/fixtures/long-session-observer`. It never modifies
 requests/results and never captures HTTP headers. It captures activation,
