@@ -15,10 +15,18 @@ verbatim — nothing is rewritten or summarized.
    `openssl`), and results Claude Code already persisted are left untouched.
 3. Output is split into chunks of `chunkLines` lines, capped at 200 chunks;
    lines longer than 2,000 characters are split first.
-4. Jev receives `{ context, task, command, chunks }` and one noul question per
-   chunk: “must this chunk stay visible?”. Questions are batched so each
-   request stays under 30,000 estimated tokens.
-5. The state is fitted to `maxStateTokens` with a digit-aware estimate. A
+4. Jev receives `{ context, task, history, command, chunks }` and one noul question
+   per chunk: “must this chunk stay visible?”. `history` follows the
+   fast-jev-compaction approach: user and assistant text in conversation order,
+   with tool names and inputs; result bodies are replaced by status/length notes.
+   Questions are batched so each request stays under 30,000 estimated tokens.
+5. History and output share `maxStateTokens`, using a digit-aware estimate.
+   History gets at least half the budget, with more available when the current
+   output is small. Tool inputs are capped at 1,000, then 200, then 60 characters;
+   long texts are abridged to head + tail, oldest first (the first and newest six
+   messages last). Older text is then collapsed to omission notes, and older
+   text-only entries are left out if necessary. Every batch receives the same
+   fitted history; the actual conversation is never edited by this fitting. A
    `max_tokens_exceeded` response retries twice with a halved state budget.
 6. A chunk stays when its noul is at least `keepThreshold`, it is first or
    last, it matches an error or warning pattern, or it was unscored because it
@@ -29,8 +37,16 @@ verbatim — nothing is rewritten or summarized.
    `.claude/fast-jev-output/` directory (self-gitignored) only when trimming
    happened, and never for credential-like commands or output. Secret markers
    instruct the agent to re-run the command instead.
-9. Any Jev failure leaves the original output untouched. Stderr is never
-   modified.
+9. Any Jev failure or state that cannot fit leaves the original output untouched.
+   Stderr is never modified.
+
+The hook reads the current transcript for each command; it does not maintain a
+separate history store. Claude Code's `session.messages()` returns the main
+conversation's user/assistant messages (up to the newest 4,096), not the system
+prompt or a subagent's own transcript. `task` is still a short extract of the
+last three user prompts; `history` supplies the earlier instructions and
+assistant decisions. Library callers can pass the same transcript shape through
+`trimOutput({ command, goal, output, messages }, asker)`.
 
 ## Install
 
@@ -48,7 +64,7 @@ Enable early-access function hooks in Claude Code settings:
 Install from the marketplace:
 
 ```sh
-claude plugin marketplace add tamaratran/fast-jev-output
+claude plugin marketplace add tamaratran/jev-pruner
 claude plugin install fast-jev-output@fast-jev-output
 ```
 

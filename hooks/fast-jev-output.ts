@@ -135,7 +135,8 @@ export const register: Register = (on: On, options: PluginOptions) => {
       if (combined.length <= configured.minChars) return answer;
       const apiKey = await getApiKey($, configured);
       if (!apiKey) return answer;
-      const goal = goalFromMessages(await $.session.messages());
+      const messages = await $.session.messages();
+      const goal = goalFromMessages(messages);
       const secret = looksSecret(event.command, combined);
       const path = secret
         ? undefined
@@ -144,6 +145,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
         {
           command: event.command,
           goal,
+          messages,
           output: record.stdout,
           fullOutputPath: path,
         },
