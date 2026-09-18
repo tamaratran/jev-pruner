@@ -171,11 +171,18 @@ teardown. Docker keeps its read-only bind mount. Modal's agent logs are download
 at trial boundaries, so account-error inspection may occur after a trial ends.
 
 The launcher runs serially with the pilot's model, version, limits, and zero
-Harbor retries. It refuses reused run directories and checks source hashes before
+Harbor retries. It refuses reused run directories by default and checks source hashes before
 each trial. Results checkpoint after every trial, preserving missing rewards and
 unstarted tasks. Subscription/account/model errors and instrumentation/Jev failures
 pause further execution and create `blocker.json`; ordinary task failures remain
 in the results. A paused run must be inspected before any separate continuation.
+After inspecting and resolving a pause, stop the previous launcher and pass
+`--resume` with the same evidence directory. Completed trials are retained, never
+retried; only pending manifest rows execute. A checkpoint interrupted after Harbor
+finished can be reconstructed from its saved result. An unfinished Harbor trial
+blocks resumption. Flags, manifest order, and production source hashes must match.
+Instrumentation fixes are permitted and recorded in `execution-segments.json`;
+each trial records its execution commit. The initial provenance is preserved.
 The launcher stops before another trial when less than 20 GiB disk is free.
 CLI-native request retries, if any, are not additional Harbor trial attempts.
 
@@ -187,8 +194,10 @@ match across preflight and execution. Never edit sources while a run is active.
 The observer adapts `tests/fixtures/long-session-observer`. It never modifies
 requests/results and never captures HTTP headers. It captures activation,
 started/completed Jev requests with response usage/latency, production log
-messages, Bash results, and copies of the production original-output archives
-under Harbor's agent logs. Native Claude transcripts remain authoritative for
+messages, Bash results, and copies of archives written by the production plugin.
+Claude's native originals are already downloaded under `sessions/projects`; the
+summarizer validates their presence there without reading sandbox footer paths.
+Native Claude transcripts remain authoritative for
 what the model saw. Plugin presence is checked in Claude's init event.
 Missing final events and CLI errors are failures, not successful agent runs.
 

@@ -6,9 +6,12 @@ type BashHook = MatchedHook<'tool.call', { tool: 'Bash' }>;
 
 describe('evaluation archive capture', () => {
   it.each([
+    '/opt/jev-eval/auth/.credentials.json',
+    '/opt/jev-eval/login/.credentials.json',
+    '/opt/jev-eval/auth/projects/../../.credentials.json',
     '/private/claude/projects/task/tool-results/output.txt',
     '.claude/fast-jev-output/bash-tool-id.txt',
-  ])('captures the original at %s without changing the tool result', async path => {
+  ])('never reads a footer path %s or changes the tool result', async path => {
     const on = vi.fn();
     register(on, {});
     const hook = on.mock.calls.find(([event]) => event === 'tool.call')![2] as BashHook;
@@ -29,9 +32,8 @@ describe('evaluation archive capture', () => {
     );
     expect(result).toBe(answer);
     expect(next).toHaveBeenCalledOnce();
-    expect(read).toHaveBeenCalledWith(path);
-    expect(write).toHaveBeenCalledWith(
-      '/logs/agent/jev/archives/bash-tool-id.txt', 'complete original output',
-    );
+    expect(read).not.toHaveBeenCalled();
+    expect(write).toHaveBeenCalledOnce();
+    expect(write.mock.calls[0][0]).toBe('/logs/agent/jev/bash-1.json');
   });
 });

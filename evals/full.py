@@ -230,11 +230,66 @@ def checkpoint(root: Path, rows: list[dict]) -> None:
     save(root / "results.json", aggregate(rows))
 
 
-def run(root: Path, benchmark: Path, harbor: str, environment: str = "docker") -> None:
+def continuation_rows(
+    root: Path, manifest: list[dict], flags: list[str], pin: dict
+) -> list[dict]:
+    previous = json.loads((root / "execution-provenance.json").read_text())
+    if previous["flags"] != flags:
+        raise ValueError("Cannot resume with different trial flags")
+    production = (".claude-plugin/", "hooks/", "src/")
+    if {
+        key: value
+        for key, value in previous["source_sha256"].items()
+        if key.startswith(production)
+    } != {key: value for key, value in pin.items() if key.startswith(production)}:
+        raise ValueError("Cannot resume with different production sources")
+    rows = json.loads((root / "progress.json").read_text())
+    if len(rows) != len(manifest) or any(
+        any(row.get(key) != value for key, value in item.items())
+        for row, item in zip(rows, manifest, strict=True)
+    ):
+        raise ValueError("Checkpoint does not match the declared manifest")
+    for row in rows:
+        if row["state"] == "running":
+            job = root / "jobs" / row["job_name"]
+            result = job / "result.json"
+            paths = list(job.glob("*/result.json"))
+            if (
+                not result.exists()
+                or not json.loads(result.read_text()).get("finished_at")
+                or len(paths) != 1
+            ):
+                raise ValueError("Cannot resume an unfinished Harbor trial")
+            row.update(summarize_trial(paths[0]))
+            row["failure_category"] = failure_category(row)
+            row["harbor_return_code"] = None
+            row["recovered_from_completed_harbor_job"] = True
+            row["state"] = "finished"
+        if row["state"] not in {
+            "pending",
+            "finished",
+            "resource_blocked",
+            "infrastructure_error",
+        }:
+            raise ValueError("Unsupported checkpoint state")
+        if row["state"] != "pending":
+            row.setdefault("execution_commit", previous["commit"])
+    return rows
+
+
+def run(
+    root: Path,
+    benchmark: Path,
+    harbor: str,
+    environment: str = "docker",
+    resume: bool = False,
+) -> None:
     if os.environ.get("JEV_EVAL_AUTH_MODE") != "subscription":
         raise ValueError("Explicit JEV_EVAL_AUTH_MODE=subscription is required")
-    if (root / "progress.json").exists():
+    if (root / "progress.json").exists() and not resume:
         raise ValueError("Refusing to reuse a started run")
+    if resume and not (root / "progress.json").exists():
+        raise ValueError("No checkpoint to resume")
     if subprocess.check_output(["git", "status", "--porcelain"], cwd=REPO):
         raise ValueError("Commit sources before execution")
     if subprocess.check_output([harbor, "--version"], text=True).strip() != "0.22.0":
@@ -257,35 +312,60 @@ def run(root: Path, benchmark: Path, harbor: str, environment: str = "docker") -
     manifest = json.loads((root / "manifest.json").read_text())
     if len(manifest) != 178 or len({row["task"] for row in manifest}) != 89:
         raise ValueError("Expected all 89 tasks and 178 trials")
-    rows = [
-        {**row, "state": "resource_blocked" if row["resource_blocked"] else "pending"}
-        for row in manifest
-    ]
     pin = source_hashes()
-    save(
-        root / "execution-provenance.json",
-        {
-            "started_at": datetime.now(UTC).isoformat(),
-            "commit": subprocess.check_output(
-                ["git", "rev-parse", "HEAD"], cwd=REPO, text=True
-            ).strip(),
-            "source_sha256": pin,
-            "flags": FLAGS + environment_flags,
-            "environment": environment,
-            "modal_image_builder_version": (
-                env["MODAL_IMAGE_BUILDER_VERSION"] if environment == "modal" else None
-            ),
-            "auth_mode": "subscription",
-            "api_overrides_present_in_launcher": sorted(set(AUTH_OVERRIDES) & set(env)),
-            "concurrency": 1,
-            "harbor_retries": 0,
-        },
+    rows = (
+        continuation_rows(root, manifest, FLAGS + environment_flags, pin)
+        if resume
+        else [
+            {
+                **row,
+                "state": "resource_blocked" if row["resource_blocked"] else "pending",
+            }
+            for row in manifest
+        ]
     )
-    (root / "jobs").mkdir()
-    (root / "console").mkdir()
+    provenance = {
+        "started_at": datetime.now(UTC).isoformat(),
+        "commit": subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=REPO, text=True
+        ).strip(),
+        "source_sha256": pin,
+        "flags": FLAGS + environment_flags,
+        "environment": environment,
+        "modal_image_builder_version": (
+            env["MODAL_IMAGE_BUILDER_VERSION"] if environment == "modal" else None
+        ),
+        "auth_mode": "subscription",
+        "api_overrides_present_in_launcher": sorted(set(AUTH_OVERRIDES) & set(env)),
+        "concurrency": 1,
+        "harbor_retries": 0,
+        "resume": resume,
+        "pending_trials": sum(row["state"] == "pending" for row in rows),
+    }
+    segments_path = root / "execution-segments.json"
+    if resume:
+        segments = json.loads(
+            (
+                segments_path
+                if segments_path.exists()
+                else root / "execution-provenance.json"
+            ).read_text()
+        )
+        if not isinstance(segments, list):
+            segments = [segments]
+        if (root / "blocker.json").exists():
+            (root / "blocker.json").rename(
+                root / f"blocker-before-segment-{len(segments) + 1}.json"
+            )
+    else:
+        save(root / "execution-provenance.json", provenance)
+        segments = []
+    save(segments_path, [*segments, provenance])
+    (root / "jobs").mkdir(exist_ok=resume)
+    (root / "console").mkdir(exist_ok=resume)
     checkpoint(root, rows)
     for index, row in enumerate(rows):
-        if row["state"] == "resource_blocked":
+        if row["state"] != "pending":
             continue
         if source_hashes() != pin:
             raise RuntimeError("Sources changed during run; no further trials started")
@@ -314,6 +394,7 @@ def run(root: Path, benchmark: Path, harbor: str, environment: str = "docker") -
             *environment_flags,
         ]
         row["command"] = command
+        row["execution_commit"] = provenance["commit"]
         row["state"] = "running"
         checkpoint(root, rows)
         print(f"START {index + 1}/178 {row['task']} {row['arm']}", flush=True)
@@ -412,10 +493,12 @@ if __name__ == "__main__":
     parser.add_argument("--benchmark-source", type=Path, required=True)
     parser.add_argument("--harbor", default="harbor")
     parser.add_argument("--environment", choices=("docker", "modal"), default="docker")
+    parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
     run(
         args.evidence.resolve(),
         args.benchmark_source.resolve(),
         args.harbor,
         args.environment,
+        args.resume,
     )
