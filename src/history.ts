@@ -111,10 +111,15 @@ export function fitHistory(
     if (fits()) return history;
   }
 
-  for (const index of order) {
+  const omissionOrder = [...order].sort(
+    (left, right) => history[right]!.text.length - history[left]!.text.length,
+  );
+  for (const index of omissionOrder) {
     const entry = history[index]!;
     if (pinned(entry) || entry.text.length === 0) continue;
-    entry.text = `[… ${messages[entry.i]!.text.length} chars omitted …]`;
+    const text = `[… ${messages[entry.i]!.text.length} chars omitted …]`;
+    if (entryTokens({ ...entry, text }) >= perEntry[index]!) continue;
+    entry.text = text;
     updateTokens(index);
     if (fits()) return history;
   }

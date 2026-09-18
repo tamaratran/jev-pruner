@@ -128,6 +128,41 @@ describe('conversation history', () => {
     expect(estimateStateTokens(JSON.stringify(history))).toBeLessThanOrEqual(1_000);
   });
 
+  it.each(['user', 'assistant'] as const)('retains concise %s decisions before longer old text', (role) => {
+    const decision = 'Use the release candidate and retain its manifest digest.';
+    const messages = [
+      message('user', 'Prepare the deployment.'),
+      message(role, decision),
+      ...Array.from({ length: 10 }, (_, i) => message('user', `Review ${i}: ${'background detail '.repeat(500)}`)),
+      message(role, 'Use the stable rollback.'),
+      ...Array.from({ length: 10 }, (_, i) => message('user', `More review ${i}: ${'background detail '.repeat(500)}`)),
+      ...Array.from({ length: 6 }, (_, i) => message('user', `Recent instruction ${i}.`)),
+    ];
+    const original = structuredClone(messages);
+    const history = fitHistory(messages, 1_400);
+    expect(history.find(entry => entry.i === 1)?.text).toBe(decision);
+    expect(history.find(entry => entry.i === 12)?.text).toBe('Use the stable rollback.');
+    expect(history.some(entry => /^\[… \d+ chars omitted …\]$/.test(entry.text))).toBe(true);
+    expect(history.map(entry => entry.i)).toEqual(history.map(entry => entry.i).sort((a, b) => a - b));
+    expect(estimateStateTokens(JSON.stringify(history))).toBeLessThanOrEqual(1_400);
+    expect(messages).toEqual(original);
+  });
+
+  it('does not enlarge short text into omission markers under a tight budget', () => {
+    const messages = [
+      message('user', 'Prepare the deployment.'),
+      message('assistant', 'OK', {
+        toolUses: [{ tool_use_id: 'read-1', tool: 'Read', input: { file_path: 'manifest.json' } }],
+      }),
+      ...Array.from({ length: 20 }, (_, i) => message('user', `Review ${i}: ${'background detail '.repeat(500)}`)),
+      ...Array.from({ length: 6 }, (_, i) => message('user', `Recent instruction ${i}.`)),
+    ];
+    const history = fitHistory(messages, 500);
+    expect(history.find(entry => entry.i === 1)?.text).toBe('OK');
+    expect(history.length).toBeLessThan(messages.length);
+    expect(estimateStateTokens(JSON.stringify(history))).toBeLessThanOrEqual(500);
+  });
+
   it('rejects a budget that cannot hold the protected history', () => {
     expect(() => fitHistory([message('user', 'Keep alpha.')], 1)).toThrow('history too large');
   });
