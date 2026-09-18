@@ -53,6 +53,8 @@ PACKAGES = {"harbor": "0.22.0", "modal": "1.5.1", "dockerfile-parse": "2.0.1"}
 CPU_RATE = 0.00003942
 RAM_RATE = 0.00000667
 BUILDER = "2025.06"
+ACTIVE_STATES = {"scheduled", "resolving_image", "running"}
+MAX_CONCURRENCY = 32
 
 
 def git(root: Path, *arguments: str) -> str:
@@ -284,38 +286,32 @@ def campaign_order(rows: list[dict], preflights: list[dict]) -> list[dict]:
     ]
 
 
-def ready_wave(
-    rows: list[dict],
-    setups: list[dict],
-    specs: dict,
-    concurrency: int,
-    expires_at: float,
-) -> list[dict]:
+def eligible_rows(rows: list[dict], setups: list[dict]) -> list[dict]:
     ready = []
     for setup in setups:
         group = [setup, *(row for row in rows if row["task"] == setup["task"])]
         unfinished = next((row for row in group if row["state"] != "finished"), None)
-        if unfinished is not None:
-            if unfinished["state"] != "pending":
-                raise ValueError("A failed or running trial cannot be scheduled again")
-            if unfinished.get("subscription_recheck"):
-                return [unfinished]
-            ready.append(unfinished)
-    wave = ready[:concurrency]
-    if not wave:
-        return []
-    maximum = max(
-        specs[row["task"]]["build_seconds"]
-        + specs[row["task"]][
-            "preflight_lifetime_seconds"
-            if row["arm"] == "preflight"
-            else "full_lifetime_seconds"
-        ]
-        for row in wave
+        if unfinished is None:
+            continue
+        if unfinished["state"] in ACTIVE_STATES:
+            continue
+        if unfinished["state"] != "pending":
+            raise ValueError("A failed trial cannot be scheduled again")
+        if unfinished.get("subscription_recheck"):
+            return [unfinished]
+        ready.append(unfinished)
+    return ready
+
+
+def trial_bound(spec: dict, preflight: bool) -> float:
+    return (
+        spec["build_seconds"]
+        + spec["preflight_lifetime_seconds" if preflight else "full_lifetime_seconds"]
     )
-    if expires_at / 1000 - time.time() <= maximum + 600:
-        return wave[:1]
-    return wave
+
+
+def fits_before_refresh(spec: dict, preflight: bool, expires_at: float) -> bool:
+    return expires_at / 1000 - time.time() > trial_bound(spec, preflight) + 600
 
 
 def retain_trial_summary(row: dict, summary: dict) -> None:
@@ -572,8 +568,12 @@ async def execute(args: argparse.Namespace) -> None:
         or args.budget_usd <= 0
     ):
         raise ValueError("Positive finite credit budget required")
-    if not 1 <= args.concurrency <= 8 or (not campaign and args.concurrency != 1):
-        raise ValueError("Concurrency 1–8 is supported only for campaign execution")
+    if not 1 <= args.concurrency <= MAX_CONCURRENCY or (
+        not campaign and args.concurrency != 1
+    ):
+        raise ValueError(
+            f"Concurrency 1–{MAX_CONCURRENCY} is supported only for campaign execution"
+        )
     if not 0 <= args.checkpoint_tasks <= 89:
         raise ValueError("Checkpoint size must be between 0 and 89 tasks")
     if (preflight or campaign) and (
@@ -837,7 +837,6 @@ async def execute(args: argparse.Namespace) -> None:
             persist()
             return False
         row.update(state="running", agent_attempts=0, verifier_attempts=0)
-        ledger["accounted_usd"] += reserve
         ledger["unreconciled_import"] |= bool(build_margin)
         if preflight:
             ledger["held_build_reserve_usd"] += build_margin
@@ -943,61 +942,129 @@ async def execute(args: argparse.Namespace) -> None:
             return False
         return True
 
-    wave_index = 0
-    while not halted.is_set():
-        if (root / "PAUSE").exists():
-            print("Paused at a completed wave; no active trials remain.", flush=True)
-            break
-        if campaign:
-            expiry = SubscriptionCheckpoint(
-                subscription_source() / ".credentials.json"
-            ).expires_at
-            wave = ready_wave(rows, setups, specs, args.concurrency, expiry)
-        else:
-            wave = [row for row in rows if row["state"] != "finished"][:1]
-        if not wave:
-            break
+    launches = 0
+    failures: list[BaseException] = []
+    started: dict[asyncio.Task[bool], dict] = {}
+
+    async def reconcile() -> None:
         if args.billing_start_date:
             await refresh_budget(ledger, args.billing_start_date)
             persist()
-        reserve = sum(
-            budget_reservation(
-                specs[row["task"]],
-                row["arm"] == "preflight",
-                identity["build_reserve_usd"]
-                if row["arm"] == "preflight" and not row.get("subscription_recheck")
-                else 0,
-            )
-            for row in wave
-        )
-        ensure_budget(ledger, reserve)
-        wave_index += 1
-        for row in wave:
-            row.update(scheduler_wave=wave_index, wave_concurrency=len(wave))
+
+    def record_active() -> None:
         save(
-            root / "active-wave.json",
+            root / "active-trials.json",
             {
-                "wave": wave_index,
-                "jobs": [row["job_name"] for row in wave],
-                "reserved_usd": reserve,
-                "concurrency": len(wave),
+                "launches": launches,
+                "concurrency_limit": args.concurrency,
+                "running": sorted(row["job_name"] for row in started.values()),
             },
         )
-        outcomes = await asyncio.gather(
-            *(execute_row(row) for row in wave), return_exceptions=True
+
+    async def run_row(row: dict) -> bool:
+        try:
+            return await execute_row(row)
+        except BaseException:
+            halted.set()
+            raise
+
+    def collect_finished() -> None:
+        for task in list(started):
+            if not task.done():
+                continue
+            del started[task]
+            try:
+                if not task.result():
+                    halted.set()
+            except BaseException as error:
+                failures.append(error)
+                halted.set()
+
+    try:
+        await reconcile()
+        while True:
+            collect_finished()
+            paused = (root / "PAUSE").exists()
+            exclusive = any(row["launched_alone"] for row in started.values())
+            while (
+                not halted.is_set()
+                and not paused
+                and not exclusive
+                and not ledger["unreconciled_import"]
+                and len(started) < args.concurrency
+            ):
+                expiry = (
+                    SubscriptionCheckpoint(
+                        subscription_source() / ".credentials.json"
+                    ).expires_at
+                    if campaign
+                    else None
+                )
+                candidates = (
+                    eligible_rows(rows, setups)
+                    if campaign
+                    else [row for row in rows if row["state"] != "finished"][:1]
+                )
+                active_tasks = {row["task"] for row in started.values()}
+                row = next(
+                    (row for row in candidates if row["task"] not in active_tasks),
+                    None,
+                )
+                if row is None:
+                    break
+                exclusive = bool(row.get("subscription_recheck")) or (
+                    expiry is not None
+                    and not fits_before_refresh(
+                        specs[row["task"]], row["arm"] == "preflight", expiry
+                    )
+                )
+                if exclusive and started:
+                    break
+                build_margin = (
+                    identity["build_reserve_usd"]
+                    if row["arm"] == "preflight" and not row.get("subscription_recheck")
+                    else 0
+                )
+                reserve = budget_reservation(
+                    specs[row["task"]], row["arm"] == "preflight", build_margin
+                )
+                ensure_budget(ledger, reserve)
+                ledger["accounted_usd"] += reserve
+                launches += 1
+                row.update(
+                    state="scheduled",
+                    scheduler_launch=launches,
+                    launch_concurrency=len(started) + 1,
+                    launched_alone=exclusive,
+                    reserved_usd=reserve,
+                )
+                persist()
+                started[asyncio.create_task(run_row(row))] = row
+                record_active()
+            if not started:
+                if paused:
+                    print(
+                        "Paused at a trial boundary; no active trials remain.",
+                        flush=True,
+                    )
+                break
+            await asyncio.wait(started, return_when=asyncio.FIRST_COMPLETED)
+            collect_finished()
+            record_active()
+            await reconcile()
+    except BaseException as error:
+        failures.append(error)
+        halted.set()
+    finally:
+        await asyncio.gather(*started, return_exceptions=True)
+        collect_finished()
+        record_active()
+        await reconcile()
+    if failures:
+        raise RuntimeError(
+            "Stopped after draining every started trial: "
+            + ", ".join(type(error).__name__ for error in failures)
         )
-        errors = [outcome for outcome in outcomes if isinstance(outcome, BaseException)]
-        if args.billing_start_date:
-            await refresh_budget(ledger, args.billing_start_date)
-            persist()
-        if errors:
-            raise RuntimeError(
-                "Wave stopped after draining all trials: "
-                + ", ".join(type(error).__name__ for error in errors)
-            )
-    if args.billing_start_date:
-        await refresh_budget(ledger, args.billing_start_date)
-        persist()
 
 
 def main() -> None:
