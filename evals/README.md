@@ -11,6 +11,7 @@ python3 -m venv ~/harbor-venv
 export HARBOR_BIN="$HOME/harbor-venv/bin/harbor"
 # Inject ANTHROPIC_API_KEY and TYPESAFE_API_KEY from your secret manager.
 export EVIDENCE_DIR="$HOME/jev-eval-$(date +%s)"
+# Run from a clean, committed checkout; do not reuse a previous output directory.
 bash evals/pilot.sh
 ~/harbor-venv/bin/python evals/summarize.py "$EVIDENCE_DIR"
 ```
@@ -64,6 +65,9 @@ Missing final events and CLI errors are failures, not successful agent runs.
 `summarize.py` preserves missing values, failures, cache creation/read tokens,
 CLI-reported Claude cost, Jev usage, timing, and actual pruning counts. Jev
 pricing is unknown unless independently supplied; it is never counted as free.
+Claude's total includes auxiliary models when present; per-model and aggregate
+tokens are retained. A `costBasis: list` value is a CLI list-price calculation,
+not an independently verified billing statement.
 Cache sharing at the provider is possible across fresh containers; compare
 uncached, cache-write and cache-read tokens separately and disclose run order.
 Oracle failure is a task-validity caveat, not automatically an agent failure.

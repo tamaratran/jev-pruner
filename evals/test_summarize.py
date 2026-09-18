@@ -7,6 +7,53 @@ from summarize import summarize_agent, summarize_trial
 
 
 class SummaryTests(unittest.TestCase):
+    def test_output_threshold_counts_stderr_and_excludes_references(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            agent = Path(directory)
+            evidence = agent / "jev"
+            evidence.mkdir()
+            (evidence / "bash-1.json").write_text(
+                json.dumps(
+                    {"answer": {"result": {"stdout": "a" * 3999, "stderr": "b"}}}
+                )
+            )
+            (evidence / "bash-2.json").write_text(
+                json.dumps({"answer": {"result": "reference"}})
+            )
+            row = summarize_agent(agent, "plugin")
+            self.assertEqual(row["bash_calls_observed"], 2)
+            self.assertEqual(row["bash_structured_outputs_observed"], 1)
+            self.assertEqual(row["bash_max_observed_chars"], 4001)
+            self.assertEqual(row["bash_observed_outputs_above_min_chars"], 1)
+
+    def test_cost_basis_and_auxiliary_model_tokens_are_retained(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            agent = Path(directory)
+            (agent / "claude-code.txt").write_text(
+                json.dumps(
+                    {
+                        "type": "result",
+                        "subtype": "success",
+                        "modelUsage": {
+                            "primary": {
+                                "inputTokens": 4,
+                                "outputTokens": 20,
+                                "costBasis": "list",
+                            },
+                            "auxiliary": {
+                                "inputTokens": 100,
+                                "outputTokens": 3,
+                                "costBasis": "list",
+                            },
+                        },
+                    }
+                )
+            )
+            row = summarize_agent(agent, "control")
+            self.assertEqual(row["claude_all_models_usage"]["inputTokens"], 104)
+            self.assertEqual(row["claude_all_models_usage"]["outputTokens"], 23)
+            self.assertEqual(row["claude_cost_basis"], ["list"])
+
     def test_missing_final_does_not_report_zero_cost(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             row = summarize_agent(Path(directory), "plugin")
