@@ -1,0 +1,107 @@
+{
+  "schemaVersion": 1,
+  "claudeVersion": "2.1.277",
+  "startedAt": "2026-09-18T20:40:43.427Z",
+  "durationSeconds": 9,
+  "costUsd": 0.224082,
+  "partial": false,
+  "suite": {
+    "root": "/Users/tamaratran/Desktop/jev-pruner",
+    "ablation": "none",
+    "caseFilter": "needle-error",
+    "threshold": 1,
+    "concurrency": 1,
+    "plugins": [
+      {
+        "name": "fast-jev-output",
+        "version": "0.1.0",
+        "path": "/Users/tamaratran/Desktop/jev-pruner"
+      }
+    ]
+  },
+  "cases": [
+    {
+      "name": "needle-error",
+      "dir": "evals/needle-error",
+      "source": "prose",
+      "promptMarkdown": "Run exactly this command, then tell me in one sentence which build step failed and why:\n\n```\nfor i in $(seq 1 320); do echo \"2026-09-18 10:$((i%60)) INFO worker-$((i%7)) compiled module $i in $((i%400))ms\"; done | sed '180s/.*/2026-09-18 10:06 ERROR worker-3 failed to link checkout_v2: undefined symbol parse_coupon_v2 (exit 1)/'\n```",
+      "runsPerCase": 3,
+      "timeoutSeconds": 300,
+      "maxTurns": 6,
+      "graders": [
+        {
+          "name": "criteria",
+          "type": "llm",
+          "weight": 1,
+          "graderMarkdown": "The response says the failure is the `checkout_v2` link step, and names the\nundefined symbol `parse_coupon_v2`. Wording may vary; inventing a different\ncause, or saying no error was found, fails.",
+          "config": {
+            "criteria": "The response says the failure is the `checkout_v2` link step, and names the\nundefined symbol `parse_coupon_v2`. Wording may vary; inventing a different\ncause, or saying no error was found, fails.",
+            "focus": "last_message"
+          }
+        },
+        {
+          "name": "pruned",
+          "type": "regex",
+          "weight": 1,
+          "config": {
+            "target": "trace",
+            "pattern": "fast-jev-output trimmed \\d+ lines",
+            "flags": "",
+            "match": "contains",
+            "arm": "with-only"
+          }
+        }
+      ],
+      "arms": {
+        "with": [
+          {
+            "score": 0.5,
+            "passed": false,
+            "turns": 2,
+            "costUsd": 0.224082,
+            "judgeCostUsd": 0.0006000000000000001,
+            "durationSeconds": 9,
+            "startedAt": "2026-09-18T20:40:43.444Z",
+            "error": null,
+            "tracePath": "/private/tmp/e-VAtSFM/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "criteria",
+                "passed": true,
+                "weight": 1,
+                "explanation": "judge votes: PASS PASS PASS",
+                "withOnly": false,
+                "scored": true,
+                "judgeVotes": [
+                  true,
+                  true,
+                  true
+                ],
+                "evidence": "The link step for `checkout_v2` failed (line 180, worker-3, exit 1) because the symbol `parse_coupon_v2` was undefined at link time."
+              },
+              {
+                "name": "pruned",
+                "passed": false,
+                "weight": 1,
+                "explanation": "pattern not found in trace",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          }
+        ]
+      },
+      "aggregates": {
+        "score": 0.5,
+        "passRate": 0
+      }
+    }
+  ],
+  "aggregates": {
+    "casesTotal": 1,
+    "casesPassed": 0,
+    "overallScore": 0.5,
+    "overallPassRate": 0
+  }
+}

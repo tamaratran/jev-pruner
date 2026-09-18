@@ -170,11 +170,27 @@ export const register: Register = (on: On, options: PluginOptions) => {
         },
       );
       if (!trimmed.trimmed) return answer;
+      // A workspace that cannot be written to (a sandbox, a read-only checkout)
+      // must not cost the trim: drop the saved copy and keep the pruning.
+      let saved = path !== undefined;
       if (path) {
-        const ignorePath = `${ARCHIVE_DIR}/.gitignore`;
-        if (!(await $.fs.exists(ignorePath))) await $.fs.write(ignorePath, '*\n');
-        await $.fs.write(path, combined);
+        try {
+          const ignorePath = `${ARCHIVE_DIR}/.gitignore`;
+          if (!(await $.fs.exists(ignorePath))) await $.fs.write(ignorePath, '*\n');
+          await $.fs.write(path, combined);
+        } catch (error) {
+          saved = false;
+          $.ui.log(
+            `bash output: full copy not saved (${error instanceof Error ? error.message : String(error)})`,
+          );
+        }
       }
+      const output = saved
+        ? trimmed.output
+        : trimmed.output.replaceAll(
+            `; full output: ${path} (Read or grep it if needed)`,
+            '; not saved to disk, re-run the command if you need these lines',
+          );
       const scores = trimmed.scores.map((score) => score.toFixed(2)).join(',');
       $.ui.log(
         `bash output: kept ${trimmed.kept}/${trimmed.chunks} chunks (${trimmed.charsBefore}→${trimmed.charsAfter} chars) scores=${scores}`,
@@ -183,7 +199,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
         `trimmed Bash output ${trimmed.charsBefore}→${trimmed.charsAfter} chars`,
         { timeoutMs: 8_000 },
       );
-      return { result: { ...record, stdout: trimmed.output } };
+      return { result: { ...record, stdout: output } };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       $.ui.log(`bash output trim skipped (${message})`);

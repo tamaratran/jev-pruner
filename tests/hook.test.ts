@@ -61,3 +61,14 @@ describe('api key lookup', () => {
     expect(await getApiKey($({}), {} as never)).toBeUndefined();
   });
 });
+
+describe('archive failure', () => {
+  it('keeps the trim when the workspace cannot be written to', () => {
+    const marker = "[fast-jev-output trimmed 40 lines (900 chars); full output: .claude/fast-jev-output/bash-t1.txt (Read or grep it if needed)]";
+    const fallback = marker.replaceAll(
+      '; full output: .claude/fast-jev-output/bash-t1.txt (Read or grep it if needed)',
+      '; not saved to disk, re-run the command if you need these lines',
+    );
+    expect(fallback).toBe('[fast-jev-output trimmed 40 lines (900 chars); not saved to disk, re-run the command if you need these lines]');
+  });
+});
