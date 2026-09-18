@@ -23,7 +23,13 @@ if (
   status.authMethod !== "claude.ai" ||
   status.apiProvider !== "firstParty"
 ) {
-  console.error("Expected official Claude subscription login; no inference started.");
+  console.error("Expected official Claude subscription login; no inference started.", JSON.stringify({
+    cliExitCode: result.status,
+    timedOut: result.error?.code === "ETIMEDOUT",
+    loggedIn: status?.loggedIn === true,
+    claudeAi: status?.authMethod === "claude.ai",
+    firstParty: status?.apiProvider === "firstParty",
+  }));
   process.exit(1);
 }
 console.log(JSON.stringify({

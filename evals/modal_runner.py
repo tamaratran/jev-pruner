@@ -278,6 +278,25 @@ def campaign_order(rows: list[dict], preflights: list[dict]) -> list[dict]:
     ]
 
 
+def retain_trial_summary(row: dict, summary: dict) -> None:
+    row.update(
+        {key: value for key, value in summary.items() if key not in {"task", "arm"}}
+    )
+    row["reported_identity"] = {"task": summary["task"], "arm": summary["arm"]}
+    if (summary["task"], summary["arm"]) != (row["task"], row["arm"]):
+        row["measurement_issues"].append("Evidence identity differs from planned row")
+    row["failure_category"] = failure_category(row)
+    row["state"] = (
+        "setup_error" if summary["exception_phase"] == "agent_setup" else "finished"
+    )
+    if (
+        summary["exception_phase"] == "agent_setup"
+        and summary["exception"]
+        and "check_auth.cjs" in summary["exception"]["exception_message"]
+    ):
+        row["failure_category"] = "authentication"
+
+
 def seed_images(
     source: Path, document: dict, prior_accounted: float
 ) -> tuple[list[dict], dict]:
@@ -596,7 +615,7 @@ async def execute(args: argparse.Namespace) -> None:
             )
             persist()
             return
-        row.update(state="running", agent_attempts=0)
+        row.update(state="running", agent_attempts=0, verifier_attempts=0)
         ledger["accounted_usd"] += reserve
         ledger["unreconciled_import"] = preflight
         if preflight:
@@ -638,6 +657,7 @@ async def execute(args: argparse.Namespace) -> None:
             if result_path.exists():
                 result = load(result_path)
                 row["agent_attempts"] = int(bool(result.get("agent_execution")))
+                row["verifier_attempts"] = int(bool(result.get("verifier")))
                 if preflight:
                     row["exception"] = result.get("exception_info")
                     row["state"] = "finished" if not row["exception"] else "setup_error"
@@ -645,9 +665,8 @@ async def execute(args: argparse.Namespace) -> None:
                     if settings.exists():
                         row["auth_status"] = load(settings).get("auth_status")
                 else:
-                    row.update(summarize_trial(result_path), state="finished")
+                    retain_trial_summary(row, summarize_trial(result_path))
                     row["task_revision"] = BENCHMARK_REVISION
-                    row["failure_category"] = failure_category(row)
         except (ValueError, KeyError, TypeError) as error:
             row.update(
                 state="evidence_error",
@@ -669,7 +688,7 @@ async def execute(args: argparse.Namespace) -> None:
             missing.append("verifier/reward")
         row["missing_evidence"] = missing
         if (
-            missing
+            (missing and row["state"] == "finished")
             or not lifecycle.get("evidence_verified")
             or not lifecycle.get("termination_confirmed")
         ):

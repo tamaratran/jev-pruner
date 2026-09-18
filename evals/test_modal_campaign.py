@@ -5,11 +5,46 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from evals.full import save
-from evals.modal_runner import campaign_order, preflight_manifest, seed_images
+from evals.full import aggregate, save
+from evals.modal_runner import (
+    campaign_order,
+    preflight_manifest,
+    retain_trial_summary,
+    seed_images,
+)
 
 
 class CampaignTests(unittest.TestCase):
+    def test_failed_setup_cannot_overwrite_planned_arm(self) -> None:
+        row: dict = {"task": "fixture", "arm": "plugin"}
+        summary: dict = {
+            "task": "fixture",
+            "arm": "trials",
+            "reward": None,
+            "measurement_issues": [],
+            "exception_phase": "agent_setup",
+            "exception": {"exception_message": "check_auth.cjs: no inference started"},
+        }
+        retain_trial_summary(row, summary)
+        self.assertEqual(row["arm"], "plugin")
+        self.assertEqual(row["reported_identity"]["arm"], "trials")
+        self.assertEqual(row["failure_category"], "authentication")
+        self.assertEqual(row["state"], "setup_error")
+        self.assertIsNone(row["reward"])
+        result = aggregate(
+            [
+                {
+                    "task": "fixture",
+                    "arm": "control",
+                    "state": "pending",
+                    "reward": None,
+                },
+                row,
+            ]
+        )
+        self.assertEqual(len(result["trials"]), 2)
+        self.assertIsNone(result["pairs"][0]["disagreement"])
+
     def test_preflight_is_followed_by_both_arms_without_dropping_rows(self) -> None:
         tasks = [{"task": f"task-{i}"} for i in range(89)]
         rows = [
