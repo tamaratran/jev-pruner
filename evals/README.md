@@ -466,12 +466,14 @@ lifetime and cost reservations include this overhead without changing task
 agent or verifier limits. Subscription refresh state is checkpointed before
 agent-log downloads and again before sandbox termination.
 
-Modal scored trials also pass the remaining agent time to each remote exec.
-Cancelling a local output reader does not terminate the remote process; Modal's
-server-side exec deadline does. The same task agent limit governs the whole
-agent phase, with remaining time rounded up to Modal's integer-second API.
+Modal scored trials wrap agent execs in GNU `timeout --signal=KILL`, with the
+remaining task agent time as a fractional-second process-group deadline.
+Cancelling a local output reader does not stop remote execution, and Modal's
+server-side exec timeout alone can leave child processes alive. A separate Modal
+parent-exec deadline rounds up and adds five seconds as a transport backstop;
+it does not extend the GNU agent deadline. Setup verifies GNU timeout is present.
 Setup and verifier limits remain separate. Historical timed-out attempts without
-this remote deadline retain their observed rewards and require a timing caveat.
+this group deadline retain their observed rewards and require a timing caveat.
 
 ## Checks
 

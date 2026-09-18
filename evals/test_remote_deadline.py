@@ -56,7 +56,16 @@ class RemoteDeadlineTests(unittest.IsolatedAsyncioTestCase):
             ):
                 with self.assertRaisesRegex(TimeoutError, "deadline"):
                     await agent.run("task", environment, AgentContext())
-                self.assertEqual(execute.call_args_list[0].kwargs["timeout_sec"], 897)
-                self.assertEqual(execute.call_args_list[1].kwargs["timeout_sec"], 5)
+                first, second = execute.call_args_list
+                self.assertIn(
+                    "timeout --signal=KILL 897.0s bash -o pipefail -c first",
+                    first.args[1],
+                )
+                self.assertIn(
+                    "timeout --signal=KILL 5.0s bash -o pipefail -c second",
+                    second.args[1],
+                )
+                self.assertEqual(first.kwargs["timeout_sec"], 902)
+                self.assertEqual(second.kwargs["timeout_sec"], 10)
                 self.assertEqual(execute.await_count, 2)
                 self.assertIsNone(agent.remote_deadline)
