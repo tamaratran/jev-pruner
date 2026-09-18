@@ -376,20 +376,21 @@ setup spending before reusing it; it is not the actual provider bill.
 
 ### Parallel campaigns and a small checkpoint
 
-Campaigns accept `--concurrency 1..8` (default 1). Each wave takes at most one
+Campaigns accept `--concurrency 1..32` (default 1). Each free slot takes at most one
 ready row from each task: verified preflight, then the two arms in the frozen
 order. The continuation's fresh subscription recheck completes alone before
 any other row. Arms are instance-local, so overlapping setup cannot change
 another agent's plugin selection. Per-sandbox resources, prompts and limits
 remain unchanged.
 
-The controller reserves the whole wave before starting it, associates runtime
+The controller reserves each row before launching it, associates runtime
 settlements with the individual ledger entries, and reads provider billing
-after the wave drains. A failure prevents another wave; already-started trials
+before refilling completed slots. A failure prevents new launches; already-started trials
 finish and retain their evidence. Create `PAUSE` in the evidence directory to
-stop after the current wave without interrupting an agent attempt.
+drain active trials without interrupting an agent attempt. `active-trials.json`
+records the configured limit, launch count and active job names.
 
-Parallel waves require the private access expiry to exceed every selected
+Parallel launches require the private access expiry to exceed each selected
 trial's full build/runtime bound plus ten minutes. Near expiry the runner falls
 back to one trial so a runtime refresh can be checkpointed without concurrent
 writers. Unexpected competing credential updates still fail closed. This
@@ -410,7 +411,7 @@ python -m evals.modal_runner campaign \
   --benchmark-source "$BENCHMARK" --plan "$NEW_PLAN" \
   --seed-preflight "$PREVIOUS_EVIDENCE" --continue-from "$PREVIOUS_EVIDENCE" \
   --evidence "$NEW_EVIDENCE" --prior-accounted-usd "$PRIOR_RESERVATION" \
-  --concurrency 3 --checkpoint-tasks 10 --no-budget-limit \
+  --concurrency 32 --checkpoint-tasks 10 --no-budget-limit \
   --build-reserve-usd 0.25 --billing-start-date "$BILLING_START" \
   --approve-modal-compute --approve-inference
 ```
