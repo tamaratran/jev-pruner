@@ -65,11 +65,7 @@ Configure values with `/plugin configure fast-jev-output`, or use a
 {
   "pluginConfigs": {
     "fast-jev-output@fast-jev-output": {
-      "minChars": 4000,
-      "chunkLines": 20,
-      "keepThreshold": 0.5,
-      "maxStateTokens": 25000,
-      "model": "jev-latest"
+      "options": { "minChars": 4000, "chunkLines": 20, "keepThreshold": 0.5 }
     }
   }
 }
