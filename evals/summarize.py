@@ -187,6 +187,13 @@ def summarize_trial(path: Path) -> dict:
     return {
         "task": trial["task_name"],
         "arm": settings["arm"],
+        "auth_mode": settings.get("auth_mode"),
+        "auth_status": settings.get("auth_status"),
+        "claude_billing_note": (
+            "Subscription limits apply; CLI dollar amounts are not a subscription bill"
+            if settings.get("auth_mode") == "subscription"
+            else "CLI dollar amounts are estimates, not independently verified billing"
+        ),
         "trial_name": trial["trial_name"],
         "task_revision": trial["task_id"]["git_commit_id"],
         "task_checksum": trial["task_checksum"],

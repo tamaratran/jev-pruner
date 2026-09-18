@@ -1,6 +1,6 @@
 # Terminal-Bench paired pilot
 
-Requires Linux, Docker, Python 3.12+, and API access to `claude-sonnet-5` and Jev.
+Requires Linux, Docker, Python 3.12+, Claude access to `claude-sonnet-5`, and Jev API access.
 Production source is uploaded unchanged. This adapter subclasses Harbor's
 Claude Code agent; Harbor owns task installation, instructions, timeouts,
 agent execution, transcripts, and verification.
@@ -43,6 +43,86 @@ synthetic fixture. Assert control has no Jev requests or pruning markers;
 plugin must show HTTP 200 captures, production trim logs, original archives,
 and matching pruned tool results. A CLI exit code of zero alone proves nothing.
 The smoke is not included in benchmark scores.
+The smoke launcher supports API mode only and rejects subscription mode before
+starting Docker, so selecting subscription never silently falls back to API billing.
+
+## Subscription authentication
+
+`JEV_EVAL_AUTH_MODE=api` is the default and preserves the original API-key pilot.
+For a separately authorized future run, `JEV_EVAL_AUTH_MODE=subscription` uses an
+official Claude login directory mounted read-only outside the evidence tree.
+It never extracts browser cookies or turns OAuth credentials into API keys.
+
+Create a **dedicated** private directory outside the repo and evidence. With the
+same pinned Claude image used for the smoke, the official browser login is:
+
+```sh
+export CLAUDE_AUTH_HOME="$HOME/.jev-claude-auth"
+mkdir -p "$CLAUDE_AUTH_HOME"
+chmod 700 "$CLAUDE_AUTH_HOME"
+docker run --rm -it --network host --user "$(id -u):$(id -g)" \
+  --env HOME=/claude-auth --env CLAUDE_CONFIG_DIR=/claude-auth/.claude \
+  --mount "type=bind,src=$CLAUDE_AUTH_HOME,dst=/claude-auth" \
+  "$SMOKE_IMAGE" claude auth login --claudeai
+```
+
+Follow the official browser flow and complete any account verification yourself.
+If Claude displays a one-time code, paste it directly into the CLI prompt, never
+into chat, a shell command, or a report. The CLI owns its local credential files.
+This does not create a permanent Devin account secret.
+
+Verify without inference using the same mount and environment, replacing the
+last command with:
+
+```sh
+claude --setting-sources '' --settings '{"forceLoginMethod":"claudeai"}' auth status --json
+```
+
+Only when another evaluation is explicitly approved, configure the launcher:
+
+```sh
+export JEV_EVAL_AUTH_MODE=subscription
+export JEV_EVAL_CLAUDE_AUTH_DIR="$CLAUDE_AUTH_HOME/.claude"
+# Use a new EVIDENCE_DIR and keep TYPESAFE_API_KEY supplied as before.
+# bash evals/pilot.sh starts inference; authentication alone does not authorize it.
+```
+
+Each disposable container copies only the CLI's `.credentials.json` and
+`.claude.json` from the read-only mount into a new private Claude config directory
+under `/opt/jev-eval/auth`. Neither file enters Harbor's log directory. Projects
+and native transcripts are linked to the current trial's fresh evidence directory.
+Skills, plugins, memories, and old transcripts from the login directory are not
+copied. CLI token refresh writes stay in the disposable container and are discarded
+on teardown; reauthenticate the source directory if its login stops working.
+Do not archive the login directory or export credential-bearing container images.
+
+The adapter removes API keys, auth tokens, alternate-provider routing, custom
+headers, and OAuth-token overrides both from its environment mapping and at the
+container shell boundary. It ignores user/project settings, rejects custom Harbor
+settings in subscription mode, and forces `claudeai` login. A filtered
+`claude auth status --json` preflight runs during setup and immediately before the
+agent starts. Any missing login, API auth, or alternate provider stops execution.
+Only the auth method/provider, login boolean, and recognized plan name are recorded.
+This checks local authentication selection, **not** model availability, remaining
+plan allowance, or a server-validated inference request.
+
+Claude normally prefers an approved `ANTHROPIC_API_KEY` over subscription OAuth.
+The official `claude setup-token` / `CLAUDE_CODE_OAUTH_TOKEN` alternative is useful
+for CI, but this adapter's subscription mode intentionally uses the mounted browser
+login and clears token overrides so it cannot silently select a different account.
+
+Subscription use draws from the plan's limits (and any enabled extra-usage policy).
+CLI dollar totals and `--max-budget-usd` are model-price accounting, not a verified
+subscription invoice or an account spending cap. Keep token counts, durations, and
+the reported dollar estimate separately; never relabel the original API pilot as
+subscription usage. Jev remains a separate service with its own key and costs.
+
+Official references:
+- [Authentication and precedence](https://code.claude.com/docs/en/authentication)
+- [Container authentication](https://code.claude.com/docs/en/devcontainer)
+- [CLI login, status, and setup-token](https://code.claude.com/docs/en/cli-reference)
+- [Headless mode](https://code.claude.com/docs/en/headless)
+- [Subscription SDK/CLI usage](https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan)
 
 Harbor sets `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`, which prevents
 function-hook HTTP requests. The adapter removes this variable in both arms;
