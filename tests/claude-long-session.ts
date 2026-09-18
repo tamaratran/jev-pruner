@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { appendFile, mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -59,19 +59,39 @@ interface Row {
   abridged: number;
   http: number;
   artifactScore: number;
+  rollbackScore: number;
+  artifactKept: boolean;
+  rollbackKept: boolean;
+  stderrScored: boolean;
 }
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const fixture = join(repo, 'tests/fixtures/noisy-build.mjs');
-const stages = Number(process.env.JEV_LONG_SESSION_TURNS ?? 40);
-assert(Number.isInteger(stages) && stages >= 2 && stages <= 100);
-assert(process.env.TYPESAFE_API_KEY, 'Set TYPESAFE_API_KEY before running this billable test.');
+const analyzeOnly = process.argv[2] === '--analyze';
+assert(process.argv.length === 2 || (analyzeOnly && process.argv.length === 4),
+  'Usage: test:long-session [--analyze <evidence-directory>]');
+if (analyzeOnly) assert(process.argv[3], 'Pass the saved evidence directory after --analyze.');
+else assert(process.env.TYPESAFE_API_KEY, 'Set TYPESAFE_API_KEY before running this billable test.');
 const root = resolve(process.env.JEV_LONG_SESSION_DIR ?? join(homedir(), 'jev-long-sessions'));
 await mkdir(root, { recursive: true });
-const workspace = await mkdtemp(join(root, 'run-'));
+const workspace = analyzeOnly ? resolve(process.argv[3]!) : await mkdtemp(join(root, 'run-'));
 const turns: Turn[] = [];
+if (analyzeOnly) {
+  for (const file of (await readdir(workspace)).filter(f => /^turn-\d+\.json$/.test(f))) {
+    turns.push(JSON.parse(await readFile(join(workspace, file), 'utf8')) as Turn);
+  }
+  turns.sort((a, b) => a.stage - b.stage);
+}
+const stages = analyzeOnly ? turns.length - 1 : Number(process.env.JEV_LONG_SESSION_TURNS ?? 40);
+assert(Number.isInteger(stages) && stages >= 2 && stages <= 100);
 const rows: Row[] = [];
-const started = new Date().toISOString();
+const errors: string[] = [];
+const eventStat = analyzeOnly ? await stat(join(workspace, 'events.jsonl')) : undefined;
+const started = eventStat?.birthtime.toISOString() ?? new Date().toISOString();
+
+function check(condition: boolean, message: string): void {
+  if (!condition) errors.push(message);
+}
 
 function prompt(stage: number): string {
   if (stage === 0) {
@@ -132,7 +152,13 @@ async function run(): Promise<void> {
   } finally {
     if (child.exitCode === null) child.kill();
   }
+}
+
+async function analyze(): Promise<void> {
   assert.equal(turns.length, stages + 1);
+  assert.deepEqual(turns.map(turn => turn.stage), Array.from({ length: stages + 1 }, (_, i) => i));
+  assert.equal(new Set(turns.flatMap(turn => turn.events.flatMap(event =>
+    event.session_id ? [event.session_id] : []))).size, 1, 'Expected one continuous Claude session');
   const evidence = join(workspace, '.claude/jev-long-session-evidence');
   const files = await readdir(evidence);
   const captures = await Promise.all(files.filter(f => f.startsWith('request-'))
@@ -142,7 +168,9 @@ async function run(): Promise<void> {
     const calls = turn.events.flatMap(e => e.message?.content ?? []).filter(b => b.type === 'tool_use');
     assert.equal(calls.length, 1, `Unexpected tool count at stage ${turn.stage}`);
     assert.equal(calls[0]!.name, 'Bash');
-    assert.equal(calls[0]!.input?.command, `node "${fixture}" ${turn.stage}`);
+    const expectedCommand = turn.prompt.match(/Run exactly once: (node "[^"\n]+" \d+)/)?.[1];
+    assert(expectedCommand);
+    assert.equal(calls[0]!.input?.command, expectedCommand);
     const result = turn.events.flatMap(e => e.message?.content ?? []).find(b => b.type === 'tool_result');
     assert(result && !result.is_error && typeof result.content === 'string');
     const archive = await readFile(join(workspace, '.claude/fast-jev-output', `bash-${result.tool_use_id}.txt`), 'utf8');
@@ -168,8 +196,10 @@ async function run(): Promise<void> {
     if (turn.stage > 3) assert(!state.task.includes('Our deployment target is Q7.'));
     const bundle = `bundle Q7 = release-Q7-stage${turn.stage}-6d81.tar.gz`;
     const rollback = `rollback stable-snapshot = snapshot-stage${turn.stage}-a312`;
-    assert(result.content.includes(bundle), `Target bundle lost at stage ${turn.stage}`);
-    assert(result.content.includes(rollback), `Rollback reference lost at stage ${turn.stage}`);
+    const artifactKept = result.content.includes(bundle);
+    const rollbackKept = result.content.includes(rollback);
+    check(artifactKept, `Target bundle lost at stage ${turn.stage}`);
+    check(rollbackKept, `Rollback reference lost at stage ${turn.stage}`);
     assert(result.content.includes('ERROR: deployment blocked'));
     assert(result.content.includes(`stderr: stage ${turn.stage} diagnostic channel preserved`));
     assert(result.content.includes('[fast-jev-output trimmed'));
@@ -180,23 +210,34 @@ async function run(): Promise<void> {
     assert(artifactChunk);
     const scored = stageCaptures.find(c => c.response.body.answers[artifactChunk.id]);
     const score = scored?.response.body.answers[artifactChunk.id];
-    assert(score && 'noul' in score && score.noul >= 0.5);
+    assert(score && 'noul' in score);
+    const rollbackChunk = state.chunks.find(c => c.text.includes(rollback));
+    assert(rollbackChunk);
+    const rollbackAnswer = stageCaptures.find(c => c.response.body.answers[rollbackChunk.id])
+      ?.response.body.answers[rollbackChunk.id];
+    assert(rollbackAnswer && 'noul' in rollbackAnswer);
     rows.push({
       stage: turn.stage, before: archive.length, after: result.content.length,
       historyEntries: state.history.length, stateTokens: estimateStateTokens(stateText),
       abridged: state.history.filter(h => h.text.includes('chars omitted')).length,
       http: stageCaptures[0]!.response.status, artifactScore: score.noul,
+      rollbackScore: rollbackAnswer.noul, artifactKept, rollbackKept,
+      stderrScored: state.chunks.some(chunk =>
+        chunk.text.includes(`stderr: stage ${turn.stage} diagnostic channel preserved`)),
     });
   }
   const final = turns.at(-1)!.events.find(e => e.type === 'result')!.result!;
-  assert(final.includes(`release-Q7-stage${stages}-6d81.tar.gz`));
-  assert(final.includes(`snapshot-stage${stages}-a312`));
-  assert(/blocked|cannot|can't|not proceed/i.test(final));
+  check(final.includes(`release-Q7-stage${stages}-6d81.tar.gz`), 'Final handoff omitted the latest target bundle');
+  const handoffRollback = final.match(/rollback[^\n]*?(snapshot-stage\d+-a312)/i)?.[1];
+  check(handoffRollback === `snapshot-stage${stages}-a312`,
+    `Final handoff selected ${handoffRollback ?? 'an unrecognized rollback reference'} instead of snapshot-stage${stages}-a312`);
+  check(/blocked|cannot|can't|not proceed/i.test(final), 'Final handoff did not report the deployment blocker');
   if (stages >= 40) assert(rows.some(r => r.abridged > 0), 'Long run did not exercise history fitting');
   const historyStats = await Promise.all(files.filter(f => f.startsWith('history-'))
     .map(async f => JSON.parse(await readFile(join(evidence, f), 'utf8')) as { messages: number; textChars: number; toolResultChars: number }));
   const summary = {
-    passed: true, started, finished: new Date().toISOString(), stages,
+    passed: errors.length === 0, errors, started,
+    finished: eventStat?.mtime.toISOString() ?? new Date().toISOString(), stages,
     sessionId: turns[0]!.events.find(e => e.session_id)?.session_id,
     messages: Math.max(...historyStats.map(h => h.messages)),
     rawHistoryTextChars: Math.max(...historyStats.map(h => h.textChars)),
@@ -210,10 +251,12 @@ async function run(): Promise<void> {
   };
   await writeFile(join(workspace, 'summary.json'), JSON.stringify(summary, null, 2));
   console.log(JSON.stringify({ ...summary, rows: undefined, firstHistory: undefined }, null, 2));
+  assert.equal(errors.length, 0, `Long-session validation failed:\n${errors.join('\n')}`);
 }
 
 try {
-  await run();
+  if (!analyzeOnly) await run();
+  await analyze();
 } catch (error) {
   await writeFile(join(workspace, 'failure.txt'), String(error));
   throw error;

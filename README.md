@@ -132,6 +132,9 @@ self-contained HTML evidence report. For a quick harness smoke check,
 set `JEV_LONG_SESSION_TURNS=2`; history-fitting coverage requires at least 40.
 Use `JEV_LONG_SESSION_DIR` to choose a different persistent output directory.
 The long test is separate from the offline suite and `test:live`.
+Retention failures produce a failing exit status and a summary containing all
+misses. To reanalyze saved evidence without making API calls, run
+`npm run test:long-session -- --analyze <evidence-directory>`.
 
 Related: [fast-jev-compaction](https://github.com/tamaratran/fast-jev-compaction)
 (same author) applies Jev to session compaction; the two are independent and

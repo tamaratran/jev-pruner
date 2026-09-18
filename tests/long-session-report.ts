@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, readdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import type { HistoryEntry } from '../src/history.js';
 
 interface Summary {
   passed: boolean;
+  errors: string[];
   started: string;
   finished: string;
   stages: number;
@@ -26,6 +27,10 @@ interface Summary {
     abridged: number;
     http: number;
     artifactScore: number;
+    rollbackScore: number;
+    artifactKept: boolean;
+    rollbackKept: boolean;
+    stderrScored: boolean;
   }[];
   final: string;
   firstHistory: HistoryEntry[];
@@ -40,10 +45,16 @@ interface SavedTurn {
   }[];
 }
 
+interface Replay {
+  stage: number;
+  variant: string;
+  artifact: { noul: number };
+  rollback: { noul: number };
+}
+
 assert(process.argv[2], 'Pass the evidence directory printed by test:long-session.');
 const directory = resolve(process.argv[2]);
 const summary = JSON.parse(await readFile(join(directory, 'summary.json'), 'utf8')) as Summary;
-assert(summary.passed);
 const finalTurn = JSON.parse(await readFile(join(directory, `turn-${summary.stages}.json`), 'utf8')) as SavedTurn;
 const finalToolResult = finalTurn.events.flatMap(e => e.message?.content ?? [])
   .find(block => block.type === 'tool_result')?.content;
@@ -59,7 +70,11 @@ const points = summary.rows.map((row, i) =>
   `${30 + i * 740 / Math.max(summary.rows.length - 1, 1)},${190 - row.stateTokens / 25_000 * 160}`).join(' ');
 const bars = summary.rows.map(row =>
   `<div class="bar" title="Stage ${row.stage}: ${number(row.after)} / ${number(row.before)} characters"><span style="height:${100 * row.after / row.before}%"></span><small>${row.stage}</small></div>`).join('');
-const rows = summary.rows.map(row => `<tr><td>${row.stage}</td><td>${number(row.before)}</td><td>${number(row.after)}</td><td>${reduction(row.before, row.after)}</td><td>${row.historyEntries}</td><td>${number(row.stateTokens)}</td><td>${row.abridged}</td><td>${row.artifactScore.toFixed(2)}</td></tr>`).join('');
+const rows = summary.rows.map(row => `<tr><td>${row.stage}</td><td>${number(row.before)}</td><td>${number(row.after)}</td><td>${reduction(row.before, row.after)}</td><td>${row.historyEntries}</td><td>${number(row.stateTokens)}</td><td>${row.abridged}</td><td>${row.artifactScore.toFixed(2)} ${row.artifactKept ? 'kept' : 'LOST'}</td><td>${row.rollbackScore.toFixed(2)} ${row.rollbackKept ? 'kept' : 'LOST'}</td></tr>`).join('');
+const replays = (await readdir(directory)).includes('ablation-results.json')
+  ? JSON.parse(await readFile(join(directory, 'ablation-results.json'), 'utf8')) as Replay[]
+  : [];
+const replayRows = replays.map(row => `<tr><td>${row.stage}</td><td>${escape(row.variant)}</td><td>${row.artifact.noul.toFixed(2)}</td><td>${row.rollback.noul.toFixed(2)}</td></tr>`).join('');
 
 const html = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -73,25 +88,27 @@ section{margin-top:22px}.cols{display:grid;grid-template-columns:1fr 1fr;gap:24p
 blockquote{border-left:4px solid var(--green);margin:16px 0;padding:1px 22px;background:#f3f9f6}
 table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:right;padding:10px 8px;border-bottom:1px solid var(--line)}th{color:var(--muted)}th:first-child,td:first-child{text-align:left}
 .table{overflow-x:auto}.bars{height:180px;display:flex;gap:4px;margin:25px 0 45px;align-items:stretch}.bar{flex:1;background:#dfe9ec;position:relative;border-radius:2px}.bar span{position:absolute;background:var(--green);bottom:0;width:100%;border-radius:2px}.bar small{position:absolute;top:100%;font-size:10px;width:100%;text-align:center}
+.failed{background:#ffe2de;color:#9c251c}
 .legend{font-size:13px}.swatch{display:inline-block;width:12px;height:12px;background:var(--green);margin-right:6px}.swatch.original{background:#dfe9ec;margin-left:18px}
 summary{cursor:pointer;font-weight:650;padding:12px 0}.note{border-left:4px solid #b27a20;padding-left:18px;color:#644b20}footer{margin-top:28px;font-size:12px;color:var(--muted)}
 @media(max-width:720px){main{padding:24px 16px}.metrics{grid-template-columns:1fr 1fr}.cols{grid-template-columns:1fr}h1{font-size:34px}section{padding:18px}.bars{gap:2px}}
 @media print{body{background:white}main{padding:0}section,.metric{break-inside:avoid}details{display:block}}
 </style></head><body><main>
-<header><div class="eyebrow">Jev pruner / live integration evidence</div><h1>Earlier requirements survived<br>a ${summary.stages}-stage session.</h1>
-<p><span class="badge">Assertions passed</span></p>
-<p>One continuous Claude Code process executed a bootstrap command followed by ${summary.stages} noisy Bash commands. The production plugin used live Jev scoring throughout. The final answer retained the target bundle, rollback reference, and deployment blocker.</p>
+<header><div class="eyebrow">Jev pruner / live integration evidence</div><h1>${summary.passed ? `Earlier requirements survived<br>a ${summary.stages}-stage session.` : `The long session exposed<br>required output being dropped.`}</h1>
+<p><span class="badge ${summary.passed ? '' : 'failed'}">${summary.passed ? 'Assertions passed' : 'Retention checks failed'}</span></p>
+<p>One continuous Claude Code process executed a bootstrap command followed by ${summary.stages} noisy Bash commands. The production plugin used live Jev scoring throughout. ${summary.passed ? 'The final answer retained the target bundle, rollback reference, and deployment blocker.' : 'Earlier requirements reached Jev, but some required chunks scored below the 0.5 keep threshold. This run does not establish reliable retention.'}</p>
 <p class="muted">${escape(summary.models.join(', '))} · ${minutes} minutes · ${summary.stages + 1} user turns · ${number(summary.messages)} transcript messages observed</p></header>
 <div class="metrics">
 <div class="metric"><strong>${reduction(summary.before, summary.after)}</strong><span>less output shown to Claude</span></div>
 <div class="metric"><strong>${number(summary.before - summary.after)}</strong><span>output characters removed</span></div>
-<div class="metric"><strong>${summary.stages}/${summary.stages}</strong><span>target bundles retained</span></div>
+<div class="metric"><strong>${summary.rows.filter(row => row.artifactKept).length}/${summary.stages}</strong><span>target bundles retained</span></div>
 <div class="metric"><strong>${number(Math.max(...summary.rows.map(row => row.stateTokens)))}</strong><span>peak fitted state tokens (estimate)</span></div>
 </div>
+${summary.errors.length ? `<section><h2>Observed failures</h2><p>${summary.rows.filter(row => !row.artifactKept).length} target bundles and ${summary.rows.filter(row => !row.rollbackKept).length} rollback references were removed from intermediate results. The final answer is checked separately. The captures do not prove that an answer-selection error was caused by trimming.</p><details><summary>Failed assertions</summary><pre>${escape(summary.errors.join('\n'))}</pre></details></section>` : ''}
 <section><h2>The requirement, and the actual final answer</h2><div class="cols">
 <div><h3>First user message</h3><pre>${escape(summary.firstHistory.find(h => h.role === 'user')?.text ?? '')}</pre><p class="muted">This requirement was present in the final Jev request's history. It was absent from the short “task” field after the first three stages.</p></div>
-<div><h3>Claude’s final answer</h3><pre>${escape(summary.final)}</pre><p class="muted">Values came from the final Bash result; archive reads and extra commands were disallowed and checked.</p></div></div></section>
-<section><h2>Trimming continued through the whole session</h2><p>${number(summary.before)} archived output characters became ${number(summary.after)} visible characters, including omission markers and preserved stderr. Every complete original output was verified in its archive.</p>
+<div><h3>Claude’s final answer</h3><pre>${escape(summary.final)}</pre><p class="muted">Only supplied fixture commands were executed; no archive reads appeared in the captured tool calls.</p></div></div></section>
+<section><h2>Trimming continued through the whole session</h2><p>${number(summary.before)} archived output characters became ${number(summary.after)} visible characters, including omission markers and preserved stderr. All archives contained 201 nonempty lines and the required values.</p>
 <div class="legend"><span class="swatch"></span>Visible output<span class="swatch original"></span>Original output</div><div class="bars">${bars}</div>
 <p class="muted">Each bar is one stage, normalized to that stage’s original output. Savings are measured in characters, not billable model tokens.</p></section>
 <section><h2>History grew; scoring state stayed bounded</h2>
@@ -104,8 +121,10 @@ summary{cursor:pointer;font-weight:650;padding:12px 0}.note{border-left:4px soli
 <details><summary>Inspect early history from the final Jev request</summary><pre>${escape(JSON.stringify(summary.firstHistory, null, 2))}</pre></details>
 <p>Tool-call history contains names, inputs, and status/length notes instead of result bodies. Assistant text that quotes a result remains conversation text; the test checks omission from tool metadata rather than claiming those quotations are removed.</p></section>
 <section><h2>Inspect what Claude received</h2><p>The following is the exact final tool result from the CLI event stream.</p>
+${summary.rows.some(row => row.stderrScored) ? `<p class="muted">In ${summary.rows.filter(row => row.stderrScored).length} stages, the fixture’s stderr text was included in the stdout sent to Jev and retained as the final chunk. These stages do not establish separate-stderr handling in the Claude host.</p>` : ''}
 <details><summary>Final trimmed stdout and preserved stderr</summary><pre>${escape(finalToolResult)}</pre></details>
-<details><summary>All ${summary.stages} stages and their measurements</summary><div class="table"><table><thead><tr><th>Stage</th><th>Original chars</th><th>Visible chars</th><th>Removed</th><th>History entries</th><th>Est. state tokens</th><th>Abridged entries</th><th>Target score</th></tr></thead><tbody>${rows}</tbody></table></div></details></section>
+<details><summary>All ${summary.stages} stages and their measurements</summary><div class="table"><table><thead><tr><th>Stage</th><th>Original chars</th><th>Visible chars</th><th>Removed</th><th>History entries</th><th>Est. state tokens</th><th>Abridged entries</th><th>Target score</th><th>Rollback score</th></tr></thead><tbody>${rows}</tbody></table></div></details></section>
+${replays.length ? `<section><h2>Controlled replays against live Jev</h2><p>Selected captured states were rescored unchanged, with the “do not repeat bundle names or rollback references” instruction removed, or with a standing-requirement clarification appended to scoring context. These trials preserve the per-chunk questions. They do not modify the production plugin or rerun Claude.</p><div class="table"><table><thead><tr><th>Stage</th><th>Variant</th><th>Target score</th><th>Rollback score</th></tr></thead><tbody>${replayRows}</tbody></table></div><p>Scores below 0.5 lose the required chunk. No candidate fix has passed a full-session rerun.</p></section>` : ''}
 <section><h2>Reproduce and interpret</h2><pre>export TYPESAFE_API_KEY=...   # provide securely in your environment
 npm run test:long-session
 npm run report:long-session -- &lt;evidence-directory&gt;</pre>
