@@ -400,6 +400,11 @@ Use `--checkpoint-tasks 10` to save `small-results.json` once the first ten
 manifest tasks finish both arms. These are the first tasks in alphabetical
 manifest order, not a representative random sample. The full campaign continues
 and never reruns them merely to produce the checkpoint.
+Continuations also retain verified agent-timeout attempts with a verifier reward
+when their only measurement issue is missing final Claude usage. The issue and
+unavailable usage remain recorded; these rows are excluded from complete
+measurement comparisons. Activation, image, authentication and evidence checks
+still apply, and access-blocked attempts cannot use this exception.
 
 `--no-budget-limit` replaces the local credit ceiling only with explicit user
 authorization. It cannot be combined with `--budget-usd`. Provider usage,
