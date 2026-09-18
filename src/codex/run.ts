@@ -13,8 +13,15 @@ if (args[0] !== '--' || args.length < 2) {
   let bytes = 0;
   let streaming = false;
   let spawnFailed = false;
-  const forwardInt = () => child.kill('SIGINT');
-  const forwardTerm = () => child.kill('SIGTERM');
+  let receivedSignal: NodeJS.Signals | undefined;
+  const controller = new AbortController();
+  const forward = (signal: NodeJS.Signals) => {
+    receivedSignal = signal;
+    controller.abort();
+    child.kill(signal);
+  };
+  const forwardInt = () => forward('SIGINT');
+  const forwardTerm = () => forward('SIGTERM');
   process.on('SIGINT', forwardInt);
   process.on('SIGTERM', forwardTerm);
   child.stdout.on('data', (chunk: Buffer) => {
@@ -42,13 +49,16 @@ if (args[0] !== '--' || args.length < 2) {
           cwd: process.cwd(),
           sessionId: process.env.CODEX_THREAD_ID,
           apiKey: process.env.TYPESAFE_API_KEY,
+          signal: controller.signal,
         })
         : output;
-      process.stdout.write(displayed);
+      await new Promise<void>(resolve => process.stdout.write(displayed, () => resolve()));
     }
+    await new Promise<void>(resolve => process.stdout.write('', () => resolve()));
     process.removeListener('SIGINT', forwardInt);
     process.removeListener('SIGTERM', forwardTerm);
-    if (signal) process.kill(process.pid, signal);
+    const termination = receivedSignal ?? signal;
+    if (termination) process.kill(process.pid, termination);
     else process.exitCode = spawnFailed ? 127 : code ?? 127;
   });
 }
