@@ -11,6 +11,7 @@ import type { JevAsker } from '../src/jev.js';
 
 const ARCHIVE_DIR = '.claude/fast-jev-output';
 const DEFAULTS = {
+  persistedMaxChars: 8_000,
   chunkLines: 20,
   keepThreshold: 0.5,
   maxStateTokens: 25_000,
@@ -41,6 +42,8 @@ export type HookConfig = {
   keepThreshold: number;
   maxStateTokens: number;
   minTokens: number;
+  persistedOutputs: boolean;
+  persistedMaxChars: number;
   model: string;
 };
 
@@ -60,6 +63,9 @@ export function resolveHookConfig(options: PluginOptions): HookConfig {
     keepThreshold: optionNumber(options, 'keepThreshold', DEFAULTS.keepThreshold),
     maxStateTokens: optionNumber(options, 'maxStateTokens', DEFAULTS.maxStateTokens),
     minTokens: Math.max(MIN_OUTPUT_TOKENS, optionNumber(options, 'minTokens', DEFAULTS.minTokens)),
+    persistedOutputs:
+      typeof options.persistedOutputs === 'boolean' ? options.persistedOutputs : true,
+    persistedMaxChars: optionNumber(options, 'persistedMaxChars', DEFAULTS.persistedMaxChars),
     model: optionString(options, 'model') ?? DEFAULTS.model,
   };
   const apiKey = optionString(options, 'apiKey');
@@ -94,7 +100,8 @@ export function goalFromMessages(messages: readonly SessionMessage[]): string {
     .join('\n');
 }
 
-async function getApiKey(
+/** Key lookup order: plugin option, TYPESAFE_API_KEY, EVAL_TYPESAFE_API_KEY, settings env. */
+export async function getApiKey(
   $: {
     env: { get: (name: string) => Promise<string | undefined> };
     settings: { read: () => Promise<Readonly<Record<string, unknown>>> };
@@ -104,6 +111,10 @@ async function getApiKey(
   if (config.apiKey) return config.apiKey;
   const fromEnv = await $.env.get('TYPESAFE_API_KEY');
   if (fromEnv) return fromEnv;
+  // `claude plugin eval` runs with a fresh HOME and a scrubbed environment, and
+  // passes through only EVAL_* variables, so this is the eval suite's key path.
+  const fromEvalEnv = await $.env.get('EVAL_TYPESAFE_API_KEY');
+  if (fromEvalEnv) return fromEvalEnv;
   const settings = await $.settings.read();
   const env = settings['env'];
   if (env && typeof env === 'object') {
@@ -131,6 +142,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
       if (answer.deny !== undefined || answer.isError || !answer.result) return answer;
       const record = answer.result;
       const persisted = record.persistedOutputPath;
+      if (persisted && !configured.persistedOutputs) return answer;
       const output = persisted ? await $.fs.read(persisted) : record.stdout;
       if (!exceedsOutputThreshold(output, configured.minTokens)) return answer;
       const combined = persisted ? output : output + (record.stderr ? `\n${record.stderr}` : '');
@@ -142,6 +154,11 @@ export const register: Register = (on: On, options: PluginOptions) => {
       const path = secret
         ? undefined
         : persisted ?? `${ARCHIVE_DIR}/bash-${event.tool_use_id ?? Date.now()}.txt`;
+      const footer = path
+        ? `\n\n[fast-jev-output full output: ${path} (Read or grep it if needed)]`
+        : '';
+      const maxChars = persisted ? Math.max(0, configured.persistedMaxChars) : 0;
+      if (maxChars > 0 && maxChars <= footer.length) return answer;
       let archived: Promise<void> | undefined;
       const saveOutput = async (): Promise<void> => {
         if (!path || persisted) return;
@@ -168,15 +185,14 @@ export const register: Register = (on: On, options: PluginOptions) => {
         ),
         {
           minTokens: configured.minTokens,
+          maxChars: maxChars > 0 ? maxChars - footer.length : 0,
           chunkLines: configured.chunkLines,
           keepThreshold: configured.keepThreshold,
           maxStateTokens: configured.maxStateTokens,
         },
       );
       if (!trimmed.trimmed) return answer;
-      const stdout = path
-        ? `${trimmed.output}\n\n[fast-jev-output full output: ${path} (Read or grep it if needed)]`
-        : trimmed.output;
+      const stdout = trimmed.output + footer;
       const scores = trimmed.scores.map((score) => score.toFixed(2)).join(',');
       $.ui.log(
         `bash output: kept ${trimmed.kept}/${trimmed.chunks} chunks (${trimmed.charsBefore}→${stdout.length} chars) scores=${scores}`,
