@@ -1,9 +1,34 @@
+import json
+import tempfile
 import unittest
+from pathlib import Path
 
-from evals.full import access_blocker, aggregate, failure_category
+from evals.full import access_blocker, aggregate, failure_category, trial_blocker
 
 
 class FullTests(unittest.TestCase):
+    def test_setup_and_environment_errors_stop_subsequent_trials(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            job = Path(directory)
+            trial = job / "trial"
+            trial.mkdir()
+            for kind, expected in (
+                ("AgentSetupTimeoutError", "agent_setup"),
+                ("EnvironmentStartError", "infrastructure"),
+                ("AgentTimeoutError", None),
+                ("VerifierTimeoutError", None),
+            ):
+                with self.subTest(kind=kind):
+                    (trial / "result.json").write_text(
+                        json.dumps({"exception_info": {"exception_type": kind}})
+                    )
+                    reason = trial_blocker(job)
+                    if expected is None:
+                        self.assertIsNone(reason)
+                    else:
+                        self.assertIsNotNone(reason)
+                        self.assertIn(expected, reason or "")
+
     def test_account_errors_stop_but_task_text_does_not(self) -> None:
         self.assertIsNone(
             access_blocker(

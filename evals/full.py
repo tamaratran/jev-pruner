@@ -122,6 +122,9 @@ def trial_blocker(job: Path) -> str | None:
             continue
         if "subscription" in str(exception.get("exception_message", "")).lower():
             return "Subscription preflight failed"
+        category = failure_category({"exception": exception})
+        if category in {"agent_setup", "infrastructure"}:
+            return f"{category} failure; inspect trial evidence"
     return None
 
 
@@ -429,6 +432,7 @@ def run(
             row["state"] = "infrastructure_error"
             row["failure_category"] = "infrastructure"
             row["error"] = f"Expected one trial result, found {len(paths)}"
+            reason = reason or row["error"]
         row["requested_docker_image"] = image
         if environment == "docker":
             inspected = subprocess.run(
