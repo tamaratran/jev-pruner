@@ -48,6 +48,8 @@ def summarize_agent(agent: Path, arm: str, stream: str = "claude-code.txt") -> d
         issues.append("Observer activation missing")
     if not final:
         issues.append("Final Claude result missing; usage totals unavailable")
+    elif final.get("is_error") or final.get("subtype") != "success":
+        issues.append(f"Claude did not finish successfully: {final.get('subtype')}")
     logs = [
         json.loads(path.read_text())["text"]
         for path in sorted(evidence.glob("log-*.json"))
@@ -95,6 +97,21 @@ def summarize_agent(agent: Path, arm: str, stream: str = "claude-code.txt") -> d
         )
     if arm == "control" and (started or trims):
         issues.append("Control unexpectedly invoked pruning")
+    model_usage = final.get("modelUsage") or {}
+    totals = (
+        {
+            key: sum(model.get(key, 0) for model in model_usage.values())
+            for key in (
+                "inputTokens",
+                "cacheReadInputTokens",
+                "cacheCreationInputTokens",
+                "outputTokens",
+                "thinkingTokens",
+            )
+        }
+        if model_usage
+        else None
+    )
     return {
         "model": init.get("model"),
         "plugins": plugins,
@@ -105,6 +122,14 @@ def summarize_agent(agent: Path, arm: str, stream: str = "claude-code.txt") -> d
         "claude_usage": final.get("usage"),
         "claude_cost_usd_reported": final.get("total_cost_usd"),
         "claude_model_usage": final.get("modelUsage"),
+        "claude_all_models_usage": totals,
+        "claude_cost_basis": sorted(
+            {
+                model["costBasis"]
+                for model in model_usage.values()
+                if model.get("costBasis")
+            }
+        ),
         "claude_duration_ms": final.get("duration_ms"),
         "bash_calls_observed": len(list(evidence.glob("bash-*.json"))),
         "jev_requests_started": started,
@@ -189,7 +214,9 @@ def main() -> None:
     output = {"trials": rows, "pairs": paired, "expected_trials": 6}
     (args.evidence / "results.json").write_text(json.dumps(output, indent=2) + "\n")
     print(json.dumps({"trials": len(rows), "pairs": paired}, indent=2))
-    if len(rows) != 6 or any(row["measurement_issues"] for row in rows):
+    if len(rows) != 6 or any(
+        row["measurement_issues"] or row["exception"] for row in rows
+    ):
         raise SystemExit("Incomplete or invalid measurements; inspect results.json")
 
 

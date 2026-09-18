@@ -8,6 +8,14 @@ harbor="${HARBOR_BIN:-harbor}"
 repo="$(git rev-parse --show-toplevel)"
 export PYTHONPATH="$repo${PYTHONPATH:+:$PYTHONPATH}"
 [[ "$("$harbor" --version)" == 0.22.0 ]]
+if [[ -n "$(git status --porcelain -- evals .claude-plugin hooks src)" ]]; then
+  printf '%s\n' 'Commit evaluation and production sources before running.' >&2
+  exit 1
+fi
+if compgen -G "$EVIDENCE_DIR/jobs/pilot-*" > /dev/null; then
+  printf '%s\n' 'Use a fresh evidence directory; refusing to reuse pilot jobs.' >&2
+  exit 1
+fi
 mkdir -p "$EVIDENCE_DIR/jobs"
 git rev-parse HEAD > "$EVIDENCE_DIR/harness-commit.txt"
 git diff --binary > "$EVIDENCE_DIR/harness-working.diff"
@@ -29,4 +37,5 @@ for task in build-cython-ext chess-best-move configure-git-webserver; do
     fi
   done
 done
+if ! python3 "$repo/evals/summarize.py" "$EVIDENCE_DIR"; then status=1; fi
 exit "$status"
