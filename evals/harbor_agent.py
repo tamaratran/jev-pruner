@@ -18,6 +18,7 @@ from evals.auth import (
     prepare_subscription,
     subscription_mounts,
 )
+from evals.sources import PRODUCTION, production_root
 
 CLAUDE_VERSION = "2.1.274"
 REPO = Path(__file__).resolve().parents[1]
@@ -56,9 +57,9 @@ class JevClaudeCode(ClaudeCode):
         )
         if self.parse_version(version.stdout or "") != CLAUDE_VERSION:
             raise RuntimeError("Installed Claude version does not match pin")
-        for directory in (".claude-plugin", "hooks", "src"):
+        for directory in PRODUCTION:
             await environment.upload_dir(
-                REPO / directory, f"{REMOTE}/production/{directory}"
+                production_root(REPO) / directory, f"{REMOTE}/production/{directory}"
             )
         await environment.upload_dir(REPO / "evals/observer", f"{REMOTE}/observer")
         await environment.upload_file(

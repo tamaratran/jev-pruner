@@ -10,7 +10,8 @@ from statistics import median
 TRIM_LOG = re.compile(r"kept (\d+)/(\d+) chunks \((\d+)→(\d+) chars\)")
 TRIM_MARKER = re.compile(r"\[fast-jev-output trimmed (\d+) lines \((\d+) chars\)")
 ARCHIVE_FOOTER = re.compile(
-    r"\[fast-jev-output full output: ([^\n]+) \(Read or grep it if needed\)\]"
+    r"\[fast-jev-output (?:trimmed \d+ lines \(\d+ chars\); )?"
+    r"full output: ([^\n]+) \(Read or grep it if needed\)\]"
 )
 
 
