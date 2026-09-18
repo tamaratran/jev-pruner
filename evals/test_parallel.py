@@ -6,7 +6,7 @@ from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from evals.full import run
+from evals.full import FLAGS, TrialProcess, checkpoint, run, save
 
 
 class ParallelTests(unittest.TestCase):
@@ -87,7 +87,11 @@ class ParallelTests(unittest.TestCase):
             "exception": result.get("exception_info"),
         }
 
-    def execute(self, concurrency: int = 2) -> list[dict]:
+    def execute(
+        self,
+        concurrency: int = 2,
+        inflight: dict[str, TrialProcess] | None = None,
+    ) -> list[dict]:
         with ExitStack() as stack:
             stack.enter_context(
                 patch.dict(
@@ -130,7 +134,15 @@ class ParallelTests(unittest.TestCase):
             stack.enter_context(
                 patch("evals.full.summarize_trial", side_effect=self.summarize)
             )
-            run(self.root, self.root, "harbor", "modal", concurrency=concurrency)
+            run(
+                self.root,
+                self.root,
+                "harbor",
+                "modal",
+                concurrency=concurrency,
+                resume=inflight is not None,
+                inflight=inflight,
+            )
         return json.loads((self.root / "progress.json").read_text())
 
     def test_concurrency_is_bounded_and_each_pair_keeps_its_order(self) -> None:
@@ -182,3 +194,68 @@ class ParallelTests(unittest.TestCase):
     def test_nonpositive_concurrency_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "positive"):
             run(self.root, self.root, "harbor", concurrency=0)
+
+    def prepare_inflight(self) -> dict[str, TrialProcess]:
+        rows = [
+            {
+                **row,
+                "state": "resource_blocked" if row["resource_blocked"] else "pending",
+            }
+            for row in self.manifest
+        ]
+        rows[0].update(state="running", execution_concurrency=1)
+        checkpoint(self.root, rows)
+        save(
+            self.root / "execution-provenance.json",
+            {
+                "flags": FLAGS
+                + ["--env", "modal", "--ek", "app_name=jev-terminal-bench"],
+                "source_sha256": {"src/test": "same"},
+                "commit": "old-commit",
+            },
+        )
+        (self.root / "jobs").mkdir()
+        (self.root / "console").mkdir()
+        process = Mock(pid=999, returncode=None)
+        name = rows[0]["job_name"]
+        assert isinstance(name, str)
+
+        def poll() -> int | None:
+            if self.tick >= 4:
+                self.result(name)
+                return 0
+            return None
+
+        process.poll.side_effect = poll
+        return {name: process}
+
+    def test_handoff_counts_active_trials_without_restarting_them(self) -> None:
+        rows = self.execute(inflight=self.prepare_inflight())
+        self.assertEqual(self.peak, 2)
+        self.assertEqual(len(self.started), 5)
+        self.assertNotIn(rows[0]["job_name"], self.started)
+        self.assertTrue(all(row["state"] == "finished" for row in rows[:6]))
+        self.assertEqual(rows[0]["execution_commit"], "old-commit")
+        self.assertEqual(rows[0]["execution_concurrency"], 1)
+        self.assertEqual(rows[0]["launcher_handoffs"][0]["concurrency"], 2)
+        self.assertIsNone(rows[0]["harbor_return_code"])
+
+    def test_handoff_still_drains_after_a_setup_blocker(self) -> None:
+        inflight = self.prepare_inflight()
+        self.fail_setup = True
+        rows = self.execute(inflight=inflight)
+        self.assertEqual(len(self.started), 1)
+        self.assertEqual(rows[0]["state"], "finished")
+        self.assertEqual(rows[2]["failure_category"], "agent_setup")
+        self.assertEqual(sum(row["state"] == "pending" for row in rows), 4)
+        self.assertFalse((self.root / "finished.json").exists())
+
+    def test_handoff_rejects_processes_not_in_the_running_checkpoint(self) -> None:
+        inflight = self.prepare_inflight()
+        inflight["undeclared-job"] = Mock()
+        with self.assertRaisesRegex(ValueError, "match running checkpoint"):
+            self.execute(inflight=inflight)
+
+    def test_handoff_requires_resume(self) -> None:
+        with self.assertRaisesRegex(ValueError, "require resume"):
+            run(self.root, self.root, "harbor", inflight={"job": Mock()})

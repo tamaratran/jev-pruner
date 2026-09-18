@@ -10,6 +10,7 @@ import subprocess
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Protocol
 
 import tomllib
 
@@ -45,6 +46,15 @@ FLAGS = [
     "--timeout-multiplier",
     "1.0",
 ]
+
+
+class TrialProcess(Protocol):
+    pid: int
+    returncode: int | None
+
+    def poll(self) -> int | None: ...
+
+    def wait(self, timeout: float | None = None) -> int: ...
 
 
 def save(path: Path, value: object) -> None:
@@ -245,7 +255,7 @@ def next_pending(rows: list[dict]) -> int | None:
     )
 
 
-def stop_trial(process: subprocess.Popen) -> None:
+def stop_trial(process: TrialProcess) -> None:
     try:
         os.killpg(process.pid, signal.SIGINT)
     except ProcessLookupError:
@@ -310,7 +320,11 @@ def finish_trial(root: Path, row: dict, environment: str) -> str | None:
 
 
 def continuation_rows(
-    root: Path, manifest: list[dict], flags: list[str], pin: dict
+    root: Path,
+    manifest: list[dict],
+    flags: list[str],
+    pin: dict,
+    inflight: set[str] | None = None,
 ) -> list[dict]:
     previous = json.loads((root / "execution-provenance.json").read_text())
     if previous["flags"] != flags:
@@ -329,6 +343,9 @@ def continuation_rows(
     ):
         raise ValueError("Checkpoint does not match the declared manifest")
     for row in rows:
+        if row["state"] == "running" and row["job_name"] in (inflight or set()):
+            row.setdefault("execution_commit", previous["commit"])
+            continue
         if row["state"] == "running":
             job = root / "jobs" / row["job_name"]
             result = job / "result.json"
@@ -353,6 +370,10 @@ def continuation_rows(
             raise ValueError("Unsupported checkpoint state")
         if row["state"] != "pending":
             row.setdefault("execution_commit", previous["commit"])
+    if (inflight or set()) != {
+        row["job_name"] for row in rows if row["state"] == "running"
+    }:
+        raise ValueError("In-flight processes must match running checkpoint rows")
     return rows
 
 
@@ -363,9 +384,12 @@ def run(
     environment: str = "docker",
     resume: bool = False,
     concurrency: int = 1,
+    inflight: dict[str, TrialProcess] | None = None,
 ) -> None:
     if concurrency < 1:
         raise ValueError("Concurrency must be positive")
+    if inflight and not resume:
+        raise ValueError("In-flight processes require resume")
     if os.environ.get("JEV_EVAL_AUTH_MODE") != "subscription":
         raise ValueError("Explicit JEV_EVAL_AUTH_MODE=subscription is required")
     if (root / "progress.json").exists() and not resume:
@@ -396,7 +420,9 @@ def run(
         raise ValueError("Expected all 89 tasks and 178 trials")
     pin = source_hashes()
     rows = (
-        continuation_rows(root, manifest, FLAGS + environment_flags, pin)
+        continuation_rows(
+            root, manifest, FLAGS + environment_flags, pin, set(inflight or {})
+        )
         if resume
         else [
             {
@@ -423,6 +449,7 @@ def run(
         "pair_arm_order": "manifest; arms of the same task never overlap",
         "harbor_retries": 0,
         "resume": resume,
+        "adopted_jobs": sorted(inflight or {}),
         "pending_trials": sum(row["state"] == "pending" for row in rows),
     }
     segments_path = root / "execution-segments.json"
@@ -446,8 +473,18 @@ def run(
     save(segments_path, [*segments, provenance])
     (root / "jobs").mkdir(exist_ok=resume)
     (root / "console").mkdir(exist_ok=resume)
+    active: dict[int, TrialProcess] = {}
+    for index, row in enumerate(rows):
+        if inflight and row["job_name"] in inflight:
+            active[index] = inflight[row["job_name"]]
+            row.setdefault("launcher_handoffs", []).append(
+                {
+                    "at": provenance["started_at"],
+                    "commit": provenance["commit"],
+                    "concurrency": concurrency,
+                }
+            )
     checkpoint(root, rows)
-    active: dict[int, subprocess.Popen] = {}
     paused = False
 
     def pause(index: int, reason: str) -> None:
