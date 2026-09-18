@@ -145,6 +145,34 @@ No user/project settings or MCP configuration is loaded.
 
 ## Evidence
 
+### Offline Modal budget audit
+
+Before spending credits, prepare a plan from a clean task checkout at the
+registry's exact commit:
+
+```sh
+python -m evals.modal_budget /absolute/evidence/modal-plan.json \
+  --registry /absolute/evidence/registry.json \
+  --benchmark-source /absolute/terminal-bench-2 \
+  --exclusions /absolute/evidence/exclusions.json \
+  --budget-usd 30
+```
+
+Download the registry from the immutable `REGISTRY` URL in `evals/full.py`.
+The exclusions file is a JSON object mapping task names to review reasons
+(`{}` only after scope review finds no exclusions). Both arms remain in the
+planning manifest, with missing rewards rather than fabricated zero scores.
+This command never starts compute, inference or image builds. Its output is an
+audit document, not an input to `evals.full`.
+
+The estimate uses **Sandbox** CPU/memory prices, task timeouts, a 600-second setup
+allowance (Harbor's default is 360), 300 seconds for transfers/teardown, and a 25%
+reserve. The build allowance is priced at task resources. Builder resources,
+memory bursts, image tags, remote teardown and workspace billing must still be
+validated; this is not an enforceable account cap. Report Modal, Jev and Claude
+accounting separately. Coordinate any other run using the same subscription
+before starting live validation.
+
 ### Full serial comparison
 
 `python -m evals.full EVIDENCE --benchmark-source PINNED_TASK_CHECKOUT` executes
