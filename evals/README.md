@@ -145,7 +145,7 @@ No user/project settings or MCP configuration is loaded.
 
 ## Evidence
 
-### Full serial comparison
+### Full comparison
 
 `python -m evals.full EVIDENCE --benchmark-source PINNED_TASK_CHECKOUT` executes
 a predeclared `EVIDENCE/manifest.json` with 178 rows across all 89 tasks. Each row
@@ -170,11 +170,16 @@ image. The private runtime copy and source staging files disappear on sandbox
 teardown. Docker keeps its read-only bind mount. Modal's agent logs are downloaded
 at trial boundaries, so account-error inspection may occur after a trial ends.
 
-The launcher runs serially with the pilot's model, version, limits, and zero
-Harbor retries. It refuses reused run directories by default and checks source hashes before
+The launcher defaults to one active trial. Set `--concurrency 4` to run up to four
+independent task sandboxes at once. Both arms of a task retain their manifest order
+and never overlap. Each Harbor subprocess still uses one trial and zero retries;
+the pilot's model, version, and limits stay fixed. Subscription rate limits and
+Modal capacity constrain useful concurrency. It refuses reused run directories
+by default and checks source hashes before
 each trial. Results checkpoint after every trial, preserving missing rewards and
 unstarted tasks. Subscription/account/model errors and instrumentation/Jev failures
-pause further execution and create `blocker.json`; ordinary task failures remain
+pause new launches and create `blocker.json`; other already-running trials finish
+and checkpoint before the launcher exits. Ordinary task failures remain
 in the results. A paused run must be inspected before any separate continuation.
 After inspecting and resolving a pause, stop the previous launcher and pass
 `--resume` with the same evidence directory. Completed trials are retained, never
@@ -182,7 +187,9 @@ retried; only pending manifest rows execute. A checkpoint interrupted after Harb
 finished can be reconstructed from its saved result. An unfinished Harbor trial
 blocks resumption. Flags, manifest order, and production source hashes must match.
 Instrumentation fixes are permitted and recorded in `execution-segments.json`;
-each trial records its execution commit. The initial provenance is preserved.
+each trial records its execution commit and concurrency. The initial provenance is
+preserved. Changing concurrency on resume is permitted; record the protocol
+amendment and account for overlapping workloads when interpreting runtime.
 The launcher stops before another trial when less than 20 GiB disk is free.
 CLI-native request retries, if any, are not additional Harbor trial attempts.
 
