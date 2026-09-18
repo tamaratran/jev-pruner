@@ -224,7 +224,7 @@ describe('Codex command wrapper', () => {
     expect(result.stdout.equals(Buffer.alloc(512 * 1024, 'x'))).toBe(true);
   });
 
-  it('terminates with the received signal when cancelled after the command finishes', async () => {
+  it.each(['SIGINT', 'SIGTERM'] as const)('propagates %s when cancelled after the command finishes', async termination => {
     const options = await fixture();
     const transport = join(options.cwd, 'waiting-fetch.mjs');
     await writeFile(transport, `
@@ -248,7 +248,7 @@ describe('Codex command wrapper', () => {
     child.stderr.on('data', () => {
       if (!cancelled) {
         cancelled = true;
-        child.kill('SIGTERM');
+        child.kill(termination);
       }
     });
     child.stdin.end();
@@ -257,7 +257,7 @@ describe('Codex command wrapper', () => {
       child.on('close', (code, signal) => resolve({ code, signal }));
     });
     expect(cancelled).toBe(true);
-    expect(result).toEqual({ code: null, signal: 'SIGTERM' });
+    expect(result).toEqual({ code: null, signal: termination });
     expect(Buffer.concat(buffers)).toEqual(output);
   });
 });

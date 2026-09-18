@@ -83,7 +83,7 @@ command's output as disposable or change the keep threshold.
 | --- | --- | --- |
 | Build, install, test | `npm run build`, `pnpm test`, `npm ci`, `make`, `pytest`, `cargo test` | Ask Jev to retain diagnostics, failing tests, result counts, final status, artifact paths, and task-required values; repeated progress may be dropped. |
 | Search or file excerpt | `rg`, `grep`, `git grep`, `find`, `head`, `tail`, `sed` | Treat paths, line numbers, matches, and surrounding source as evidence. Repeated matches can still matter, particularly when the task requires complete results or counts. |
-| Whole document | JSON objects/arrays, recognized XML/YAML headers, diffs; `cat`, `bat`, `jq`, `yq`, `git diff`, `git show`, `diff`, `base64`, `openssl` | Preserve the output verbatim without scoring. Format detection takes precedence over a build or search command. |
+| Whole document | JSON objects/arrays, XML root tags or declarations, YAML headers, diffs; `cat`, `bat`, `jq`, `yq`, `git diff`, `git show`, `diff`, `base64`, `openssl` | Preserve the output verbatim without scoring. Format detection takes precedence over a build or search command. |
 | Unknown | Custom scripts, unrecognized subcommands, wrappers, pipelines, compound commands | Use the existing general scoring guidance. Existing whole-document safeguards still take precedence. |
 
 Command recognition is deliberately limited to simple invocations. Executable
@@ -150,6 +150,33 @@ the archive recovery footer. Archives and transcript pointers persist until
 manually removed. API requests time out after 30 seconds and failures preserve
 stdout. Jev receives the recorded conversation and tool results; secret detection
 is a heuristic for the current command/output, not transcript redaction.
+
+### Sustained Codex validation
+
+After building and installing the local plugin, authenticate Codex and supply
+`TYPESAFE_API_KEY` to run the billable CLI integration test:
+
+```sh
+JEV_CODEX_STAGES=2 npm run test:codex-session   # short harness check
+npm run test:codex-session                    # 40 stages plus final handoff
+```
+
+Set `JEV_CODEX_PLUGIN_ROOT` if the installed plugin is outside the default
+`~/.codex/plugins/cache/jev-pruner-codex/jev-pruner/0.1.0` directory.
+Reinstall the plugin after rebuilding changed source so the test exercises that revision.
+The harness runs this reviewed local plugin with Codex's per-invocation hook-trust
+bypass. It retains the `workspace-write` sandbox and enables network access for
+Jev; it does not disable command approvals or change persistent Codex settings.
+
+Each stage checks required values from an early user requirement and an earlier
+tool result, exact retained lines, stderr, pruning markers, archive bytes, and
+complete Jev responses. Later stages must exercise parallel history partitions.
+The final handoff cannot read archives. Missing commands, host truncation,
+rate limits, timeouts, retention failures, and incomplete runs fail the test.
+Private evidence under `~/jev-codex-session-*` includes per-turn CLI events,
+header-free Jev requests/responses, per-stage metrics, and the final verdict.
+The synthetic fixture tests sustained history growth; it is not a benchmark of
+typical coding sessions.
 
 ## Claude Code install
 

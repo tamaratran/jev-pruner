@@ -24,6 +24,7 @@
     "test": "vitest run",
     "test:live": "tsx --test tests/jev-live.ts",
     "test:long-session": "tsx tests/claude-long-session.ts",
+    "test:codex-session": "npm run build && node tests/codex-long-session.mjs",
     "test:archive-recovery": "tsx tests/claude-archive-recovery.ts",
     "report:long-session": "tsx tests/long-session-report.ts",
     "typecheck:hooks": "tsc -p tsconfig.hooks.json",
