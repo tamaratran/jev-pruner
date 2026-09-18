@@ -3,6 +3,7 @@ import json
 import os
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, create_autospec, patch
@@ -11,11 +12,60 @@ from harbor.agents.installed.claude_code import ClaudeCode
 from harbor.environments.base import BaseEnvironment, ExecResult
 from harbor.models.agent.context import AgentContext
 
-from evals.auth import AUTH_OVERRIDES, AUTH_RUNTIME, auth_mode, subscription_mounts
+from evals.auth import (
+    AUTH_OVERRIDES,
+    AUTH_RUNTIME,
+    SubscriptionCheckpoint,
+    auth_mode,
+    subscription_mounts,
+)
 from evals.harbor_agent import JevClaudeCode
 
 
 class AuthTests(unittest.TestCase):
+    def test_refresh_writeback_is_private_atomic_and_rejects_stale_state(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, incoming = root / ".credentials.json", root / "incoming"
+            original = json.dumps(
+                {
+                    "claudeAiOauth": {
+                        "accessToken": "fixture-access-before",
+                        "refreshToken": "fixture-refresh-before",
+                        "expiresAt": (time.time() + 60) * 1000,
+                    }
+                }
+            )
+            refreshed = json.loads(original)
+            refreshed["claudeAiOauth"].update(
+                accessToken="fixture-access-after",
+                refreshToken="fixture-refresh-after",
+                expiresAt=(time.time() + 3600) * 1000,
+            )
+            source.write_text(original)
+            source.chmod(0o600)
+            checkpoint = SubscriptionCheckpoint(source)
+            incoming.write_text(json.dumps(refreshed))
+            metadata = checkpoint.restore(incoming)
+            self.assertTrue(metadata["changed"])
+            self.assertEqual(json.loads(source.read_text()), refreshed)
+            self.assertEqual(source.stat().st_mode & 0o777, 0o600)
+            self.assertFalse(incoming.exists())
+            self.assertNotIn("fixture-", json.dumps(metadata) + repr(checkpoint))
+            incoming.write_text(original)
+            with self.assertRaisesRegex(ValueError, "changed during"):
+                checkpoint.restore(incoming)
+            current = source.read_bytes()
+            checkpoint = SubscriptionCheckpoint(source)
+            refreshed["claudeAiOauth"]["expiresAt"] = 0
+            incoming.write_text(json.dumps(refreshed))
+            with self.assertRaisesRegex(ValueError, "expired"):
+                checkpoint.restore(incoming)
+            incoming.write_text("invalid fixture-secret")
+            with self.assertRaisesRegex(ValueError, "^Invalid subscription"):
+                checkpoint.restore(incoming)
+            self.assertEqual(source.read_bytes(), current)
+
     def test_mode_is_explicit_and_unknown_modes_fail(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
             self.assertEqual(auth_mode(), "api")

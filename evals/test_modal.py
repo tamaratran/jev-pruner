@@ -15,6 +15,7 @@ from harbor.models.trial.config import ResourceMode
 from harbor.models.trial.paths import TrialPaths
 from modal.billing import BillingReportItem
 
+from evals.auth import SubscriptionCheckpoint
 from evals.modal_images import checked_digest, resolve_image
 from evals.modal_provider import PinnedModalEnvironment, verify_downloads
 from evals.modal_runner import (
@@ -51,6 +52,79 @@ def provider(root: Path, approved: bool = False) -> PinnedModalEnvironment:
 
 
 class ModalTests(unittest.IsolatedAsyncioTestCase):
+    async def test_cached_auth_preflight_uses_the_original_modal_image(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch("evals.modal_provider.App.lookup") as lookup,
+            patch("evals.modal_provider.Image.from_id") as image,
+            patch("evals.modal_provider.Image.from_registry") as registry,
+            patch("evals.modal_provider.Sandbox.create") as create,
+        ):
+            environment = provider(Path(directory), approved=True)
+            environment.preflight_only = True
+            environment.reuse_image = True
+            lookup.aio = AsyncMock()
+            image.aio = AsyncMock(return_value=MagicMock(object_id="im-fixture"))
+            create.aio = AsyncMock(side_effect=RuntimeError("fixture stop"))
+            with self.assertRaisesRegex(RuntimeError, "fixture stop"):
+                await environment.start(False)
+            image.aio.assert_awaited_once_with("im-fixture")
+            registry.assert_not_called()
+
+    async def test_refresh_save_precedes_evidence_and_cleanup_on_success_or_failure(
+        self,
+    ) -> None:
+        for fails in (False, True):
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                source = root / ".credentials.json"
+                source.write_text(
+                    json.dumps(
+                        {
+                            "claudeAiOauth": {
+                                "accessToken": "fixture-before",
+                                "refreshToken": "fixture-refresh",
+                                "expiresAt": 4_000_000_000_000,
+                            }
+                        }
+                    )
+                )
+                source.chmod(0o600)
+                environment = provider(root)
+                environment.subscription_checkpoint = SubscriptionCheckpoint(source)
+                sandbox = MagicMock()
+                order = []
+
+                async def download(remote, target) -> None:
+                    order.append("credentials")
+                    if fails:
+                        raise OSError("fixture failure")
+                    target.write_text(source.read_text().replace("before", "after"))
+
+                async def collect() -> None:
+                    order.append("evidence")
+
+                async def terminate() -> None:
+                    order.append("terminate")
+
+                sandbox.terminate.aio = AsyncMock(side_effect=terminate)
+                sandbox.wait.aio = AsyncMock()
+                environment._sandbox = sandbox
+                with (
+                    patch.object(
+                        environment, "_sdk_download_file", side_effect=download
+                    ),
+                    patch.object(environment, "collect_evidence", side_effect=collect),
+                ):
+                    await environment.stop(True)
+                self.assertEqual(order, ["credentials", "evidence", "terminate"])
+                self.assertEqual(
+                    environment.lifecycle["subscription_state_saved"], not fails
+                )
+                self.assertTrue(environment.lifecycle["termination_confirmed"])
+                self.assertNotIn("fixture-refresh", json.dumps(environment.lifecycle))
+                self.assertEqual(list(root.glob("subscription-sync-*")), [])
+
     async def test_provider_usage_retains_build_margin_and_cannot_lower_budget(
         self,
     ) -> None:

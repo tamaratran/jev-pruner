@@ -338,6 +338,42 @@ on access, registry, setup, evidence or budget failures. Use `--resume` only wit
 an unchanged identity and entirely pending/finished checkpoints. Preserve all
 prior evidence directories unchanged.
 
+### Subscription refresh and explicit continuation
+
+Modal sandboxes copy the controller's official login into private runtime storage.
+Claude can refresh that copy during setup or inference. Before termination the
+provider downloads only `.credentials.json` into a private temporary directory
+outside evidence, validates its refresh state, and atomically replaces the
+controller copy. It refuses expired, malformed, or concurrently replaced state.
+This uses the existing transfer-time allowance; evidence retrieval and termination
+still run when refresh-state retrieval fails. Only expiry, change, and failure
+metadata enter the lifecycle evidence. Failed writeback stops further scheduling
+without discarding any scored result.
+
+For a stopped campaign, use a new clean plan and evidence directory plus
+`--continue-from`. Frozen production, task, model, and CLI settings must match.
+Verified scored rows are referenced with their original evidence hashes and
+harness revision, never rerun. A setup failure with no agent execution is labeled
+as a new setup attempt before its first agent attempt. The original campaign
+remains unchanged. A fresh no-inference subscription preflight on the first
+cached image must pass before any missing scored row is scheduled.
+
+```sh
+chmod 700 "$JEV_EVAL_CLAUDE_AUTH_DIR"
+python -m evals.modal_runner plan \
+  --benchmark-source "$BENCHMARK" --plan "$HOME/jev-modal-execution-plan-v7"
+python -m evals.modal_runner campaign \
+  --benchmark-source "$BENCHMARK" --plan "$HOME/jev-modal-execution-plan-v7" \
+  --seed-preflight "$HOME/jev-modal-campaign-v5" \
+  --continue-from "$HOME/jev-modal-campaign-v5" \
+  --evidence "$HOME/jev-modal-campaign-v7" \
+  --budget-usd 30 --prior-accounted-usd 4.10 --build-reserve-usd 0.25 \
+  --billing-start-date 2026-09-18 --approve-modal-compute --approve-inference
+```
+
+The example rounds the v6 cumulative reservation up to $4.10. Reconcile any later
+setup spending before reusing it; it is not the actual provider bill.
+
 The observer adapts `tests/fixtures/long-session-observer`. It never modifies
 requests/results and never captures HTTP headers. It captures activation,
 started/completed Jev requests with response usage/latency, production log

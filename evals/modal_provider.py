@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import shlex
+import tempfile
 import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -13,6 +14,12 @@ from harbor.environments.base import ExecResult
 from harbor.environments.modal import ModalEnvironment
 from modal import App, Image, Sandbox, Secret
 
+from evals.auth import (
+    AUTH_RUNTIME,
+    SubscriptionCheckpoint,
+    auth_mode,
+    subscription_source,
+)
 from evals.full import save
 from evals.registry_auth import registry_credentials
 
@@ -46,6 +53,7 @@ class PinnedModalEnvironment(ModalEnvironment):
         image_pin: dict,
         approved: bool = False,
         preflight: bool = False,
+        reuse_image: bool = False,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
@@ -62,6 +70,9 @@ class PinnedModalEnvironment(ModalEnvironment):
         self.pin = image_pin
         self.approved = approved
         self.preflight_only = preflight
+        self.reuse_image = reuse_image
+        if reuse_image and (not preflight or "modal_image_id" not in image_pin):
+            raise ValueError("Cached auth preflight requires a pinned Modal image")
         self.lifecycle: dict = {
             "image_pin": image_pin,
             "cpu": self._cpu_config(),
@@ -76,6 +87,7 @@ class PinnedModalEnvironment(ModalEnvironment):
         }
         self.started = 0.0
         self.stopped = False
+        self.subscription_checkpoint: SubscriptionCheckpoint | None = None
 
     @property
     def evidence_root(self) -> Path:
@@ -129,13 +141,20 @@ class PinnedModalEnvironment(ModalEnvironment):
             raise ValueError("Finite sandbox lifetime required")
         if self.pin["tag"] != self.task_env_config.docker_image:
             raise ValueError("Image pin does not match the original task")
+        if auth_mode() == "subscription":
+            self.subscription_checkpoint = SubscriptionCheckpoint(
+                subscription_source() / ".credentials.json"
+            )
+            self.lifecycle["subscription_source_expires_at"] = (
+                self.subscription_checkpoint.expires_at
+            )
         self.started = time.monotonic()
         self.record("create", "started", attempt=1)
         try:
             self._app = await App.lookup.aio(
                 "jev-terminal-bench", create_if_missing=True
             )
-            if self.preflight_only:
+            if self.preflight_only and not self.reuse_image:
                 credentials = registry_credentials()
                 registry_secret = (
                     Secret.from_dict(
@@ -170,7 +189,7 @@ class PinnedModalEnvironment(ModalEnvironment):
             )
             self.record("create", "finished", attempt=1)
             if (
-                not self.preflight_only
+                "modal_image_id" in self.pin
                 and self._image.object_id != self.pin["modal_image_id"]
             ):
                 raise ValueError("Modal image identity mismatch")
@@ -243,14 +262,42 @@ class PinnedModalEnvironment(ModalEnvironment):
         save(self.evidence_root / "modal-evidence-sha256.json", hashes)
         self.lifecycle["evidence_verified"] = True
 
+    async def preserve_subscription(self) -> None:
+        checkpoint = self.subscription_checkpoint
+        if checkpoint is None:
+            return
+        with tempfile.TemporaryDirectory(
+            prefix="subscription-sync-", dir=checkpoint.path.parent
+        ) as directory:
+            destination = Path(directory) / ".credentials.json"
+            await self._sdk_download_file(
+                f"{AUTH_RUNTIME}/.credentials.json", destination
+            )
+            self.lifecycle["subscription_checkpoint"] = checkpoint.restore(destination)
+        self.lifecycle["subscription_state_saved"] = True
+
     async def stop(self, delete: bool) -> None:
         if self.stopped:
             return
         self.stopped = True
         try:
             if self._sandbox is not None:
+                transfer_started = time.monotonic()
+                if self.subscription_checkpoint is not None:
+                    try:
+                        await asyncio.wait_for(
+                            self.preserve_subscription(), min(30, TRANSFER_SECONDS)
+                        )
+                    except Exception as error:
+                        self.lifecycle["subscription_state_saved"] = False
+                        self.lifecycle["subscription_error"] = type(error).__name__
                 try:
-                    await asyncio.wait_for(self.collect_evidence(), TRANSFER_SECONDS)
+                    await asyncio.wait_for(
+                        self.collect_evidence(),
+                        max(
+                            1, TRANSFER_SECONDS - (time.monotonic() - transfer_started)
+                        ),
+                    )
                     self.record("evidence", "verified")
                 except Exception as error:
                     self.lifecycle["evidence_error"] = type(error).__name__
