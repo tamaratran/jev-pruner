@@ -1,9 +1,11 @@
 """Harbor 0.22.0 Claude Code adapter; task prompts and verifiers stay upstream."""
 
 import json
+import math
 import os
 import shlex
 from pathlib import Path
+from time import monotonic
 
 from harbor.agents.installed.claude_code import ClaudeCode
 from harbor.environments.base import BaseEnvironment, ExecResult
@@ -32,8 +34,18 @@ def arm(value: str | None = None) -> str:
 
 
 class JevClaudeCode(ClaudeCode):
-    def __init__(self, *args, eval_arm: str | None = None, **kwargs):
+    def __init__(
+        self,
+        *args,
+        eval_arm: str | None = None,
+        remote_timeout_seconds: float | None = None,
+        **kwargs,
+    ):
         self.eval_arm = eval_arm
+        if remote_timeout_seconds is not None and remote_timeout_seconds <= 0:
+            raise ValueError("Remote agent timeout must be positive")
+        self.remote_timeout_seconds = remote_timeout_seconds
+        self.remote_deadline: float | None = None
         super().__init__(*args, **kwargs)
 
     async def setup(self, environment: BaseEnvironment) -> None:
@@ -80,6 +92,7 @@ class JevClaudeCode(ClaudeCode):
                     "cli_flags": self.build_cli_flags(),
                     "auth_mode": auth_mode(),
                     "auth_status": auth_status,
+                    "remote_timeout_seconds": self.remote_timeout_seconds,
                 },
                 indent=2,
             )
@@ -149,6 +162,16 @@ class JevClaudeCode(ClaudeCode):
         cwd: str | None = None,
         timeout_sec: int | None = None,
     ) -> ExecResult:
+        if self.remote_deadline is not None:
+            remaining = self.remote_deadline - monotonic()
+            if remaining <= 0:
+                raise TimeoutError("Agent execution deadline reached")
+            remote_timeout = math.ceil(remaining)
+            timeout_sec = (
+                min(timeout_sec, remote_timeout)
+                if timeout_sec is not None
+                else remote_timeout
+            )
         effective_env = {
             **(env or {}),
             "DISABLE_TELEMETRY": "1",
@@ -166,6 +189,19 @@ class JevClaudeCode(ClaudeCode):
         )
 
     async def run(
+        self,
+        instruction: str,
+        environment: BaseEnvironment,
+        context: AgentContext,
+    ) -> None:
+        if self.remote_timeout_seconds is not None:
+            self.remote_deadline = monotonic() + self.remote_timeout_seconds
+        try:
+            await self._run_measured(instruction, environment, context)
+        finally:
+            self.remote_deadline = None
+
+    async def _run_measured(
         self,
         instruction: str,
         environment: BaseEnvironment,

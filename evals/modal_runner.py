@@ -178,6 +178,11 @@ def trial_config(
                 "max_turns": 80,
                 "reasoning_effort": "high",
                 "eval_arm": "control" if preflight else row["arm"],
+                **(
+                    {"remote_timeout_seconds": spec.get("agent_seconds")}
+                    if not preflight
+                    else {}
+                ),
             },
         ),
         environment=EnvironmentConfig(
