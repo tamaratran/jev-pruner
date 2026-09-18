@@ -6,6 +6,7 @@ set -euo pipefail
 : "${EVIDENCE_DIR:?Set EVIDENCE_DIR to an absolute directory outside the repo}"
 repo="$(git rev-parse --show-toplevel)"
 export PYTHONPATH="$repo${PYTHONPATH:+:$PYTHONPATH}"
+production="$(python3 -c 'from evals.full import REPO; from evals.sources import production_root, production_provenance; production_provenance(REPO); print(production_root(REPO))')"
 auth_args=()
 settings='{"enabledPlugins":{"plugin-authoring@builtin":false}}'
 prelude='unset CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC'
@@ -47,18 +48,20 @@ If the result is insufficient, say so. Do not make any further tool calls,
 inspect saved output or archives, or check the exit code in another command.'
 mkdir -p "$EVIDENCE_DIR"
 git rev-parse HEAD > "$EVIDENCE_DIR/harness-commit.txt"
+git -C "$production" rev-parse HEAD > "$EVIDENCE_DIR/production-commit.txt"
 docker image inspect "$SMOKE_IMAGE" --format '{{.Id}}' > "$EVIDENCE_DIR/image-id.txt"
 printf '%s\n' "${JEV_EVAL_AUTH_MODE:-api}" > "$EVIDENCE_DIR/auth-mode.txt"
 for arm in control plugin; do
   mkdir -p "$EVIDENCE_DIR/$arm"
   flags=(--plugin-dir /plugin/evals/observer)
-  if [[ "$arm" == plugin ]]; then flags+=(--plugin-dir /plugin); fi
+  if [[ "$arm" == plugin ]]; then flags+=(--plugin-dir /production); fi
   docker run --rm --workdir /workspace \
     "${auth_args[@]}" --env TYPESAFE_API_KEY \
     --env CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 \
     --env DISABLE_TELEMETRY=1 --env DISABLE_ERROR_REPORTING=1 --env DISABLE_AUTOUPDATER=1 \
     --env IS_SANDBOX=1 \
     --mount "type=bind,src=$repo,dst=/plugin,readonly" \
+    --mount "type=bind,src=$production,dst=/production,readonly" \
     --mount "type=bind,src=$EVIDENCE_DIR/$arm,dst=/logs/agent" \
     "$SMOKE_IMAGE" bash -ec "$prelude"'
       test "$(claude --version)" = "2.1.274 (Claude Code)"
