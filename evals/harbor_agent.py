@@ -1,9 +1,11 @@
 """Harbor 0.22.0 Claude Code adapter; task prompts and verifiers stay upstream."""
 
 import json
+import math
 import os
 import shlex
 from pathlib import Path
+from time import monotonic
 
 from harbor.agents.installed.claude_code import ClaudeCode
 from harbor.environments.base import BaseEnvironment, ExecResult
@@ -23,18 +25,33 @@ REPO = Path(__file__).resolve().parents[1]
 REMOTE = "/opt/jev-eval"
 
 
-def arm() -> str:
-    value = os.environ["JEV_EVAL_ARM"]
+def arm(value: str | None = None) -> str:
+    if value is None:
+        value = os.environ["JEV_EVAL_ARM"]
     if value not in {"control", "plugin"}:
         raise ValueError("JEV_EVAL_ARM must be control or plugin")
     return value
 
 
 class JevClaudeCode(ClaudeCode):
+    def __init__(
+        self,
+        *args,
+        eval_arm: str | None = None,
+        remote_timeout_seconds: float | None = None,
+        **kwargs,
+    ):
+        self.eval_arm = eval_arm
+        if remote_timeout_seconds is not None and remote_timeout_seconds <= 0:
+            raise ValueError("Remote agent timeout must be positive")
+        self.remote_timeout_seconds = remote_timeout_seconds
+        self.remote_deadline: float | None = None
+        super().__init__(*args, **kwargs)
+
     async def setup(self, environment: BaseEnvironment) -> None:
         if self._version != CLAUDE_VERSION:
             raise ValueError(f"Pass --ak version={CLAUDE_VERSION}")
-        arm()
+        arm(self.eval_arm)
         auth_mode()
         if auth_mode() == "subscription" and self.config_source is not None:
             raise ValueError("Subscription evaluation does not accept custom settings")
@@ -69,12 +86,13 @@ class JevClaudeCode(ClaudeCode):
         (self.logs_dir / "eval-settings.json").write_text(
             json.dumps(
                 {
-                    "arm": arm(),
+                    "arm": arm(self.eval_arm),
                     "claude_version": CLAUDE_VERSION,
                     "model": self.model_name,
                     "cli_flags": self.build_cli_flags(),
                     "auth_mode": auth_mode(),
                     "auth_status": auth_status,
+                    "remote_timeout_seconds": self.remote_timeout_seconds,
                 },
                 indent=2,
             )
@@ -110,7 +128,7 @@ class JevClaudeCode(ClaudeCode):
         if auth_mode() == "subscription":
             settings["forceLoginMethod"] = "claudeai"
         flags += f" --settings {shlex.quote(json.dumps(settings))}"
-        if arm() == "plugin":
+        if arm(self.eval_arm) == "plugin":
             flags += f" --plugin-dir {REMOTE}/production"
         return flags
 
@@ -144,6 +162,16 @@ class JevClaudeCode(ClaudeCode):
         cwd: str | None = None,
         timeout_sec: int | None = None,
     ) -> ExecResult:
+        if self.remote_deadline is not None:
+            remaining = self.remote_deadline - monotonic()
+            if remaining <= 0:
+                raise TimeoutError("Agent execution deadline reached")
+            remote_timeout = math.ceil(remaining)
+            timeout_sec = (
+                min(timeout_sec, remote_timeout)
+                if timeout_sec is not None
+                else remote_timeout
+            )
         effective_env = {
             **(env or {}),
             "DISABLE_TELEMETRY": "1",
@@ -161,6 +189,19 @@ class JevClaudeCode(ClaudeCode):
         )
 
     async def run(
+        self,
+        instruction: str,
+        environment: BaseEnvironment,
+        context: AgentContext,
+    ) -> None:
+        if self.remote_timeout_seconds is not None:
+            self.remote_deadline = monotonic() + self.remote_timeout_seconds
+        try:
+            await self._run_measured(instruction, environment, context)
+        finally:
+            self.remote_deadline = None
+
+    async def _run_measured(
         self,
         instruction: str,
         environment: BaseEnvironment,
@@ -185,7 +226,7 @@ class JevClaudeCode(ClaudeCode):
             if isinstance(event, dict) and event.get("subtype") == "init":
                 loaded_plugins = {plugin["name"] for plugin in event.get("plugins", [])}
         expected_plugins = {"jev-eval-observer"}
-        if arm() == "plugin":
+        if arm(self.eval_arm) == "plugin":
             expected_plugins.add("fast-jev-output")
         if loaded_plugins != expected_plugins:
             raise RuntimeError(f"Unexpected loaded plugins: {loaded_plugins}")

@@ -186,6 +186,241 @@ separate preflight provenance can refer to the preceding adapter commit when
 only orchestration was added after the smoke; production and observer hashes must
 match across preflight and execution. Never edit sources while a run is active.
 
+### Modal: pinned preflight and matched execution
+
+Use `evals.modal_runner` to select the bounded Modal provider. It uses Harbor's
+`Trial.create` and `install_only` APIs, not the Docker subprocess launcher.
+Requires Python 3.12, Harbor 0.22.0, Modal 1.5.1, dockerfile-parse 2.0.1 and
+official Modal profile authentication. Keep the feature checkout committed:
+production files must match `907353b80f159bd3d693d6fbb310b1f6bf10c2d3`.
+The dataset must be a clean checkout of
+`69671fbaac6d67a7ef0dfec016cc38a64ef7a77c`.
+
+Offline planning constructs all 89 provider configurations without SDK calls:
+
+```sh
+export PYTHONPATH=/home/ubuntu/repos/jev-pruner
+export BENCHMARK=/home/ubuntu/jev-eval/benchmark-source
+export PLAN=/home/ubuntu/jev-modal-execution-plan-v4
+/home/ubuntu/harbor-venv/bin/python -m evals.modal_runner plan \
+  --benchmark-source "$BENCHMARK" --plan "$PLAN"
+```
+
+Only after explicit compute approval, the following runs serial image/resource/
+auth preflights. It installs Claude Code, uploads allowlisted subscription
+files privately, checks `claude auth status`, large-file read/write, loopback TCP
+and tool availability, then downloads and hashes evidence before termination.
+It does not run Claude inference, Jev requests, or task verifiers.
+
+```sh
+export MODAL_PROFILE=jev-terminal-bench
+export JEV_EVAL_AUTH_MODE=subscription
+export JEV_EVAL_CLAUDE_AUTH_DIR=/home/ubuntu/.jev-claude-auth/.claude
+export MODAL_BUDGET_USD=28.26
+export MODAL_BILLING_START=2026-09-18
+/home/ubuntu/harbor-venv/bin/python -m evals.modal_runner preflight \
+  --benchmark-source "$BENCHMARK" --plan "$PLAN" \
+  --evidence /home/ubuntu/jev-modal-preflight-v4 \
+  --budget-usd "$MODAL_BUDGET_USD" --build-reserve-usd 0.25 \
+  --billing-start-date "$MODAL_BILLING_START" --approve-modal-compute
+```
+
+These example values preserve $1.74 for this session's earlier setup attempts
+within the single $30 authorization. For a new experiment, use its authorized
+remaining budget, billing start date and fresh evidence/plan directories.
+
+The first task requests 1 physical core and 2 GiB. At the quoted Sandbox rates,
+60–300 seconds costs approximately $0.0032–$0.0158, excluding image import/build
+costs. Its 810-second sandbox deadline reserves about $0.0427; the launcher also
+reserves the task's build allowance plus $0.25 for unmetered image import work.
+The build reserve is an explicit planning margin, **not a known price or cap**.
+
+With `--billing-start-date`, the runner reads `Workspace.billing.report` before
+each sandbox and at completion. The date is pinned across midnight and resume;
+the report includes the current hourly interval and all workspace usage before
+credits. It checkpoints every image/row and stops if billing cannot be read.
+Accounted spend is the greater of cumulative runtime/build reservations or
+observed provider usage **plus retained build margins**. Lower delayed
+observations cannot reduce the ledger. Consequently it may stop before all images fit within the budget;
+do not reset the ledger to work around that stop. Image-builder charges can be
+delayed, and local reservations cannot enforce a provider spending cap.
+Without the billing option, preflight stops after each image for manual
+reconciliation via `--resume --observed-total-usd VALUE`.
+
+After all 89 preflights pass and their final usage is reconciled, use the following
+**separately inference-approved** command. Inject `TYPESAFE_API_KEY` securely in the
+process environment first; never put its value in commands or files:
+
+```sh
+/home/ubuntu/harbor-venv/bin/python -m evals.modal_runner run \
+  --benchmark-source "$BENCHMARK" --plan "$PLAN" \
+  --preflight /home/ubuntu/jev-modal-preflight-v4 \
+  --evidence /home/ubuntu/jev-modal-full-v4 \
+  --budget-usd "$MODAL_BUDGET_USD" --billing-start-date "$MODAL_BILLING_START" \
+  --approve-modal-compute --approve-inference
+```
+
+This budget includes the preflight ledger. Both arms reuse the preflight's same
+Modal image ID and Linux/amd64 OCI manifest digest; mutable tag drift, registry
+authorization/rate limits, layer/import failures, or failed evidence downloads
+stop scheduling. Each scored row uses one fresh sandbox. Sources/tasks and the
+plan identity must match on resume; failed/interrupted attempts require explicit
+inspection and cannot silently rerun. The 178 planned rows and null rewards remain.
+
+Sandbox lifetimes include setup (360 seconds), transfer (300), cleanup (90), a
+60-second allowance, and original agent/verifier timeouts for full trials. The
+task build timeout also bounds environment startup. Cleanup waits are bounded
+even after evidence failures. There is one creation attempt, up to two explicitly
+logged file-transfer/termination attempts for I/O timeouts, and no scored retries.
+Modal SDK internal RPC retries are not observable as counters and are disclosed.
+
+The SDK cannot request task storage capacity. Preflight records filesystem
+statistics and verifies creation plus random read/write of a 32 GiB truncated
+file, alongside the unmapped 10,240 MiB declaration. Modal's virtual filesystem
+reported placeholder-sized capacity and full-size block counts in a real probe;
+these statistics cannot prove physical free space or sparse allocation.
+QEMU guest boot, VNC,
+Valgrind/ptrace and actual task behavior remain runtime checks; version probes do
+not certify them. Subscription model access and hook activation require inference.
+Missing/corrupt evidence or unconfirmed termination prevents a completed score.
+All downloaded evidence is private and must be sanitized before sharing, as below.
+No credentials are put in image layers, named Modal Secrets or Volumes. SDK exec
+uses direct environment values for the Jev key rather than Harbor's ephemeral
+Secrets. Registry authentication uses an ephemeral Secret handle passed only to
+`Image.from_registry(secret=...)`; it is never attached to a sandbox or exec.
+
+### Authenticated registry and interleaved campaign
+
+Create a short-lived Docker Hub **Public Repo Read-only** token through the
+official account UI. Store `{"username": "...", "token": "..."}` in an owned
+mode-600 file inside a mode-700 directory outside the repository and evidence.
+Set `JEV_EVAL_DOCKER_AUTH_FILE` to its path. Values are read only by the controller:
+Basic authentication obtains a pull-scoped Docker Hub bearer token, and Modal's
+registry importer receives a private ephemeral registry-auth handle. Neither
+credential is included in trial configuration, logs, evidence, agent environment,
+verifier environment, or image layers. Invalid configured credentials fail closed.
+
+The `campaign` command runs each task's preflight followed immediately by its
+two arms, preserving the plan's alternating arm order and all 178 scored rows.
+Successful preflights can be adopted from an earlier run with `--seed-preflight`.
+This is an explicit new campaign with newly frozen harness provenance; production,
+task, dependency and agent settings must match. Adoption rechecks evidence hashes,
+image identity and confirmed termination. Old failed preflight rows remain in
+the copied seed provenance; new setup attempts are separate. No scored results
+are imported or retried. The first arm resolves the seed's tag again and rejects
+drift; subsequent arms use the same verified immutable Modal image ID.
+
+For this campaign, the $3.56 prior reservation rounds up the earlier $1.74 setup
+reserve plus v4's $1.81927 ledger. It remains held, including while delayed
+provider charges arrive. Build/import prices remain unknown and separately
+reserved at $0.25 per newly imported image. This is conservative local accounting,
+not a provider-enforced $30 cap.
+
+```sh
+export JEV_EVAL_DOCKER_AUTH_FILE="$HOME/.jev-docker-auth/registry.json"
+export JEV_EVAL_AUTH_MODE=subscription
+export JEV_EVAL_CLAUDE_AUTH_DIR="$HOME/.jev-claude-auth/.claude"
+export MODAL_PROFILE=jev-terminal-bench
+# Inject TYPESAFE_API_KEY privately before the campaign command.
+python -m evals.modal_runner plan \
+  --benchmark-source "$BENCHMARK" --plan "$HOME/jev-modal-execution-plan-v5"
+python -m evals.modal_runner campaign \
+  --benchmark-source "$BENCHMARK" --plan "$HOME/jev-modal-execution-plan-v5" \
+  --seed-preflight "$HOME/jev-modal-preflight-v4" \
+  --evidence "$HOME/jev-modal-campaign-v5" \
+  --budget-usd 30 --prior-accounted-usd 3.56 --build-reserve-usd 0.25 \
+  --billing-start-date 2026-09-18 --approve-modal-compute --approve-inference
+```
+
+The campaign stores setup checkpoints in `preflight-progress.json` and scored
+checkpoints in `progress.json`. Both share one budget ledger and stop together
+on access, registry, setup, evidence or budget failures. Use `--resume` only with
+an unchanged identity and entirely pending/finished checkpoints. Preserve all
+prior evidence directories unchanged.
+
+### Subscription refresh and explicit continuation
+
+Modal sandboxes copy the controller's official login into private runtime storage.
+Claude can refresh that copy during setup or inference. Before termination the
+provider downloads only `.credentials.json` into a private temporary directory
+outside evidence, validates its refresh state, and atomically replaces the
+controller copy. It refuses expired, malformed, or concurrently replaced state.
+This uses the existing transfer-time allowance; evidence retrieval and termination
+still run when refresh-state retrieval fails. Only expiry, change, and failure
+metadata enter the lifecycle evidence. Failed writeback stops further scheduling
+without discarding any scored result.
+
+For a stopped campaign, use a new clean plan and evidence directory plus
+`--continue-from`. Frozen production, task, model, and CLI settings must match.
+Verified scored rows are referenced with their original evidence hashes and
+harness revision, never rerun. A setup failure with no agent execution is labeled
+as a new setup attempt before its first agent attempt. The original campaign
+remains unchanged. A fresh no-inference subscription preflight on the first
+cached image must pass before any missing scored row is scheduled.
+
+```sh
+chmod 700 "$JEV_EVAL_CLAUDE_AUTH_DIR"
+python -m evals.modal_runner plan \
+  --benchmark-source "$BENCHMARK" --plan "$HOME/jev-modal-execution-plan-v7"
+python -m evals.modal_runner campaign \
+  --benchmark-source "$BENCHMARK" --plan "$HOME/jev-modal-execution-plan-v7" \
+  --seed-preflight "$HOME/jev-modal-campaign-v5" \
+  --continue-from "$HOME/jev-modal-campaign-v5" \
+  --evidence "$HOME/jev-modal-campaign-v7" \
+  --budget-usd 30 --prior-accounted-usd 4.10 --build-reserve-usd 0.25 \
+  --billing-start-date 2026-09-18 --approve-modal-compute --approve-inference
+```
+
+The example rounds the v6 cumulative reservation up to $4.10. Reconcile any later
+setup spending before reusing it; it is not the actual provider bill.
+
+### Parallel campaigns and a small checkpoint
+
+Campaigns accept `--concurrency 1..32` (default 1). Each free slot takes at most one
+ready row from each task: verified preflight, then the two arms in the frozen
+order. The continuation's fresh subscription recheck completes alone before
+any other row. Arms are instance-local, so overlapping setup cannot change
+another agent's plugin selection. Per-sandbox resources, prompts and limits
+remain unchanged.
+
+The controller reserves each row before launching it, associates runtime
+settlements with the individual ledger entries, and reads provider billing
+before refilling completed slots. A failure prevents new launches; already-started trials
+finish and retain their evidence. Create `PAUSE` in the evidence directory to
+drain active trials without interrupting an agent attempt. `active-trials.json`
+records the configured limit, launch count and active job names.
+
+Parallel launches require the private access expiry to exceed each selected
+trial's full build/runtime bound plus ten minutes. Near expiry the runner falls
+back to one trial so a runtime refresh can be checkpointed without concurrent
+writers. Unexpected competing credential updates still fail closed. This
+does not bypass Claude subscription limits; access failures stop scheduling.
+
+Use `--checkpoint-tasks 10` to save `small-results.json` once the first ten
+manifest tasks finish both arms. These are the first tasks in alphabetical
+manifest order, not a representative random sample. The full campaign continues
+and never reruns them merely to produce the checkpoint.
+Continuations also retain verified agent-timeout attempts with a verifier reward
+when their only measurement issue is missing final Claude usage. The issue and
+unavailable usage remain recorded; these rows are excluded from complete
+measurement comparisons. Activation, image, authentication and evidence checks
+still apply, and access-blocked attempts cannot use this exception.
+
+`--no-budget-limit` replaces the local credit ceiling only with explicit user
+authorization. It cannot be combined with `--budget-usd`. Provider usage,
+runtime reservations, unknown image-build margins and billing failures are
+still tracked; provider billing settings are not changed. For example:
+
+```sh
+python -m evals.modal_runner campaign \
+  --benchmark-source "$BENCHMARK" --plan "$NEW_PLAN" \
+  --seed-preflight "$PREVIOUS_EVIDENCE" --continue-from "$PREVIOUS_EVIDENCE" \
+  --evidence "$NEW_EVIDENCE" --prior-accounted-usd "$PRIOR_RESERVATION" \
+  --concurrency 32 --checkpoint-tasks 10 --no-budget-limit \
+  --build-reserve-usd 0.25 --billing-start-date "$BILLING_START" \
+  --approve-modal-compute --approve-inference
+```
+
 The observer adapts `tests/fixtures/long-session-observer`. It never modifies
 requests/results and never captures HTTP headers. It captures activation,
 started/completed Jev requests with response usage/latency, production log
@@ -208,6 +443,35 @@ Review and sanitize all evidence before sharing: although headers are omitted,
 task output or debug logs could contain credentials. Never commit transcripts,
 settings caches, or bulky reports. Keep the dependency lock, task locks/image
 digests, exact commands, and separate infra errors with the delivered artifacts.
+
+## Continuing after audited task or evidence failures
+
+Wait for every active trial to finish before creating another campaign. A new
+campaign can explicitly use `--retain-failed-attempts` to preserve terminated
+attempts with unverified evidence as errors with null rewards. It never retries
+their agents. Verified verifier rewards from agent errors are retained, while
+their incomplete Claude measurements remain flagged. Shared subscription access
+is rechecked alone before new inference; new authentication or evidence failures
+still halt scheduling and drain active work.
+
+Use `--defer-task TASK` only for an audited task-specific preflight failure.
+Its prior preflight, confirmed termination, and source campaign are retained.
+Both unattempted arms receive setup-error rows rather than model losses, and
+independent tasks can proceed. This does not change the frozen task image,
+dependencies, verifier, or production plugin.
+
+Evidence hashes and downloads use one remote snapshot to avoid comparing live
+files at different times. Role-log transfers have 90-second deadlines; sandbox
+lifetime and cost reservations include this overhead without changing task
+agent or verifier limits. Subscription refresh state is checkpointed before
+agent-log downloads and again before sandbox termination.
+
+Modal scored trials also pass the remaining agent time to each remote exec.
+Cancelling a local output reader does not terminate the remote process; Modal's
+server-side exec deadline does. The same task agent limit governs the whole
+agent phase, with remaining time rounded up to Modal's integer-second API.
+Setup and verifier limits remain separate. Historical timed-out attempts without
+this remote deadline retain their observed rewards and require a timing caveat.
 
 ## Checks
 
