@@ -51,8 +51,11 @@ Claude requests a Bash command → Command runs → Jev prunes stdout → Claude
    result (including warnings, test totals, and artifact paths), or its complete text was not
    scored against every history segment (for example, a single chunk that cannot
    fit beside a segment). No partially shown chunk can be discarded.
-7. Each dropped run becomes a marker such as:
-   `[fast-jev-output trimmed N lines (M chars); full output: .claude/fast-jev-output/bash-<id>.txt (Read or grep it if needed)]`
+7. Each dropped run becomes `[N lines omitted]`.
+   Adjacent omissions across chunk boundaries share one marker. The Claude hook
+   labels retained lines as verbatim and puts the archive path in a single footer;
+   all metadata counts toward the native preview budget. Library callers can
+   enable this rendering with `compactMarkers: true`.
 8. Before the first scoring request, the complete stdout and stderr are saved
    under the project's `.claude/fast-jev-output/` directory (self-gitignored).
    When Claude already persisted the complete output, that file is reused as the
@@ -68,6 +71,11 @@ Claude requests a Bash command → Command runs → Jev prunes stdout → Claude
 9. Any archive write failure, Jev failure, or state that cannot fit leaves the original output untouched.
    Separate inline stderr is left unchanged. Host-persisted output is scored as
    the combined stream supplied by Claude.
+
+Explicit Bash commands containing a successfully pruned archive's path bypass
+further pruning in the same hook instance. Read and Grep are already unaffected.
+Recovery remains available; the plugin does not prevent the agent from checking
+an archive. Indirect reads through aliases or variables are not recognized.
 
 The hook reads the current transcript for each command; it does not maintain a
 separate history store. Claude Code's `session.messages()` returns the main

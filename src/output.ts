@@ -38,6 +38,8 @@ export interface TrimOutputOptions {
   maxChars?: number;
   /** Maximum additional Jev requests, including refinement and retries. */
   maxScoringRequests?: number;
+  /** Short omission markers and one recovery footer, included in maxChars. */
+  compactMarkers?: boolean;
 }
 
 export interface TrimOutputInput {
@@ -64,6 +66,11 @@ type OutputChunk = {
   text: string;
   lines: number;
   chars: number;
+};
+
+type RefinedChunk = {
+  text: string;
+  keptLines: Set<number>;
 };
 
 function finite(value: number | undefined, fallback: number): number {
@@ -248,6 +255,12 @@ function outputMarker(
   }]`;
 }
 
+export function recoveryFooter(path?: string): string {
+  return path
+    ? `\n\n[fast-jev-output full output: ${path} (Read or grep it if needed)]`
+    : '\n\n[fast-jev-output not saved to disk; re-run the command if you need omitted lines]';
+}
+
 function scoringRequests(
   input: TrimOutputInput,
   chunks: readonly OutputChunk[],
@@ -391,6 +404,7 @@ async function trimOutputAttempt(
     maxStateTokens,
     requestBudget,
     onDecision: options.onDecision,
+    compactMarkers: options.compactMarkers === true,
   });
 }
 
@@ -407,6 +421,7 @@ async function assemble(
     maxStateTokens: number;
     requestBudget: { remaining: number };
     onDecision?: TrimOutputOptions['onDecision'];
+    compactMarkers: boolean;
   },
 ): Promise<TrimOutputResult> {
   const { keepThreshold, maxChars, histories, asker, maxStateTokens } = opts;
@@ -424,8 +439,8 @@ async function assemble(
       keptIndexes.add(index);
     }
   }
-  const shrunk = new Map<number, string>();
-  const render = (kept = keptIndexes) => renderOutput(input, chunks, kept, shrunk);
+  const shrunk = new Map<number, RefinedChunk>();
+  const render = (kept = keptIndexes) => renderOutput(input, chunks, kept, shrunk, opts.compactMarkers);
   if (maxChars > 0 && render(omitted).length > maxChars) {
     return untrimmed(input.output, chunks.length, scores, 'budget_unfit', opts.onDecision);
   }
@@ -434,9 +449,9 @@ async function assemble(
       (a, b) => chunks[b]!.chars - chunks[a]!.chars,
     )) {
       if (render().length <= maxChars) break;
-      let text: string;
+      let refined: RefinedChunk | undefined;
       try {
-        text = await shrinkChunkWithJev(
+        refined = await shrinkChunkWithJev(
           chunks[index]!,
           input,
           histories,
@@ -449,12 +464,15 @@ async function assemble(
             first: index === 0 || isProtectedLine(chunks[index - 1]?.text.split('\n').at(-1) ?? ''),
             last: index === chunks.length - 1 || isProtectedLine(chunks[index + 1]?.text.split('\n')[0] ?? ''),
           },
+          opts.compactMarkers,
         );
       } catch {
-        text = chunks[index]!.text;
+        refined = undefined;
       }
-      if (text.length === 0) keptIndexes.delete(index);
-      else if (text.length < chunks[index]!.chars) shrunk.set(index, text);
+      if (refined?.keptLines.size === 0) keptIndexes.delete(index);
+      else if (refined && (opts.compactMarkers || refined.text.length < chunks[index]!.chars)) {
+        shrunk.set(index, refined);
+      }
     }
   }
   if (maxChars > 0 && render().length > maxChars) {
@@ -486,12 +504,31 @@ function renderOutput(
   input: TrimOutputInput,
   chunks: readonly OutputChunk[],
   keptIndexes: Set<number>,
-  shrunk: Map<number, string>,
+  shrunk: Map<number, RefinedChunk>,
+  compact: boolean,
 ): string {
   const parts: string[] = [];
+  if (compact) {
+    let omittedLines = 0;
+    const flush = () => {
+      if (omittedLines > 0) parts.push(`[${omittedLines} lines omitted]`);
+      omittedLines = 0;
+    };
+    chunks.forEach((chunk, index) => {
+      const refined = shrunk.get(index);
+      chunk.text.split('\n').forEach((line, at) => {
+        if (keptIndexes.has(index) && (!refined || refined.keptLines.has(at))) {
+          flush();
+          parts.push(line);
+        } else omittedLines += 1;
+      });
+    });
+    flush();
+    return `[fast-jev-output trimmed; retained lines verbatim; omissions marked]\n${parts.join('\n')}${recoveryFooter(input.fullOutputPath)}`;
+  }
   for (let index = 0; index < chunks.length;) {
     if (keptIndexes.has(index)) {
-      parts.push(shrunk.get(index) ?? chunks[index]!.text);
+      parts.push(shrunk.get(index)?.text ?? chunks[index]!.text);
       index += 1;
       continue;
     }
@@ -522,10 +559,11 @@ async function shrinkChunkWithJev(
   maxRequests: number,
   targetChars: number,
   boundary: { first: boolean; last: boolean },
-): Promise<string> {
+  compact: boolean,
+): Promise<RefinedChunk | undefined> {
   const lines = chunk.text.split('\n');
   const groupLines = chunk.chars > targetChars ? 1 : REFINE_GROUP_LINES;
-  if (lines.length <= groupLines * 2) return chunk.text;
+  if (lines.length <= groupLines * 2) return undefined;
   const groups: OutputChunk[] = [];
   for (let start = 0; start < lines.length; start += groupLines) {
     const text = lines.slice(start, start + groupLines).join('\n');
@@ -539,7 +577,7 @@ async function shrinkChunkWithJev(
       for (const group of batch) coverage.set(group.id, (coverage.get(group.id) ?? 0) + 1);
     }
     if (requests.length > maxRequests || groups.some(group => coverage.get(group.id) !== histories.length)) {
-      return chunk.text;
+      return undefined;
     }
     for (const { state, batch } of requests) {
       const response = await asker.ask(state, Object.assign({}, ...batch.map(questionFor)));
@@ -549,7 +587,7 @@ async function shrinkChunkWithJev(
       }
     }
   } catch {
-    return chunk.text;
+    return undefined;
   }
   const keep = new Set<number>();
   if (boundary.first) keep.add(0);
@@ -564,21 +602,24 @@ async function shrinkChunkWithJev(
       for (let at = Math.max(0, index - 1); at <= Math.min(lines.length - 1, index + 1); at += 1) keep.add(at);
     }
   });
-  if (keep.size === lines.length) return chunk.text;
-  if (keep.size === 0) return '';
+  if (keep.size === lines.length) return undefined;
+  if (keep.size === 0) return { text: '', keptLines: keep };
   const parts: string[] = [];
+  const marker = (count: number) => compact
+    ? `[${count} lines omitted]`
+    : `[fast-jev-output trimmed ${count} more lines from this section]`;
   let removed = 0;
   lines.forEach((line, index) => {
     if (keep.has(index)) {
       if (removed > 0) {
-        parts.push(`[fast-jev-output trimmed ${removed} more lines from this section]`);
+        parts.push(marker(removed));
         removed = 0;
       }
       parts.push(line);
     } else removed += 1;
   });
-  if (removed > 0) parts.push(`[fast-jev-output trimmed ${removed} more lines from this section]`);
-  return parts.join('\n');
+  if (removed > 0) parts.push(marker(removed));
+  return { text: parts.join('\n'), keptLines: keep };
 }
 
 export async function trimOutput(

@@ -50,9 +50,9 @@ function harness(options: Partial<HookConfig> = {}) {
   const next = vi.fn(async () => original);
   return {
     bodies, messages, readMessages, read, fetch, write, original, next, log: host.ui.log,
-    run: () => hook(
+    run: (command = 'build') => hook(
       host as unknown as Parameters<BashHook>[0],
-      { tool: 'Bash', command: 'build', tool_use_id: 'bash-test' },
+      { tool: 'Bash', command, tool_use_id: 'bash-test' },
       next as unknown as Parameters<BashHook>[2],
     ),
 };
@@ -197,6 +197,17 @@ describe('Bash hook conversation state', () => {
 });
 
 describe('Bash output archives', () => {
+  it('does not prune a large explicit recovery read again', async () => {
+    const h = harness({ diagnostics: true });
+    expect((await h.run()).result?.stdout).toContain('fast-jev-output trimmed');
+    const requests = h.fetch.mock.calls.length;
+    expect(await h.run('sed -n "1,2000p" .claude/fast-jev-output/bash-bash-test.txt')).toBe(h.original);
+    expect(h.fetch).toHaveBeenCalledTimes(requests);
+    expect(h.log.mock.calls.at(-1)![0]).toContain('"decision":"archive_recovery"');
+    await h.run('build');
+    expect(h.fetch.mock.calls.length).toBeGreaterThan(requests);
+  });
+
   it('counts the archive footer in the saved-output budget', async () => {
     const h = harness({ persistedMaxChars: 8_000 });
     const complete = h.original.result.stdout;

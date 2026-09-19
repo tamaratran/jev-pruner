@@ -6,7 +6,7 @@ import type {
 } from 'claude-code';
 
 import { DEFAULT_MODEL, buildJevRequest, estimateTokens, parseJevResponse } from '../src/jev.js';
-import { classifyOutput, exceedsOutputThreshold, looksBinary, MIN_OUTPUT_TOKENS, trimOutput } from '../src/output.js';
+import { classifyOutput, exceedsOutputThreshold, looksBinary, MIN_OUTPUT_TOKENS, recoveryFooter, trimOutput } from '../src/output.js';
 import type { TrimOutputResult } from '../src/output.js';
 import type { JevAsker } from '../src/jev.js';
 import { looksSecret } from '../src/secrets.js';
@@ -137,6 +137,7 @@ export async function getApiKey(
 
 export const register: Register = (on: On, options: PluginOptions) => {
   const configured = resolveHookConfig(options);
+  const archives = new Set<string>();
 
   on('tool.call', { tool: 'Bash' }, async ($, event, next) => {
     const answer = await next(event);
@@ -154,6 +155,8 @@ export const register: Register = (on: On, options: PluginOptions) => {
     let hookStdoutCharsAfter = hookStdoutCharsBefore;
     try {
       if (answer.deny !== undefined || answer.isError || !answer.result) return answer;
+      decision = 'archive_recovery';
+      if ([...archives].some(path => event.command.includes(path))) return answer;
       const record = answer.result;
       const persisted = record.persistedOutputPath;
       decision = 'persisted_disabled';
@@ -181,9 +184,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
       const path = secret
         ? undefined
         : persisted ?? `${ARCHIVE_DIR}/bash-${event.tool_use_id ?? Date.now()}.txt`;
-      const footer = path
-        ? `\n\n[fast-jev-output full output: ${path} (Read or grep it if needed)]`
-        : '';
+      const footer = recoveryFooter(path);
       const maxChars = persisted
         ? Math.min(
           Math.max(0, configured.persistedMaxChars) || Infinity,
@@ -223,7 +224,8 @@ export const register: Register = (on: On, options: PluginOptions) => {
         ),
         {
           minTokens: configured.minTokens,
-          maxChars: Number.isFinite(maxChars) ? maxChars - footer.length : 0,
+          maxChars: Number.isFinite(maxChars) ? maxChars : 0,
+          compactMarkers: true,
           chunkLines: configured.chunkLines,
           chunkChars: configured.chunkChars,
           keepThreshold: configured.keepThreshold,
@@ -234,7 +236,8 @@ export const register: Register = (on: On, options: PluginOptions) => {
       pruning = trimmed;
       if (!trimmed.trimmed) return answer;
       stage = 'publish';
-      const stdout = trimmed.output + footer;
+      const stdout = trimmed.output;
+      if (path) archives.add(path);
       const scores = trimmed.scores.map((score) => score.toFixed(2)).join(',');
       $.ui.log(
         `bash output: kept ${trimmed.kept}/${trimmed.chunks} chunks (${trimmed.charsBefore}→${stdout.length} chars) scores=${scores}`,
