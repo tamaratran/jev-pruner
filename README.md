@@ -1,14 +1,15 @@
 # jev-pruner
 
 Trim long command output before Claude Code or Codex reads it. Jev picks what
-to keep. The kept text stays word for word, and the agent can read the saved
-output if it needs more.
+to keep. If the result includes an archive path, the agent can read the full
+output there.
 
 Only output over 10,000 estimated tokens is eligible. The pruner keeps recognized
 code, docs, errors, and results. If pruning fails, the original output passes through.
 
-Jev sends command output and conversation context to TypeSafe. You'll need a
-[TypeSafe API key](https://console.typesafe.ai/settings/keys) and paid API credits.
+When scoring runs, the pruner sends command output and conversation context to
+TypeSafe. You'll need a [TypeSafe API key](https://console.typesafe.ai/settings/keys)
+and API credits.
 Your Claude or Codex subscription doesn't cover Jev. The pruner doesn't redact secrets.
 
 ## Claude Code
@@ -27,7 +28,9 @@ automatically.
 ## Codex
 
 Codex uses a wrapper you invoke through a skill. It doesn't trim every shell command
-automatically. With Node.js 18+, Git, and Codex CLI 0.152.1 installed, run:
+automatically. It leaves failed commands, stderr, and stdout over 8 MiB unchanged.
+
+Setup was tested with Codex CLI 0.152.1. You'll also need Node.js 18+ and Git. Run:
 
 ```sh
 git clone https://github.com/tamaratran/jev-pruner.git
