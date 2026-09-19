@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { trimOutput } from '../src/output.js';
 import { estimateStateTokens, estimateTokens, type JevAsker, type JevQuestions } from '../src/jev.js';
 
@@ -110,32 +110,50 @@ describe('complete scoring and request limits', () => {
 });
 
 describe('rendered output budgets', () => {
-  it('keeps the error beyond the fitting prefix of an oversized chunk', async () => {
+  it('keeps the error and all needed content when an oversized chunk cannot fit', async () => {
     const lines = Array.from({ length: 60 }, (_, index) => `row ${index} ${'x'.repeat(1_400)}`);
     lines[10] = 'ERROR: unique failure NEEDLE';
+    const output = lines.join('\n');
+    const onDecision = vi.fn();
     const result = await trimOutput(
-      { command: 'build', goal: 'Find the error', output: lines.join('\n') },
+      { command: 'build', goal: 'Find the error', output },
       keepEverything,
-      { maxChars: 8_000 },
+      { maxChars: 8_000, onDecision },
     );
     expect(result.output).toContain(lines[10]);
-    expect(result.output.length).toBeLessThanOrEqual(8_000);
+    expect(result.output).toBe(output);
+    expect(result.trimmed).toBe(false);
+    expect(onDecision).toHaveBeenCalledWith('budget_unfit');
   });
 
-  it('includes alternating omission markers in the character budget', async () => {
+  it.each([
+    [8_000, false],
+    [40_000, true],
+  ] as const)('preserves needed chunks and accounts for omission markers with budget %i', async (maxChars, trimmed) => {
     const output = Array.from({ length: 2_000 }, (_, index) =>
       `INFO item ${index} ${'x'.repeat(15)}`,
     ).join('\n');
+    const onDecision = vi.fn();
     const result = await trimOutput(
       { command: 'build', goal: 'g', output, fullOutputPath: '.claude/fast-jev-output/bash-test.txt' },
       { async ask(_state, questions) {
-        return answersFor(questions, id => Number(id.slice(1)) % 2 ? 0.99 : 0.01);
+        return answersFor(questions, id => id.startsWith('g') || Number(id.slice(1)) % 2 ? 0.99 : 0.01);
       } },
-      { maxChars: 8_000 },
+      { maxChars, onDecision },
     );
-    expect(result.trimmed).toBe(true);
-    expect(result.output).toContain('full output: .claude/fast-jev-output/bash-test.txt');
-    expect(result.output.length).toBeLessThanOrEqual(8_000);
+    expect(result.trimmed).toBe(trimmed);
+    for (const [index, line] of output.split('\n').entries()) {
+      if (Math.floor(index / 20) % 2 === 0) expect(result.output).toContain(line);
+    }
+    if (trimmed) {
+      expect(result.output).toContain('full output: .claude/fast-jev-output/bash-test.txt');
+      expect(result.output.length).toBeLessThanOrEqual(maxChars);
+      expect(result.dropped).toBeGreaterThan(0);
+      expect(onDecision).toHaveBeenCalledWith('pruned');
+    } else {
+      expect(result.output).toBe(output);
+      expect(onDecision).toHaveBeenCalledWith('budget_unfit');
+    }
     expect(result.charsAfter).toBe(result.output.length);
   });
 
