@@ -77,7 +77,7 @@ async function tree(directory) {
   const result = {};
   const walk = async (path, prefix = '') => {
     for (const entry of await readdir(path, { withFileTypes: true })) {
-      if (['node_modules', 'dist', 'captures', '.jev-pruner', '.npm-cache', '__pycache__', '.pytest_cache'].includes(entry.name)) continue;
+      if (['node_modules', 'dist', 'captures', '.eval-raw', '.jev-pruner', '.npm-cache', '__pycache__', '.pytest_cache'].includes(entry.name)) continue;
       const relative = prefix + entry.name;
       if (entry.isDirectory()) await walk(join(path, entry.name), relative + '/');
       else if (entry.isFile() && relative !== 'installation-ok.json') {
@@ -117,7 +117,7 @@ Return only a JSON object with outcome ("fixed" or "not_fixed"), cause, and chan
   ];
   const result = await execute(`codex ${args.map(quote).join(' ')}`, cwd, {
     ...process.env, JEV_EVAL_ARM: arm, JEV_CODEX_PLUGIN_ROOT: plugin,
-    JEV_EVAL_CAPTURE_DIR: join(evidence, 'raw'),
+    JEV_EVAL_CAPTURE_DIR: join(cwd, '.eval-raw'),
   }, 600_000);
   await save(join(evidence, 'execution.json'), result);
   const row = { pair: pair.id, workload: pair.name, arm, seconds: result.seconds };
@@ -161,7 +161,7 @@ Return only a JSON object with outcome ("fixed" or "not_fixed"), cause, and chan
     assert.equal(row.skill_reads, 1, 'Unequal skill loading');
     row.recovery_commands = row.commands.filter(cmd => cmd.includes('.jev-pruner')).length;
     const raw = [];
-    for (const file of await list(join(evidence, 'raw'))) raw.push(await read(join(evidence, 'raw', file)));
+    for (const file of await list(join(cwd, '.eval-raw'))) raw.push(await read(join(cwd, '.eval-raw', file)));
     const outputs = responses.filter(entry => /^(function_call_output|custom_tool_call_output)$/.test(entry.type))
       .map(commandOutput).filter(text => text !== undefined);
     const visible = outputs.filter(text => /(?:^|\n)Exit status: \d+\n/.test(text));
