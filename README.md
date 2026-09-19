@@ -472,9 +472,22 @@ diagnostics, results, uncertain or task-required content, and output that could
 not be fully scored take precedence over this budget. If safe refinement cannot
 fit, the original result passes through; failed refinement never falls back to
 keeping only error-shaped lines.
-Scoring uses complete chunks and allows one initial Jev request plus at most 40
-additional requests, shared by scoring, retries, and refinement. Library callers
-can change that allowance with `maxScoringRequests`, including zero.
+Before scoring, a lower bound counts protected diagnostics/results, their adjacent
+context, boundary lines, and fixed compact metadata. If these cannot fit, no Jev
+request is made. Refinement also stops once lines already retained make a fit
+impossible.
+
+The Claude hook allows at most 12 total Jev requests by default, further limited
+to `ceil(visibleChars / 192)` (minimum one). `visibleChars` is the smaller of the
+native preview size and the configured output cap; without a native preview it
+uses the source size capped by the configured output budget. For a 2,146-character
+preview this allows twelve requests. This is an effort heuristic, not a pricing or
+savings guarantee.
+
+`maxScoringRequests` limits additional calls beyond the first, shared by initial
+scoring, retries, and refinement; zero permits one call. The hook default is 11.
+Direct library callers retain the default of 40 additional requests and can
+override it explicitly. Incomplete scoring always preserves the unscored content.
 Requests take one output batch from every history segment before moving to the
 next batch, so a limited allowance can still finish scoring some chunks.
 
@@ -502,6 +515,7 @@ Use `/plugin configure fast-jev-output` inside Claude Code, or merge a
 | `minTokens` | `10000` | Estimated stdout token threshold; minimum 10,000; equality skips pruning |
 | `persistedOutputs` | `true` | Prune eligible output saved by Claude |
 | `persistedMaxChars` | `8000` | Rendered budget for saved output, including markers and the footer; 0 disables this configured cap. The native preview size, when available, remains an upper bound |
+| `maxScoringRequests` | `11` | Additional Jev calls beyond the first; shared across scoring, retries and refinement. Also bounded by visible preview size. 0 permits one call |
 | `chunkLines` | `20` | Lines grouped into each Jev decision chunk |
 | `chunkChars` | `0` | Optional character target instead of line grouping; 0 uses `chunkLines` |
 | `diagnostics` | `false` | Log decision reasons, source/hook sizes, native model-visible size before pruning when available, request count and elapsed time; no commands or output text |
