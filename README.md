@@ -4,6 +4,8 @@ A Claude Code plugin that uses TypeSafe's Jev to trim noisy Bash output **after
 the command runs, but before its result is sent back to the main LLM**. This
 reduces the output carried into later turns without generating a summary.
 
+Using Codex? See [Codex installation and usage](#codex).
+
 ```text
 Claude requests a Bash command → Command runs → Jev prunes stdout → Claude receives the result
 ```
@@ -100,7 +102,47 @@ Codex CLI 0.152.1 does not support replacing native shell output from
 not automatic interception. Its `PreToolUse` hook only records a transcript
 pointer; it never rewrites commands or returns an approval decision.
 
-Build a local checkout before installing it (Node.js 18+):
+### 1. Install Codex and sign in
+
+These terminal commands use Bash or Zsh on macOS/Linux. Install
+[Git](https://git-scm.com/downloads) and [Node.js 18+](https://nodejs.org/en/download)
+(which includes npm), then install the Codex CLI version used in our validation:
+
+```sh
+npm install -g @openai/codex@0.152.1
+codex --version
+codex login
+codex login status
+```
+
+Complete the browser sign-in with your ChatGPT account. If you already have
+Codex 0.152.1 installed and authenticated, skip the install and login commands.
+
+### 2. Configure Jev access
+
+Create a [TypeSafe API key](https://console.typesafe.ai/settings/keys) and ensure
+your account has [API credits](https://console.typesafe.ai/settings/billing).
+**Your Codex subscription runs Codex; Jev scoring uses the separate TypeSafe API
+and incurs TypeSafe usage.**
+
+Make `TYPESAFE_API_KEY` available in the terminal where you will launch Codex.
+You can use your existing secret manager or enter it without echoing the key
+or putting it in shell history:
+
+```sh
+printf 'TypeSafe API key: '
+read -r -s TYPESAFE_API_KEY
+printf '\n'
+export TYPESAFE_API_KEY
+```
+
+Paste the key at the prompt and press Enter. This export lasts for the current
+terminal session; repeat it in a new terminal or use your existing environment
+configuration. Do not put the key in a Codex prompt or commit it to the repository.
+
+### 3. Build and install the plugin
+
+Run these commands in your terminal:
 
 ```sh
 git clone https://github.com/tamaratran/jev-pruner.git
@@ -109,23 +151,119 @@ npm ci
 npm run build
 codex plugin marketplace add "$PWD"
 codex plugin add jev-pruner@jev-pruner-codex
+codex plugin list --json
 ```
 
-In Codex, review and trust this plugin's hook using `/hooks`, then invoke the
-`jev-pruner` skill. Supply `TYPESAFE_API_KEY` through your existing environment
-configuration; it must be available to the shell command. The wrapper needs
-network access to `https://api.typesafe.ai/v1/systemone`. It does not change
-Codex's sandbox, environment filtering, network policy, or approval settings.
-When those settings prevent access, stdout passes through unchanged.
-Build before installing: Git-only installation does not compile TypeScript.
+The list should show `jev-pruner@jev-pruner-codex` with `installed: true` and
+`enabled: true`. Keep the checkout: the registered local marketplace points to it.
+**Build before installing.** Installing directly from the Git URL does not
+compile TypeScript or supply the required `dist/codex/run.js`.
 
-Codex also applies its own output limit after the wrapper finishes. A retained
-result can still be truncated by that host limit, particularly when the Jev
-request allowance leaves more output unpruned. Set
-`codex -c tool_output_token_limit=30000` when you need a larger host limit;
-the wrapper does not change it. The full-output archive remains available.
+### 4. Start Codex and trust the hook
 
-The skill runs non-interactive commands through the native Codex shell, using:
+From the project you want to work on, in the terminal containing your API key:
+
+```sh
+cd /path/to/your/project
+codex --sandbox workspace-write \
+  -c sandbox_workspace_write.network_access=true \
+  -c tool_output_token_limit=30000
+```
+
+This starts a new session with workspace-write sandboxing and network access so
+the wrapper can reach `https://api.typesafe.ai/v1/systemone`. Command approvals
+still apply. The 30,000-token setting raises Codex's separate host output limit;
+otherwise Codex can truncate a result even after the wrapper has pruned it.
+
+Inside Codex, open `/hooks`, review the `jev-pruner` `PreToolUse` hook, and trust
+it. That hook records the current transcript location so Jev can score against
+the conversation. An untrusted hook leaves the wrapper without the history it
+needs, so output passes through unchanged.
+
+The API key must also reach Codex's shell commands. The wrapper does not change
+Codex's environment filtering, network policy, or approval settings. If your
+configuration blocks the key or endpoint, use your approved environment/network
+configuration; pruning fails open while access is unavailable.
+
+### 5. Use the skill
+
+In the Codex prompt, explicitly invoke the installed skill:
+
+```text
+$jev-pruner Run npm test through the pruner and report the test results.
+```
+
+Replace `npm test` with your non-interactive build, test, install, or search
+command. The skill resolves its installed location and calls the wrapper for
+you. Commands that Codex runs outside the wrapper are not intercepted.
+
+For a known noisy example, start Codex in the `jev-pruner` checkout and send:
+
+```text
+$jev-pruner Run node tests/fixtures/codex-noisy-build.mjs 1 once through the wrapper.
+This is a synthetic fixture; do not fix its simulated deployment error.
+Report the bundle Q7 and rollback stable-snapshot values.
+```
+
+That fixture produces output above the 10,000-estimated-token gate. When Jev
+removes output, the tool result contains `[fast-jev-output trimmed ...]` markers
+and ends with:
+
+```text
+[fast-jev-output full output: <archive-path> (Read or grep it if needed)]
+```
+
+The complete original stdout is in `.jev-pruner/` under the command's working
+directory. To read more detail later, ask Codex:
+
+```text
+Read the full-output archive referenced in the last result and show the exact
+line containing "cache entry 20 ". Do not rerun the command.
+```
+
+Short output, failed commands, protected formats, and output Jev considers
+necessary may remain unchanged. Only an omission marker confirms pruning;
+the absence of an error does not.
+
+### Updating or removing the Codex plugin
+
+From your original `jev-pruner` checkout:
+
+```sh
+git pull --ff-only
+npm ci
+npm run build
+codex plugin remove jev-pruner@jev-pruner-codex
+codex plugin add jev-pruner@jev-pruner-codex
+```
+
+Start a new Codex session and review any changed hook through `/hooks`.
+Rebuilding the checkout alone does not refresh the installed plugin's cached files.
+To uninstall without reinstalling, run only
+`codex plugin remove jev-pruner@jev-pruner-codex`. Existing output archives remain
+in the projects where the commands ran.
+
+### Troubleshooting
+
+| Symptom | Check |
+| --- | --- |
+| `codex: command not found`, or no `plugin` subcommand | Check that npm's global executables are on `PATH` and `codex --version` reports the tested CLI version above. |
+| The skill is unavailable | Check `codex plugin list --json`, then start a new session after installation. |
+| `dist/codex/run.js` cannot be found | Run `npm ci` and `npm run build` in the checkout, then remove and reinstall the cached plugin as above. |
+| Large output is unchanged | Confirm Codex used the wrapper, the hook is trusted, the command succeeded, and the output is eligible. Check API-key availability, Jev network access, and TypeSafe credits; missing access or scoring failures preserve stdout. |
+| Jev returns HTTP 402 | Add TypeSafe API credits. Your Codex subscription does not fund Jev requests. |
+| Codex reports output truncation | Use the larger `tool_output_token_limit` shown above and read the original archive when available. This limit is separate from the pruning threshold. |
+
+To check key availability without revealing it, ask Codex to run:
+
+```sh
+node -e 'console.log(process.env.TYPESAFE_API_KEY ? "TYPESAFE_API_KEY is set" : "TYPESAFE_API_KEY is missing")'
+```
+
+### How the Codex wrapper works
+
+The skill runs non-interactive commands through the native Codex shell using
+the installed plugin root, not necessarily the source checkout:
 
 ```sh
 node "<installed-plugin-root>/dist/codex/run.js" -- npm test
