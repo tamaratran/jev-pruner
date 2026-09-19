@@ -91,6 +91,7 @@ class ParallelTests(unittest.TestCase):
         self,
         concurrency: int = 2,
         inflight: dict[str, TrialProcess] | None = None,
+        task_count: int = 89,
     ) -> list[dict]:
         with ExitStack() as stack:
             stack.enter_context(
@@ -142,8 +143,21 @@ class ParallelTests(unittest.TestCase):
                 concurrency=concurrency,
                 resume=inflight is not None,
                 inflight=inflight,
+                task_count=task_count,
             )
         return json.loads((self.root / "progress.json").read_text())
+
+    def test_recovery_cohort_runs_only_its_declared_pairs(self) -> None:
+        self.manifest = self.manifest[:6]
+        (self.root / "manifest.json").write_text(json.dumps(self.manifest))
+        rows = self.execute(concurrency=32, task_count=3)
+        self.assertEqual(len(rows), 6)
+        self.assertTrue(all(row["state"] == "finished" for row in rows))
+        self.assertEqual(set(self.started), {row["job_name"] for row in self.manifest})
+        self.assertEqual(self.peak, 3)
+        provenance = json.loads((self.root / "execution-provenance.json").read_text())
+        self.assertEqual(provenance["task_count"], 3)
+        self.assertEqual(provenance["trial_count"], 6)
 
     def test_concurrency_is_bounded_and_each_pair_keeps_its_order(self) -> None:
         rows = self.execute()

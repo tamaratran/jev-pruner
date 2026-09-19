@@ -390,6 +390,18 @@ def continuation_rows(
     return rows
 
 
+def validate_manifest(manifest: list[dict], task_count: int = 89) -> None:
+    tasks = {row["task"] for row in manifest}
+    if task_count < 1 or len(tasks) != task_count or len(manifest) != task_count * 2:
+        raise ValueError(f"Expected {task_count} tasks and {task_count * 2} trials")
+    if {(row["task"], row["arm"]) for row in manifest} != {
+        (task, arm) for task in tasks for arm in ("control", "plugin")
+    }:
+        raise ValueError("Each task must have exactly one control and one plugin arm")
+    if len({row["job_name"] for row in manifest}) != len(manifest):
+        raise ValueError("Each trial must have a unique job_name")
+
+
 def run(
     root: Path,
     benchmark: Path,
@@ -398,6 +410,7 @@ def run(
     resume: bool = False,
     concurrency: int = 1,
     inflight: dict[str, TrialProcess] | None = None,
+    task_count: int = 89,
 ) -> None:
     if concurrency < 1:
         raise ValueError("Concurrency must be positive")
@@ -430,8 +443,7 @@ def run(
     if not env.get("TYPESAFE_API_KEY") or env["TYPESAFE_API_KEY"].startswith("secret:"):
         raise ValueError("Inject the Jev key before execution")
     manifest = json.loads((root / "manifest.json").read_text())
-    if len(manifest) != 178 or len({row["task"] for row in manifest}) != 89:
-        raise ValueError("Expected all 89 tasks and 178 trials")
+    validate_manifest(manifest, task_count)
     pin = source_hashes()
     rows = (
         continuation_rows(
@@ -461,6 +473,8 @@ def run(
         "auth_mode": "subscription",
         "api_overrides_present_in_launcher": sorted(set(AUTH_OVERRIDES) & set(env)),
         "concurrency": concurrency,
+        "task_count": task_count,
+        "trial_count": len(manifest),
         "pair_arm_order": "manifest; arms of the same task never overlap",
         "harbor_retries": 0,
         "resume": resume,
@@ -532,7 +546,7 @@ def run(
             reason = reason or final_reason
             checkpoint(root, rows)
             print(
-                f"END {index + 1}/178 reward={row.get('reward')} category={row.get('failure_category')}",
+                f"END {index + 1}/{len(rows)} reward={row.get('reward')} category={row.get('failure_category')}",
                 flush=True,
             )
             del active[index]
@@ -571,7 +585,9 @@ def run(
             row["execution_concurrency"] = concurrency
             row["state"] = "running"
             checkpoint(root, rows)
-            print(f"START {index + 1}/178 {row['task']} {row['arm']}", flush=True)
+            print(
+                f"START {index + 1}/{len(rows)} {row['task']} {row['arm']}", flush=True
+            )
             try:
                 with (root / "console" / f"{row['job_name']}.txt").open("w") as output:
                     active[index] = subprocess.Popen(
@@ -603,6 +619,7 @@ if __name__ == "__main__":
     parser.add_argument("--environment", choices=("docker", "modal"), default="docker")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--concurrency", type=int, default=1)
+    parser.add_argument("--task-count", type=int, default=89)
     args = parser.parse_args()
     run(
         args.evidence.resolve(),
@@ -611,4 +628,5 @@ if __name__ == "__main__":
         args.environment,
         args.resume,
         args.concurrency,
+        task_count=args.task_count,
     )

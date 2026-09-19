@@ -320,6 +320,13 @@ by task before starting, and store the complete protocol/provenance with it.
 Use the same subscription environment described above and a committed checkout.
 The optional `--harbor` argument selects the pinned virtual environment's CLI.
 
+For a separately authorized recovery cohort, create a fresh evidence directory
+and declare both arms of each selected task before inference. Pass `--task-count N`
+to require exactly `2*N` trials with unique job names and complete pairs; the
+default still requires all 89 tasks. Record the selection rule and original
+evidence hashes in the new protocol. Preserve previous attempts and report
+recovery results separately rather than silently replacing them.
+
 For Modal sandboxes, install `modal==1.5.1 dockerfile-parse==2.0.1` in the Harbor
 virtual environment and authenticate with `modal token new`. Pass
 `--environment modal` to the full runner. Task CPU and memory declarations remain
