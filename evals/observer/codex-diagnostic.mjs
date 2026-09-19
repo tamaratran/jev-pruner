@@ -1,0 +1,35 @@
+import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { cases, execute, repo } from '../codex-repair-workloads.mjs';
+
+const collect = process.argv[2] === '--collect';
+const name = process.argv[collect ? 3 : 2];
+assert(Object.hasOwn(cases, name));
+assert(process.env.JEV_EVAL_CAPTURE_DIR);
+
+if (collect) {
+  const result = await execute(`${cases[name].command} 2>&1`, process.cwd());
+  const output = `${result.stdout}${result.stderr}\nExit status: ${result.code}\n`;
+  await mkdir(process.env.JEV_EVAL_CAPTURE_DIR, { recursive: true });
+  await writeFile(join(process.env.JEV_EVAL_CAPTURE_DIR, `${randomUUID()}.json`),
+    JSON.stringify({ name, command: cases[name].command, ...result, output }, null, 2),
+    { mode: 0o600 });
+  process.stdout.write(output);
+  process.exitCode = result.timedOut ? 124 : 0;
+} else {
+  const pruned = process.env.JEV_EVAL_ARM === 'pruned';
+  assert(['pruned', 'native'].includes(process.env.JEV_EVAL_ARM));
+  const child = spawn('node', [
+    ...(pruned ? [
+      '--import', join(repo, 'tests/fixtures/codex-observer.mjs'),
+      join(process.env.JEV_CODEX_PLUGIN_ROOT, 'dist/codex/run.js'), '--', 'node',
+    ] : []),
+    fileURLToPath(import.meta.url), '--collect', name,
+  ], { stdio: 'inherit' });
+  child.on('error', error => { throw error; });
+  child.on('close', code => { process.exitCode = code ?? 1; });
+}

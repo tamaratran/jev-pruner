@@ -581,6 +581,48 @@ task output or debug logs could contain credentials. Never commit transcripts,
 settings caches, or bulky reports. Keep the dependency lock, task locks/image
 digests, exact commands, and separate infra errors with the delivered artifacts.
 
+## Codex repair comparison
+
+`codex-repair-cohort.mjs` compares three repetitions of native and pruned output
+on constructed TypeScript, pytest, and offline npm repair projects. They use real
+tools, but are not sampled from production repositories or Terminal-Bench.
+The fixtures contain an independently checked defect and semantic repair oracle.
+
+```sh
+npm run build
+node evals/codex-repair-workloads.mjs /path/to/new-validation-directory
+node evals/codex-repair-cohort.mjs /path/to/new-evidence-directory preflight
+node evals/codex-repair-cohort.mjs /path/to/new-evidence-directory run
+```
+
+Requires Codex 0.152.1 authenticated through ChatGPT, pytest on `python3`, an
+installed plugin matching the local build, and `TYPESAFE_API_KEY` in the
+environment. `JEV_CODEX_PLUGIN_ROOT` overrides the installed plugin location.
+The first command validates broken and known-repaired fixtures without inference.
+Preflight runs one excluded pruned repair per workflow; all three must activate
+before the 18 comparison trials. Do not edit frozen sources between phases.
+
+The production wrapper only prunes successful commands. The diagnostic collector
+therefore merges stderr into stdout, appends the underlying exit status, and
+returns zero after successful collection. This evaluates an **explicit diagnostic
+integration**, not automatic pruning of failed shell commands. Native and pruned
+arms use the same collector and identical prompts; both read the same skill once.
+Installation is offline with local fixture dependencies and permits lifecycle
+scripts. No registry packages are downloaded.
+
+The protocol freezes source hashes, model, tool versions, order, prices, and
+inclusion rules before inference. Each fresh workspace records fixture hashes.
+Trials preserve transcripts, raw and visible output, Jev requests and usage,
+archive integrity, edits, independent verification, and model usage. Required
+diagnostics, task success, factual outcome reporting, and strict JSON format are
+separate measurements. Pair inclusion depends on complete audits and actual
+pruning, never task success. Failed activation remains in diagnostic records.
+
+Shared subscription prompt caching cannot be controlled here. Compare cached
+and uncached tokens separately and reprice all input as uncached as a sensitivity
+check. Dollar values are API-equivalent reference estimates, not subscription
+charges. Review and sanitize the evidence before sharing.
+
 ## Checks
 
 ```sh
