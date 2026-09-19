@@ -86,8 +86,8 @@ export function exceedsOutputThreshold(output: string, minTokens?: number): bool
 
 /** Output with NULs or a lot of control bytes is not text worth chunking. */
 export function looksBinary(output: string): boolean {
+  if (output.includes('\u0000')) return true;
   const sample = output.slice(0, 4_000);
-  if (sample.includes('\u0000')) return true;
   let control = 0;
   for (const char of sample) {
     const code = char.charCodeAt(0);
@@ -112,6 +112,7 @@ export function looksStructured(command: string, output: string): boolean {
     }
   }
   if (head.startsWith('<?xml') || head.startsWith('<!DOCTYPE') || head.startsWith('---\n')) return true;
+  if (/^<[A-Za-z_][\w:.-]*(?:\s|\/?>)/.test(head)) return true;
   if (/^diff --git |^--- |^@@ /m.test(output)) return true;
   if (/^(cat|bat|jq|yq|diff|git\s+(diff|show)|base64|openssl)(?:\s|$)/.test(simpleCommand(command))) return true;
   return /(^|[|;&]\s*)(cat|bat|jq|yq|git\s+(diff|show)|base64|openssl)\b/.test(command);
