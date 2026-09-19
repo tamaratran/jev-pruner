@@ -16,6 +16,8 @@ import type { InformationCategory } from '../src/retention.js';
 export { looksSecret } from '../src/secrets.js';
 
 const ARCHIVE_DIR = '.claude/fast-jev-output';
+const DEFAULT_MAX_SCORING_REQUESTS = 11;
+const VISIBLE_CHARS_PER_REQUEST = 256;
 const DEFAULTS = {
   persistedMaxChars: 8_000,
   chunkLines: 20,
@@ -49,6 +51,7 @@ export type HookConfig = {
   chunkLines: number;
   keepThreshold: number;
   maxStateTokens: number;
+  maxScoringRequests?: number;
   minTokens: number;
   persistedOutputs: boolean;
   persistedMaxChars: number;
@@ -81,6 +84,11 @@ export function resolveHookConfig(options: PluginOptions): HookConfig {
   const chunkChars = optionNumber(options, 'chunkChars', 0);
   if (chunkChars > 0) config.chunkChars = chunkChars;
   if (options.diagnostics === true) config.diagnostics = true;
+  if (options.maxScoringRequests !== undefined) {
+    config.maxScoringRequests = Math.max(0, Math.floor(
+      optionNumber(options, 'maxScoringRequests', DEFAULT_MAX_SCORING_REQUESTS),
+    ));
+  }
   return config;
 }
 
@@ -148,6 +156,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
     let sourceChars: number | null = null;
     let sourceEstimatedTokens: number | null = null;
     let modelVisibleBudgetChars: number | null = null;
+    let requestLimit: number | null = null;
     let pruning: TrimOutputResult | undefined;
     let informationCategory: InformationCategory | null = null;
     const original = answer.deny === undefined && !answer.isError ? answer.result : undefined;
@@ -192,6 +201,11 @@ export const register: Register = (on: On, options: PluginOptions) => {
         )
         : Infinity;
       if (Number.isFinite(maxChars)) modelVisibleBudgetChars = maxChars;
+      const visibleChars = Math.min(maxChars, answer.text?.length ?? combined.length);
+      requestLimit = Math.min(
+        1 + (configured.maxScoringRequests ?? DEFAULT_MAX_SCORING_REQUESTS),
+        Math.max(1, Math.ceil(visibleChars / VISIBLE_CHARS_PER_REQUEST)),
+      );
       decision = 'footer_exceeds_budget';
       if (maxChars <= footer.length) return answer;
       let archived: Promise<void> | undefined;
@@ -230,6 +244,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
           chunkChars: configured.chunkChars,
           keepThreshold: configured.keepThreshold,
           maxStateTokens: configured.maxStateTokens,
+          maxScoringRequests: requestLimit - 1,
           onDecision: reason => { decision = reason; },
         },
       );
@@ -271,7 +286,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
               ? 0 : original?.stderr.length ?? null,
             chunks: pruning?.chunks ?? 0, kept: pruning?.kept ?? 0, dropped: pruning?.dropped ?? 0,
             withinChunkOnly: Boolean(pruning?.trimmed && pruning.dropped === 0),
-            requests, elapsedMs: Date.now() - started,
+            requests, requestLimit, elapsedMs: Date.now() - started,
           })}`);
         } catch {
           // Diagnostics cannot change the tool result.
