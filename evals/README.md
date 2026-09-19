@@ -1,5 +1,30 @@
 # Eval suite
 
+## Codex paired log-reading comparison
+
+With Codex CLI 0.152.1 authenticated through ChatGPT, the installed Codex plugin
+matching the current build, and `TYPESAFE_API_KEY` available:
+
+```sh
+npm run build
+node evals/codex-cohort.mjs "$HOME/codex-cohort-new"
+```
+
+This freezes six pairs on the existing constructed build-log fixture, pins
+GPT-5.5 with low reasoning and a 30,000-token tool-output budget, and alternates
+native/pruned order. Both arms may recover missing information from an archive.
+The harness audits recorded model-visible output, archive equality, retained
+lines, and stderr; it grades facts separately from JSON formatting. It includes
+both arms in the effectiveness cohort only if actual pruning occurred and both
+arms passed the instrumentation audit. Incorrect answers and missing required
+facts remain in that cohort. All trials, including exclusions, are preserved.
+
+This is an exploratory log-reading comparison, not a coding benchmark.
+GPT-5.5 uses the native shell transcript format; newer code-mode models require
+separate validation of their outer output limits before using this protocol.
+Caching is shared and uncontrolled. The saved API-equivalent model and Jev
+estimates are reference-price calculations, not subscription charges or invoices.
+
 ## Pruning diagnostics and character chunking
 
 Set `JEV_EVAL_DIAGNOSTICS=1` to capture a metadata-only decision for each Bash
