@@ -18,7 +18,8 @@ Claude requests a Bash command → Command runs → Jev prunes stdout → Claude
    the output to a file, the hook reads and counts that full output instead of its
    short preview. Errors, JSON/XML/YAML/diff/binary output,
    whole-document commands (`cat`, `jq`, `git diff`, `git show`, `base64`, and
-   `openssl`) are left untouched.
+   `openssl`) are left untouched. Recognized documentation, source code, and
+   disassembly are also preserved, regardless of which command printed them.
 3. Output is split into chunks of `chunkLines` lines, capped at 200 chunks;
    lines longer than 2,000 characters are split first.
    The opt-in `chunkChars` setting groups these lines toward a character target
@@ -45,8 +46,9 @@ Claude requests a Bash command → Command runs → Jev prunes stdout → Claude
    allowance. A chunk is fully scored only after evaluation against every
    history segment. A `max_tokens_exceeded` response
    retries twice with a halved state budget and repartitions the original history.
-6. A chunk stays when **any query** gives it a noul of at least `keepThreshold`, it is first or
-   last, it matches an error or warning pattern, or its complete text was not
+6. A chunk stays when **any query** gives it a noul of at least `keepThreshold`
+   or above `0.1`, it is first or last, it contains a recognized diagnostic or
+   result (including warnings, test totals, and artifact paths), or its complete text was not
    scored against every history segment (for example, a single chunk that cannot
    fit beside a segment). No partially shown chunk can be discarded.
 7. Each dropped run becomes a marker such as:
@@ -89,7 +91,7 @@ command's output as disposable or change the keep threshold.
 | --- | --- | --- |
 | Build, install, test | `npm run build`, `pnpm test`, `npm ci`, `make`, `pytest`, `cargo test` | Ask Jev to retain diagnostics, failing tests, result counts, final status, artifact paths, and task-required values; repeated progress may be dropped. |
 | Search or file excerpt | `rg`, `grep`, `git grep`, `find`, `head`, `tail`, `sed` | Treat paths, line numbers, matches, and surrounding source as evidence. Repeated matches can still matter, particularly when the task requires complete results or counts. |
-| Whole document | JSON objects/arrays, XML root tags or declarations, YAML headers, diffs; `cat`, `bat`, `jq`, `yq`, `git diff`, `git show`, `diff`, `base64`, `openssl` | Preserve the output verbatim without scoring. Format detection takes precedence over a build or search command. |
+| Whole document | JSON objects/arrays, XML root tags or declarations, YAML headers, diffs; recognized Markdown, API help, source definitions, disassembly; `cat`, `bat`, `jq`, `yq`, `git diff`, `git show`, `diff`, `base64`, `openssl` | Preserve the output verbatim without scoring. Content detection takes precedence over a build or search command. |
 | Unknown | Custom scripts, unrecognized subcommands, wrappers, pipelines, compound commands | Use the existing general scoring guidance. Existing whole-document safeguards still take precedence. |
 
 Command recognition is deliberately limited to simple invocations. Executable
@@ -98,6 +100,34 @@ substitutions, and wrappers fall back to general guidance unless a whole-documen
 safeguard applies. This is a heuristic, not a shell parser. All categories keep
 the strict **over 10,000 estimated tokens** gate. Category guidance counts toward
 the state budget in every history segment and output batch.
+
+### Information retention rules
+
+Each scoring question labels its content as reference, diagnostic, result,
+progress, or unknown. Content classification is independent of command
+classification: a Python command can print documentation, and a build command
+can print source code.
+
+| Information | Retention rule |
+| --- | --- |
+| Recognized documentation, source code, or assembly | Preserve the entire output without calling Jev, including mixed output with an initial log banner. |
+| Diagnostics and results | Keep matching lines and adjacent context even if Jev considers them disposable. Includes warnings, failures, test totals, exit status, and explicit artifact/report paths. |
+| Task-dependent facts | Ask Jev against every history segment. A keep vote from any segment protects the content. Refinement uses the same rule for smaller groups. |
+| Uncertain meaning | Preserve: removal requires a keep probability at most `0.1` and below `keepThreshold` in every history segment. |
+| Progress and boilerplate | Eligible for removal only after that confidence check; a progress label alone never authorizes removal. |
+| Missing scoring coverage or failed refinement | Preserve the unscored content or original chunk. |
+
+The content recognizer is a conservative heuristic, not a parser for every
+language or document format. Unrecognized content still goes to Jev with the
+instruction to retain information whose meaning or relevance is uncertain.
+The probability cutoff is a retention policy, not a measured error guarantee.
+All rules apply above the existing token floor; none lowers that floor.
+
+Retention takes precedence over the output-size budget. If safe refinement
+cannot fit, the hook returns the original host result, including its native
+preview and full-output reference. It does not force a smaller replacement by
+dropping content classified as needed. Diagnostics include `informationCategory`
+without logging the output text.
 
 ## Codex
 
@@ -420,8 +450,11 @@ also caps the replacement, including omission markers and the archive footer.
 Compressing a large archive must not expand an already-short native preview.
 If protected content cannot fit, the original result passes through.
 
-The budget includes omission markers and the archive footer. Error lines and output that could not be
-scored are preserved; if they cannot fit, the original result passes through.
+The budget includes omission markers and the archive footer. Reference material,
+diagnostics, results, uncertain or task-required content, and output that could
+not be fully scored take precedence over this budget. If safe refinement cannot
+fit, the original result passes through; failed refinement never falls back to
+keeping only error-shaped lines.
 Scoring uses complete chunks and allows one initial Jev request plus at most 40
 additional requests, shared by scoring, retries, and refinement. Library callers
 can change that allowance with `maxScoringRequests`, including zero.
@@ -455,7 +488,7 @@ Use `/plugin configure fast-jev-output` inside Claude Code, or merge a
 | `chunkLines` | `20` | Lines grouped into each Jev decision chunk |
 | `chunkChars` | `0` | Optional character target instead of line grouping; 0 uses `chunkLines` |
 | `diagnostics` | `false` | Log decision reasons, source/hook sizes, native model-visible size before pruning when available, request count and elapsed time; no commands or output text |
-| `keepThreshold` | `0.5` | Minimum Jev probability for a chunk to remain |
+| `keepThreshold` | `0.5` | Minimum Jev probability for a chunk to remain; the uncertainty safeguard also retains scores above `0.1` |
 | `maxStateTokens` | `25000` | Estimated token budget for the Jev state |
 | `model` | `jev-latest` | TypeSafe Jev model name |
 

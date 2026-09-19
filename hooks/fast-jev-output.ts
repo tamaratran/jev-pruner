@@ -10,6 +10,8 @@ import { classifyOutput, exceedsOutputThreshold, looksBinary, MIN_OUTPUT_TOKENS,
 import type { TrimOutputResult } from '../src/output.js';
 import type { JevAsker } from '../src/jev.js';
 import { looksSecret } from '../src/secrets.js';
+import { classifyInformation } from '../src/retention.js';
+import type { InformationCategory } from '../src/retention.js';
 
 export { looksSecret } from '../src/secrets.js';
 
@@ -146,6 +148,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
     let sourceEstimatedTokens: number | null = null;
     let modelVisibleBudgetChars: number | null = null;
     let pruning: TrimOutputResult | undefined;
+    let informationCategory: InformationCategory | null = null;
     const original = answer.deny === undefined && !answer.isError ? answer.result : undefined;
     const hookStdoutCharsBefore = original?.stdout.length ?? null;
     let hookStdoutCharsAfter = hookStdoutCharsBefore;
@@ -163,6 +166,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
       if (!exceedsOutputThreshold(output, configured.minTokens)) return answer;
       decision = 'binary';
       if (looksBinary(output)) return answer;
+      informationCategory = classifyInformation(output);
       decision = 'document';
       if (classifyOutput(event.command, output) === 'document') return answer;
       const combined = persisted ? output : output + (record.stderr ? `\n${record.stderr}` : '');
@@ -254,6 +258,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
         try {
           $.ui.log(`fast-jev-output decision ${JSON.stringify({
             version: 1, toolUseId: event.tool_use_id ?? null, decision, stage,
+            informationCategory,
             persisted: Boolean(original?.persistedOutputPath),
             modelVisibleCharsBefore: answer.text?.length ?? null,
             modelVisibleBudgetChars,
