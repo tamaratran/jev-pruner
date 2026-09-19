@@ -47,7 +47,9 @@ node /plugin/tests/fixtures/noisy-build.mjs 1
 Then report only whether deployment can proceed, based on the visible result.
 If the result is insufficient, say so. Do not make any further tool calls,
 inspect saved output or archives, or check the exit code in another command.'
+prompt="${JEV_EVAL_SMOKE_PROMPT:-$prompt}"
 mkdir -p "$EVIDENCE_DIR"
+printf '%s\n' "$prompt" > "$EVIDENCE_DIR/prompt.txt"
 git rev-parse HEAD > "$EVIDENCE_DIR/harness-commit.txt"
 git -C "$production" rev-parse HEAD > "$EVIDENCE_DIR/production-commit.txt"
 docker image inspect "$SMOKE_IMAGE" --format '{{.Id}}' > "$EVIDENCE_DIR/image-id.txt"

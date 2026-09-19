@@ -253,6 +253,14 @@ writes per-arm `summary.json` files and stops unless the treatment proves real
 Jev responses and matching trimmed transcript results. Use committed sources and
 a new absolute evidence directory outside the repo.
 
+`JEV_EVAL_SMOKE_PROMPT` optionally selects a different synthetic activation
+prompt for both arms. The launcher saves the exact prompt in `prompt.txt`.
+Declare the fixture and required facts before running, keep the one-command
+activation contract, and report the original smoke separately from alternatives.
+For example, the live-retention fixture emitter can be invoked as
+`node /plugin/node_modules/tsx/dist/cli.mjs /plugin/evals/manual/retention.mts --emit cache-build`
+when the mounted checkout has its npm dependencies installed.
+
 ## Subscription authentication
 
 `JEV_EVAL_AUTH_MODE=api` is the default and preserves the original API-key pilot.
