@@ -64,6 +64,7 @@ async function turn(stage, prompt) {
     'exec', '--sandbox', 'workspace-write',
     '-c', 'sandbox_workspace_write.network_access=true',
     '-c', 'model_reasoning_effort="low"',
+    '-c', 'tool_output_token_limit=30000',
     ...(model ? ['--model', model] : []),
     ...(sessionId ? ['resume', sessionId] : []),
     '--dangerously-bypass-hook-trust', '--skip-git-repo-check', '--json', prompt,
@@ -165,7 +166,7 @@ try {
     installed[file] = createHash('sha256').update(bytes).digest('hex');
   }
   await writeFile(join(workspace, 'run.json'), JSON.stringify({
-    stages, plugin, installed, model: model ?? 'Codex default',
+    stages, plugin, installed, model: model ?? 'Codex default', toolOutputTokenLimit: 30_000,
     codex: (await execute('codex', ['--version'])).stdout.trim(),
     revision: (await execute('git', ['-C', repo, 'rev-parse', 'HEAD'])).stdout.trim(),
     node: process.version, started: new Date().toISOString(),

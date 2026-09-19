@@ -119,6 +119,12 @@ Codex's sandbox, environment filtering, network policy, or approval settings.
 When those settings prevent access, stdout passes through unchanged.
 Build before installing: Git-only installation does not compile TypeScript.
 
+Codex also applies its own output limit after the wrapper finishes. A retained
+result can still be truncated by that host limit, particularly when the Jev
+request allowance leaves more output unpruned. Set
+`codex -c tool_output_token_limit=30000` when you need a larger host limit;
+the wrapper does not change it. The full-output archive remains available.
+
 The skill runs non-interactive commands through the native Codex shell, using:
 
 ```sh
@@ -168,6 +174,8 @@ Reinstall the plugin after rebuilding changed source so the test exercises that 
 The harness runs this reviewed local plugin with Codex's per-invocation hook-trust
 bypass. It retains the `workspace-write` sandbox and enables network access for
 Jev; it does not disable command approvals or change persistent Codex settings.
+It sets `tool_output_token_limit=30000` for each invocation: a larger shell-call
+`max_output_tokens` alone does not override the host's default 10,000-token limit.
 
 Each stage checks required values from an early user requirement and an earlier
 tool result, exact retained lines, stderr, pruning markers, archive bytes, and
