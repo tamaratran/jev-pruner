@@ -29,7 +29,7 @@ const DIAGNOSTIC_PATTERN = new RegExp(
   ].join('|'),
   'm',
 );
-const RESULT_PATTERN = /^\s*(?:(?:Test Suites|Tests|Snapshots|Coverage|Results?|Summary|Exit code|Exit status)\s*:|(?:Build|Compilation|Tests?)\s+(?:succeeded|completed|finished|passed)\b|(?:Artifact|Output file|Report|Coverage report)(?: path)?\s*[:=]\s*\S)/im;
+const RESULT_PATTERN = /^\s*(?:(?:Test Suites|Tests|Snapshots|Coverage|Results?|Summary|Exit code|Exit status)\s*:|(?:Build|Compilation|Tests?)\s+(?:succeeded|completed|finished|passed|failed)\b|(?:Artifact|Output file|Report|Coverage report)(?: path)?\s*[:=]\s*\S)/im;
 const PROGRESS_PATTERN = /^\s*(?:\[[^\]\n]+\]\s*)?(?:INFO\s+)?(?:progress\b|cache(?:d)?\b|download(?:ing)?\b|compil(?:ing|ed)\b)/i;
 const MAX_DISPOSABLE_KEEP_PROBABILITY = 0.1;
 

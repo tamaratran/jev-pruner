@@ -35,6 +35,57 @@ planned rows and failures, success and total model-price estimates together,
 with each repetition separate from historical trials. Subsets selected using
 prior outputs are exploratory and do not estimate full-benchmark performance.
 
+## Retention activation preflight
+
+Run the current preservation policy against six synthetic outputs above the
+10,000-token gate using live Jev:
+
+```sh
+npx tsx evals/manual/retention.mts --run "$HOME/retention-preflight-new"
+```
+
+Requires `TYPESAFE_API_KEY` and a new absolute evidence directory whose parent
+already exists. The runner records its fixed protocol before any request: three
+repetitions of build, install, test, documentation, assembly, and source output
+at 1,900- and 8,000-character budgets. The smaller budget approximates the space
+remaining inside an observed Claude native preview after the archive footer;
+the larger budget diagnoses the effect of the cap. These are direct function
+tests, not changes to production settings or measurements of Claude usage.
+Every result includes the decision, required-fact checks, exact output, Jev
+responses, and latency. Reference cases must remain completely unchanged.
+Inspect all declared cases, including cases that do not prune. A subsequent
+Claude integration run still needs matching pruned transcript evidence before
+an active-pruning comparison can be claimed.
+
+Generate a fixture without making network requests:
+
+```sh
+npx tsx evals/manual/retention.mts --emit documentation
+```
+
+After native activation succeeds, run a small recovery-enabled comparison on
+these fixtures:
+
+```sh
+JEV_EVAL_AUTH_MODE=subscription \
+JEV_EVAL_CLAUDE_AUTH_DIR=/private/official-claude-config \
+JEV_EVAL_DIAGNOSTICS=1 \
+python3 -m evals.retention_cohort /new/cohort-evidence \
+  --fixtures /completed/retention-preflight
+```
+
+This uses the pinned local Docker smoke image, live Jev, and official Claude
+subscription authentication. It predeclares six cases, three repetitions and
+both arms (36 trials), alternating the first arm across cases/repetitions.
+Recovery tools are allowed; subagents are unavailable. Each trial has 12 turns,
+a five-minute timeout, a $1 CLI model-price budget and no retry. Grader answers
+are not mounted in the container. Source hashes, prompts, fixture hashes, usage,
+diagnostics, final answers, strict fact scores and every pending/finished row
+are preserved. Instrumentation/authentication failures stop further launches.
+This synthetic cohort uses neither Harbor nor Modal and cannot estimate
+full-benchmark performance. Shared prompt caching limits cost attribution;
+reported model-price estimates are not Claude Max charges.
+
 ## Historical plugin evals
 
 The plugin and manual sweeps below predate the 10,000-token minimum. Their
@@ -224,6 +275,14 @@ Both arms require the pinned CLI and a successful measured result. The launcher
 writes per-arm `summary.json` files and stops unless the treatment proves real
 Jev responses and matching trimmed transcript results. Use committed sources and
 a new absolute evidence directory outside the repo.
+
+`JEV_EVAL_SMOKE_PROMPT` optionally selects a different synthetic activation
+prompt for both arms. The launcher saves the exact prompt in `prompt.txt`.
+Declare the fixture and required facts before running, keep the one-command
+activation contract, and report the original smoke separately from alternatives.
+For example, the live-retention fixture emitter can be invoked as
+`node /plugin/node_modules/tsx/dist/cli.mjs /plugin/evals/manual/retention.mts --emit cache-build`
+when the mounted checkout has its npm dependencies installed.
 
 ## Subscription authentication
 

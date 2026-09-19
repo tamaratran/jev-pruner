@@ -77,11 +77,11 @@ describe('output categories', () => {
 
 describe('category scoring state', () => {
   it.each([
-    ['npm run build', 'build', 8_000, false],
-    ['rg auth src', 'search', 8_000, false],
-    ['npm run build', 'build', 20_000, true],
-    ['rg auth src', 'search', 20_000, true],
-  ] as const)('preserves %s (%s) guidance with a %i-character budget', async (command, category, maxChars, trimmed) => {
+    ['npm run build', 'build', 8_000],
+    ['rg auth src', 'search', 8_000],
+    ['npm run build', 'build', 20_000],
+    ['rg auth src', 'search', 20_000],
+  ] as const)('preserves %s (%s) guidance with a %i-character budget', async (command, category, maxChars) => {
     const onDecision = vi.fn();
     const ask = vi.fn(async (_state: JevState, questions: JevQuestions) => ({
       answers: Object.fromEntries(Object.keys(questions).map(id => [
@@ -98,14 +98,9 @@ describe('category scoring state', () => {
       expect(state).toMatchObject({ category, categoryGuidance: expect.any(String) });
       expect(estimateStateTokens(JSON.stringify(state))).toBeLessThanOrEqual(25_000);
     }
-    expect(result.trimmed).toBe(trimmed);
-    if (trimmed) {
-      expect(result.output.length).toBeLessThanOrEqual(maxChars);
-      expect(onDecision).toHaveBeenCalledWith('pruned');
-    } else {
-      expect(result.output).toBe(noise);
-      expect(onDecision).toHaveBeenCalledWith('budget_unfit');
-    }
+    expect(result.trimmed).toBe(true);
+    expect(result.output.length).toBeLessThanOrEqual(maxChars);
+    expect(onDecision).toHaveBeenCalledWith('pruned');
   });
 
   it.each([

@@ -179,6 +179,7 @@ function stateFor(
   chunks: readonly OutputChunk[],
   history: HistoryEntry[],
   category: OutputCategory,
+  diagnosticsAndResults: readonly string[],
 ) {
   return {
     context: OUTPUT_CONTEXT,
@@ -188,6 +189,7 @@ function stateFor(
     task: input.goal,
     history,
     command: input.command,
+    diagnosticsAndResults,
     chunks: chunks.map(({ id, text }) => ({ id, text })),
   };
 }
@@ -253,11 +255,12 @@ function scoringRequests(
   maxStateTokens: number,
 ) {
   const category = classifyOutput(input.command, input.output);
+  const diagnosticsAndResults = [...new Set(input.output.split('\n').filter(isProtectedLine))];
   const chunkTokens = new Map(chunks.map(({ id, text }) => [
     id, estimateStateTokens(JSON.stringify({ id, text })) + 1,
   ]));
   const byHistory = histories.map(history => {
-    const baseTokens = estimateStateTokens(JSON.stringify(stateFor(input, [], history, category)));
+    const baseTokens = estimateStateTokens(JSON.stringify(stateFor(input, [], history, category, diagnosticsAndResults)));
     const groups: OutputChunk[][] = [];
     let group: OutputChunk[] = [];
     let tokens = baseTokens;
@@ -274,7 +277,7 @@ function scoringRequests(
     }
     if (group.length > 0) groups.push(group);
     return groups.flatMap(group => {
-      const state = stateFor(input, group, history, category);
+      const state = stateFor(input, group, history, category, diagnosticsAndResults);
       return batches(group, estimateStateTokens(JSON.stringify(state)))
         .map(batch => ({ state, batch }));
     });
@@ -334,7 +337,8 @@ async function trimOutputAttempt(
   const chunks = chunkOutput(input.output, perChunk, Math.max(0, finite(options.chunkChars, 0)));
   if (chunks.length <= 2) return untrimmed(input.output, chunks.length, [], 'few_chunks', options.onDecision);
 
-  const outputTokens = estimateStateTokens(JSON.stringify(stateFor(input, chunks, [], category)));
+  const diagnosticsAndResults = [...new Set(input.output.split('\n').filter(isProtectedLine))];
+  const outputTokens = estimateStateTokens(JSON.stringify(stateFor(input, chunks, [], category, diagnosticsAndResults)));
   const histories = splitHistory(
     input.messages ?? [],
     maxStateTokens - Math.min(outputTokens, Math.ceil(maxStateTokens / 2)),
@@ -440,11 +444,17 @@ async function assemble(
           keepThreshold,
           maxStateTokens,
           opts.requestBudget.remaining,
+          maxChars / keptIndexes.size,
+          {
+            first: index === 0 || isProtectedLine(chunks[index - 1]?.text.split('\n').at(-1) ?? ''),
+            last: index === chunks.length - 1 || isProtectedLine(chunks[index + 1]?.text.split('\n')[0] ?? ''),
+          },
         );
       } catch {
         text = chunks[index]!.text;
       }
-      if (text.length < chunks[index]!.chars) shrunk.set(index, text);
+      if (text.length === 0) keptIndexes.delete(index);
+      else if (text.length < chunks[index]!.chars) shrunk.set(index, text);
     }
   }
   if (maxChars > 0 && render().length > maxChars) {
@@ -510,13 +520,16 @@ async function shrinkChunkWithJev(
   keepThreshold: number,
   maxStateTokens: number,
   maxRequests: number,
+  targetChars: number,
+  boundary: { first: boolean; last: boolean },
 ): Promise<string> {
   const lines = chunk.text.split('\n');
-  if (lines.length <= REFINE_GROUP_LINES * 2) return chunk.text;
+  const groupLines = chunk.chars > targetChars ? 1 : REFINE_GROUP_LINES;
+  if (lines.length <= groupLines * 2) return chunk.text;
   const groups: OutputChunk[] = [];
-  for (let start = 0; start < lines.length; start += REFINE_GROUP_LINES) {
-    const text = lines.slice(start, start + REFINE_GROUP_LINES).join('\n');
-    groups.push({ id: `g${groups.length + 1}`, text, lines: Math.min(REFINE_GROUP_LINES, lines.length - start), chars: text.length });
+  for (let start = 0; start < lines.length; start += groupLines) {
+    const text = lines.slice(start, start + groupLines).join('\n');
+    groups.push({ id: `g${groups.length + 1}`, text, lines: Math.min(groupLines, lines.length - start), chars: text.length });
   }
   const scores = Array<number>(groups.length).fill(0);
   try {
@@ -538,10 +551,12 @@ async function shrinkChunkWithJev(
   } catch {
     return chunk.text;
   }
-  const keep = new Set<number>([0, lines.length - 1]);
+  const keep = new Set<number>();
+  if (boundary.first) keep.add(0);
+  if (boundary.last) keep.add(lines.length - 1);
   groups.forEach((group, index) => {
     if (keepScore(scores[index]!, keepThreshold)) {
-      for (let at = index * REFINE_GROUP_LINES; at < (index + 1) * REFINE_GROUP_LINES && at < lines.length; at += 1) keep.add(at);
+      for (let at = index * groupLines; at < (index + 1) * groupLines && at < lines.length; at += 1) keep.add(at);
     }
   });
   lines.forEach((line, index) => {
@@ -550,6 +565,7 @@ async function shrinkChunkWithJev(
     }
   });
   if (keep.size === lines.length) return chunk.text;
+  if (keep.size === 0) return '';
   const parts: string[] = [];
   let removed = 0;
   lines.forEach((line, index) => {

@@ -456,7 +456,7 @@ describe('error floor is narrow', () => {
     expect(r.charsAfter).toBeLessThanOrEqual(4_000);
   });
 
-  it.each([2_000, 4_000])('protects a reported failure and its context with budget %i', async maxChars => {
+  it.each([1_000, 2_000, 4_000])('protects a reported failure and its context with budget %i', async maxChars => {
     const noise = Array.from({ length: 400 }, (_, i) => `[${i}] compiled module ${i} ${'cache '.repeat(30)}`);
     for (const line of [
       'ERROR worker-3 failed to link checkout_v2',
@@ -473,8 +473,8 @@ describe('error floor is narrow', () => {
       expect(r.output).toContain(line);
       expect(r.output).toContain(rows[199]);
       expect(r.output).toContain(rows[201]);
-      expect(r.trimmed).toBe(maxChars === 4_000);
-      if (maxChars === 4_000) {
+      expect(r.trimmed).toBe(maxChars >= 2_000);
+      if (maxChars >= 2_000) {
         expect(r.charsAfter).toBeLessThanOrEqual(maxChars);
         expect(onDecision).toHaveBeenCalledWith('pruned');
       } else {
