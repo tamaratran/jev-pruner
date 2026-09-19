@@ -11,6 +11,7 @@ import time
 from datetime import UTC, datetime
 from pathlib import Path
 
+from evals.answer_grading import score_answer
 from evals.auth import (
     AUTH_OVERRIDES,
     AUTH_RUNTIME,
@@ -19,6 +20,7 @@ from evals.auth import (
 )
 from evals.full import REPO, access_blocker, source_hashes
 from evals.sources import PRODUCTION, plugin_options, production_root
+from evals.retention_workloads import WORKLOADS, prepare_workloads
 from evals.summarize import read_events, summarize_agent
 
 CASES: dict[str, tuple[str, dict[str, str | int]]] = {
@@ -83,7 +85,15 @@ def grade(text: str, expected: dict[str, str | int]) -> bool:
     return True
 
 
-def run(root: Path, fixtures: Path, image: str) -> None:
+def run(
+    root: Path,
+    fixtures: Path | None,
+    image: str,
+    cache_mode: str = "disabled",
+    repetitions: int = 2,
+) -> None:
+    if cache_mode not in {"default", "disabled"} or repetitions < 1:
+        raise ValueError("Choose a supported cache mode and positive repetition count")
     root = root.resolve()
     if root == REPO or REPO in root.parents or root.exists():
         raise ValueError("Use a fresh evidence directory outside the repository")
@@ -100,19 +110,29 @@ def run(root: Path, fixtures: Path, image: str) -> None:
     root.mkdir()
     (root / "fixtures").mkdir()
     rows: list[dict] = []
-    for repetition in range(1, 4):
-        for index, (name, (question, expected)) in enumerate(CASES.items()):
+    cases = (
+        CASES
+        if fixtures
+        else {name: (case.question, case.expected) for name, case in WORKLOADS.items()}
+    )
+    for repetition in range(1, repetitions + 1):
+        for index, (name, (question, expected)) in enumerate(cases.items()):
             arms = (
                 ["control", "plugin"]
                 if (index + repetition) % 2
                 else ["plugin", "control"]
             )
+            initial = EMIT if fixtures else WORKLOADS[name].command
             prompt = (
-                f"First run exactly `{EMIT}` in Bash, without filtering or redirection. "
-                "Use the emitted output to answer the question below. You may read saved output "
-                "or use additional tools when needed. Do not inspect the emitter program, "
-                "plugin code, evaluation code or configuration. Do not change files. "
-                f"{question} Return only a JSON object with those keys, no explanation."
+                f"First run exactly `{initial}` in Bash, without filtering or redirection. "
+                "Use visible output directly when it is sufficient. Read saved output only "
+                "when a required detail is missing or ambiguous; briefly state which detail "
+                "you need before doing so. Additional verification commands are allowed. "
+                "Do not inspect the emitter, plugin, evaluation code, configuration outside "
+                "the project, /fixture or /logs. "
+                + ("Do not change files. " if fixtures else "")
+                + f"{question} Return only a JSON object as the final answer, no explanation. "
+                + f"Required keys and types: {json.dumps({k: type(v).__name__ for k, v in expected.items()})}."
             )
             for arm in arms:
                 rows.append(
@@ -124,15 +144,33 @@ def run(root: Path, fixtures: Path, image: str) -> None:
                         "prompt": prompt,
                         "expected": expected,
                         "state": "pending",
+                        "phase": "trial",
+                        "command": initial,
+                        "cache_mode": cache_mode,
                     }
                 )
-    declared_fixtures = {
-        item["name"]: item
-        for item in json.loads((fixtures / "protocol.json").read_text())["fixtures"]
-    }
-    hashes = {}
-    for name in CASES:
+    declared_fixtures = (
+        {
+            item["name"]: item
+            for item in json.loads((fixtures / "protocol.json").read_text())["fixtures"]
+        }
+        if fixtures
+        else {}
+    )
+    hashes: dict[str, str | dict[str, str]] = {}
+    if not fixtures:
+        prepare_workloads(root / "fixtures")
+    for name in cases:
         destination = root / "fixtures" / name
+        if not fixtures:
+            hashes[name] = {
+                str(path.relative_to(destination)): hashlib.sha256(
+                    path.read_bytes()
+                ).hexdigest()
+                for path in sorted(destination.rglob("*"))
+                if path.is_file()
+            }
+            continue
         destination.mkdir()
         shutil.copyfile(fixtures / f"{name}.txt", destination / "output.txt")
         (destination / "emit.cjs").write_text(
@@ -152,11 +190,32 @@ def run(root: Path, fixtures: Path, image: str) -> None:
         "enabledPlugins": {"plugin-authoring@builtin": False},
         "forceLoginMethod": "claudeai",
     }
+    startup = [
+        {
+            "fixture": next(iter(cases)),
+            "repetition": 0,
+            "arm": arm,
+            "job_name": f"startup-{arm}",
+            "phase": "startup",
+            "state": "pending",
+            "command": "printf 'cache-control-startup-check\\n'",
+            "prompt": "Run exactly `printf 'cache-control-startup-check\\n'` in Bash. "
+            'Then return only {"ready":true}.',
+            "expected": {"ready": True},
+            "cache_mode": cache_mode,
+        }
+        for arm in (
+            ["control", "plugin"] if cache_mode == "default" else ["plugin", "control"]
+        )
+    ]
     save(
         root / "protocol.json",
         {
             "declared_at": datetime.now(UTC).isoformat(),
-            "purpose": "Exploratory synthetic retention/recovery comparison, not Terminal-Bench.",
+            "purpose": "Exploratory retention/recovery comparison, not Terminal-Bench.",
+            "suite": "emitted-fixtures"
+            if fixtures
+            else "real-commands-constructed-projects",
             "harness_commit": subprocess.check_output(
                 ["git", "rev-parse", "HEAD"], cwd=REPO, text=True
             ).strip(),
@@ -176,7 +235,20 @@ def run(root: Path, fixtures: Path, image: str) -> None:
             "cli_model_price_budget_usd_per_trial": 1,
             "timeout_seconds": TIMEOUT,
             "concurrency": 1,
-            "repetitions": 3,
+            "repetitions": repetitions,
+            "cache_mode": cache_mode,
+            "cache_environment": {"DISABLE_PROMPT_CACHING": "1"}
+            if cache_mode == "disabled"
+            else {},
+            "cache_acceptance": "Disabled runs require zero cache-read and cache-creation tokens in every result.",
+            "startup": startup,
+            "grading": {
+                "task_success": "Executable verifier plus unchanged protected files for repairs; factual answer otherwise.",
+                "factual_pass": "One JSON object; exact values/types; prose/fences allowed; only declared aliases.",
+                "format_pass": "Bare JSON with exact keys/types, independent of values.",
+                "legacy_strict": "Original cohort grader retained separately.",
+                "aliases": {"cache-build": {"ERROR": "diagnostic"}},
+            },
             "auth": "official Claude Max subscription",
             "environment": "local Docker",
             "harbor": "not used",
@@ -185,10 +257,12 @@ def run(root: Path, fixtures: Path, image: str) -> None:
             "tools": ["Bash", "Read", "Grep"],
             "plugin_options": plugin_options(),
             "limitations": [
-                "Synthetic cases selected during development, not a held-out benchmark.",
-                "Shared provider prompt cache; arm order balanced but cache isolation unavailable.",
+                "Small constructed projects and a standard-library reference task; not a real-world benchmark.",
+                "Disabled caching is a diagnostic condition, not representative production pricing.",
+                "Default caching is shared; balanced arm order and startup calls cannot guarantee identical caches.",
                 "CLI model-price estimates are not Claude Max subscription charges.",
                 "Archive detection covers explicit paths, not all indirect reads.",
+                "Initial repair commands print their real exit status and return normally to expose structured Bash records to the hook. Throwing tool errors are still bypassed.",
             ],
             "trials": rows,
         },
@@ -199,15 +273,16 @@ def run(root: Path, fixtures: Path, image: str) -> None:
         + f"; export CLAUDE_CONFIG_DIR={AUTH_RUNTIME}; "
         + prepare_subscription("/logs/agent")
         + " || exit 1; node /check-auth.cjs > /logs/agent/auth-status.json;"
-        + ' test "$(claude --version)" = "2.1.274 (Claude Code)" || exit 1; exec claude "$@"'
+        + ' test "$(claude --version)" = "2.1.274 (Claude Code)" || exit 1; '
     )
-    for row in rows:
+    all_rows = startup + rows
+    for row in all_rows:
         if source_hashes() != pin:
             raise RuntimeError("Sources changed during inference")
         trial = root / row["job_name"]
         trial.mkdir()
         row["state"] = "running"
-        save(root / "results.json", rows)
+        save(root / "results.json", all_rows)
         arm_settings = dict(settings)
         flags = ["--plugin-dir", "/observer"]
         if row["arm"] == "plugin":
@@ -249,6 +324,26 @@ def run(root: Path, fixtures: Path, image: str) -> None:
             "--env",
             "IS_SANDBOX=1",
         ]
+        if cache_mode == "disabled":
+            command += ["--env", "DISABLE_PROMPT_CACHING=1"]
+        script = prelude + 'exec claude "$@"'
+        if not fixtures:
+            workspace = trial / "workspace"
+            shutil.copytree(root / "fixtures" / row["fixture"] / "project", workspace)
+            command += [
+                "--mount",
+                f"type=bind,src={workspace},dst=/workspace",
+                "--mount",
+                f"type=bind,src={REPO / 'node_modules'},dst=/opt/tools/node_modules,readonly",
+            ]
+            case = WORKLOADS[row["fixture"]]
+            if case.verify and row["phase"] == "trial":
+                script = (
+                    prelude
+                    + 'set +e; claude "$@"; status=$?; '
+                    + f"( {case.verify} ) > /logs/agent/verification.txt 2>&1; "
+                    + 'printf "%s\\n" "$?" > /logs/agent/verification-exit.txt; exit "$status"'
+                )
         for directory in PRODUCTION:
             command += [
                 "--mount",
@@ -258,7 +353,7 @@ def run(root: Path, fixtures: Path, image: str) -> None:
             image,
             "bash",
             "-ec",
-            prelude,
+            script,
             "--",
             "-p",
             row["prompt"],
@@ -306,20 +401,71 @@ def run(root: Path, fixtures: Path, image: str) -> None:
         first_bash = trial / "jev/bash-1.json"
         row["initial_command_matches"] = (
             first_bash.exists()
-            and json.loads(first_bash.read_text())["command"].strip() == EMIT
+            and json.loads(first_bash.read_text())["command"].strip() == row["command"]
         )
         row.update(summarize_agent(trial, row["arm"], "events.jsonl"))
         row["final_answer"] = final.get("result", "")
-        row["success"] = bool(
+        row.update(
+            score_answer(
+                row["final_answer"],
+                row["expected"],
+                {"ERROR": "diagnostic"} if row["fixture"] == "cache-build" else None,
+            )
+        )
+        row["legacy_strict"] = grade(row["final_answer"], row["expected"])
+        eligible = bool(
             row["initial_command_matches"]
             and row["return_code"] == 0
             and final.get("subtype") == "success"
-            and grade(row["final_answer"], row["expected"])
         )
+        row["task_success"] = eligible and row["factual_pass"]
+        if (
+            not fixtures
+            and row["phase"] == "trial"
+            and WORKLOADS[row["fixture"]].verify
+        ):
+            case = WORKLOADS[row["fixture"]]
+            immutable = {
+                str(
+                    path.relative_to(root / "fixtures" / row["fixture"] / "project")
+                ): path
+                for path in (root / "fixtures" / row["fixture"] / "project").rglob("*")
+                if path.is_file()
+                and str(
+                    path.relative_to(root / "fixtures" / row["fixture"] / "project")
+                )
+                != case.editable
+            }
+            row["protected_files_unchanged"] = all(
+                (trial / "workspace" / name).is_file()
+                and (trial / "workspace" / name).read_bytes() == path.read_bytes()
+                for name, path in immutable.items()
+            )
+            verification = trial / "verification-exit.txt"
+            row["verifier_pass"] = (
+                verification.exists() and verification.read_text().strip() == "0"
+            )
+            row["task_success"] = (
+                eligible and row["verifier_pass"] and row["protected_files_unchanged"]
+            )
+        usage = row["claude_all_models_usage"]
+        row["cache_control_valid"] = (
+            bool(final.get("modelUsage"))
+            and (usage.get("inputTokens", 0) + usage.get("outputTokens", 0) > 0)
+            and (
+                cache_mode == "default"
+                or (
+                    usage["cacheReadInputTokens"] == 0
+                    and usage["cacheCreationInputTokens"] == 0
+                )
+            )
+        )
+        row["legacy_success"] = eligible and row["legacy_strict"]
+        row["success"] = row["task_success"]
         row["elapsed_seconds"] = time.monotonic() - started
         row["state"] = "finished"
         save(trial / "summary.json", row)
-        save(root / "results.json", rows)
+        save(root / "results.json", all_rows)
         print(
             json.dumps(
                 {
@@ -336,6 +482,19 @@ def run(root: Path, fixtures: Path, image: str) -> None:
             ),
             flush=True,
         )
+        if not row["cache_control_valid"] or (
+            row["phase"] == "startup" and not row["task_success"]
+        ):
+            save(
+                root / "blocked.json",
+                {
+                    "reason": access_blocker(events) or "Startup/cache control failed",
+                    "trial": row["job_name"],
+                },
+            )
+            raise RuntimeError(
+                f"Startup/cache control failed; no retry: {row['job_name']}"
+            )
         blocker = access_blocker(events)
         if blocker or row["measurement_issues"]:
             save(
@@ -352,7 +511,15 @@ def run(root: Path, fixtures: Path, image: str) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("evidence", type=Path)
-    parser.add_argument("--fixtures", type=Path, required=True)
-    parser.add_argument("--image", default="jev-claude-smoke:2.1.274")
+    parser.add_argument(
+        "--fixtures",
+        type=Path,
+        help="Omit to execute the constructed repair/reference tasks",
+    )
+    parser.add_argument("--image", default="jev-retention:2.1.274")
+    parser.add_argument(
+        "--cache-mode", choices=["default", "disabled"], default="disabled"
+    )
+    parser.add_argument("--repetitions", type=int, default=2)
     args = parser.parse_args()
-    run(args.evidence, args.fixtures, args.image)
+    run(args.evidence, args.fixtures, args.image, args.cache_mode, args.repetitions)

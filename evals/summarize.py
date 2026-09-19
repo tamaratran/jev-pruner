@@ -11,7 +11,7 @@ from statistics import median
 TRIM_LOG = re.compile(r"kept (\d+)/(\d+) chunks \((\d+)→(\d+) chars\)")
 TRIM_MARKER = re.compile(r"\[fast-jev-output trimmed (\d+) lines \((\d+) chars\)")
 PRUNED_OUTPUT = re.compile(
-    r"\[fast-jev-output (?:trimmed \d+ (?:more )?lines|cut this section to fit)"
+    r"\[fast-jev-output (?:trimmed(?: \d+ (?:more )?lines|;)|cut this section to fit)"
 )
 DECISION_PREFIX = "fast-jev-output decision "
 ARCHIVE_FOOTER = re.compile(
@@ -104,7 +104,11 @@ def summarize_decisions(events: list[dict], logs: list[str], bash: list[dict]) -
             malformed += 1
     calls = {}
     results = {}
-    for event in events:
+    call_order = {}
+    result_order = {}
+    explanations = {}
+    last_explanation = ""
+    for event_index, event in enumerate(events):
         message = event.get("message")
         if not isinstance(message, dict) or not isinstance(
             message.get("content"), list
@@ -113,12 +117,18 @@ def summarize_decisions(events: list[dict], logs: list[str], bash: list[dict]) -
         for block in message["content"]:
             if not isinstance(block, dict):
                 continue
+            if block.get("type") == "text" and isinstance(block.get("text"), str):
+                last_explanation = block["text"]
             if block.get("type") == "tool_use" and isinstance(block.get("id"), str):
                 calls[block["id"]] = block
+                call_order[block["id"]] = event_index
+                explanations[block["id"]] = last_explanation
             if block.get("type") == "tool_result" and isinstance(
                 block.get("tool_use_id"), str
             ):
                 results[block["tool_use_id"]] = result_text(block.get("content"))
+                result_order[block["tool_use_id"]] = event_index
+                last_explanation = ""
     archives = {
         match[1] for text in results.values() for match in ARCHIVE_FOOTER.finditer(text)
     }
@@ -141,8 +151,22 @@ def summarize_decisions(events: list[dict], logs: list[str], bash: list[dict]) -
         argument_text = json.dumps(arguments, ensure_ascii=False)
         matched = sorted(path for path in archives if path in argument_text)
         if matched:
+            prior_prunes = [
+                tool_id
+                for tool_id, text in results.items()
+                if PRUNED_OUTPUT.search(text)
+                and result_order[tool_id] < call_order[identifier]
+                and any(path in text for path in matched)
+            ]
             accesses.append(
-                {"tool_use_id": identifier, "tool": call["name"], "paths": matched}
+                {
+                    "tool_use_id": identifier,
+                    "tool": call["name"],
+                    "paths": matched,
+                    "after_pruned_tool_ids": prior_prunes,
+                    "stated_reason": explanations[identifier] or None,
+                    "reason_classification": "unreviewed",
+                }
             )
     visible = []
     for decision in decisions:

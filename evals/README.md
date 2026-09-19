@@ -35,6 +35,56 @@ planned rows and failures, success and total model-price estimates together,
 with each repetition separate from historical trials. Subsets selected using
 prior outputs are exploratory and do not estimate full-benchmark performance.
 
+## Controlled repair and reference comparison
+
+Build `evals/retention.Dockerfile` on the pinned Claude smoke image, then validate
+the constructed pytest/TypeScript projects and their independent verifiers:
+
+```sh
+docker build -f evals/retention.Dockerfile -t jev-retention:2.1.274 .
+python -m evals.retention_workloads "$HOME/retention-workload-validation-new"
+```
+
+Commit the candidate first. With the subscription mounts, Jev key and
+`JEV_EVAL_DIAGNOSTICS=1` configured as below, run:
+
+```sh
+python -m evals.retention_cohort "$HOME/retention-disabled-new" \
+  --cache-mode disabled --repetitions 2
+```
+
+This runs twelve paired trials plus two startup checks, sequentially with
+alternating arm order. The protocol and source hashes are written before
+inference. Startup must authenticate, run the requested tool, produce a usable
+result, and satisfy the requested cache mode. Disabled mode exports the documented
+`DISABLE_PROMPT_CACHING=1` and requires nonempty usage with zero cache reads and
+cache creation on every trial. Failed checks stop the run without retries.
+Declare any separate `--cache-mode default` comparison before starting inference.
+Startup calls warm both arms, but shared default caching remains uncontrolled;
+do not pool prices across cache modes or claim equal cache states.
+
+The two repair tasks execute actual tools over generated projects. Their initial
+commands print the actual nonzero exit status and return normally so Claude gives
+the hook a structured Bash record; throwing tool errors remain unchanged. The
+reference task runs `pydoc pathlib`. These are controlled workloads, not a
+Terminal-Bench or representative production sample.
+
+`task_success`/`success` require an executable repair verifier and unchanged
+protected input files, or a factual answer for the reference task. Report
+`factual_pass`, `format_pass`, `strict_pass`, and `legacy_success` separately:
+prose/fences and declared aliases can pass factual grading without passing the
+bare-JSON format check. Missing facts, wrong values/types, duplicate keys and
+conflicting JSON objects fail factual grading. Only instruction whitespace and
+predeclared aliases are normalized.
+
+Recovery observations include preceding explanations and the IDs of already
+pruned results. They start as `unreviewed`: audit the required facts in the
+visible result before classifying a read as missing information, verification,
+prompt-induced, or unexplained. An archive access alone does not establish lost
+information. Record cache validity, task failures, timeouts, visible characters,
+repeated commands, model usage, and Jev request usage/latency together; the model
+price estimate is not a Claude Max subscription charge.
+
 ## Retention activation preflight
 
 Run the current preservation policy against six synthetic outputs above the
@@ -71,7 +121,7 @@ JEV_EVAL_AUTH_MODE=subscription \
 JEV_EVAL_CLAUDE_AUTH_DIR=/private/official-claude-config \
 JEV_EVAL_DIAGNOSTICS=1 \
 python3 -m evals.retention_cohort /new/cohort-evidence \
-  --fixtures /completed/retention-preflight
+  --fixtures /completed/retention-preflight --repetitions 3 --cache-mode default
 ```
 
 This uses the pinned local Docker smoke image, live Jev, and official Claude
