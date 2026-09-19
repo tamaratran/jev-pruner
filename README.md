@@ -123,6 +123,11 @@ instruction to retain information whose meaning or relevance is uncertain.
 The probability cutoff is a retention policy, not a measured error guarantee.
 All rules apply above the existing token floor; none lowers that floor.
 
+Refinement scores individual lines when a retained chunk exceeds its share of
+the character budget; otherwise it scores five-line groups. Each line still
+requires complete history coverage and the same confidence check before
+removal. Diagnostics, results, and their adjacent context remain protected.
+
 Retention takes precedence over the output-size budget. If safe refinement
 cannot fit, the hook returns the original host result, including its native
 preview and full-output reference. It does not force a smaller replacement by
