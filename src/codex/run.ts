@@ -51,7 +51,10 @@ if (args[0] !== '--' || args.length < 2) {
           sessionId: process.env.CODEX_THREAD_ID,
           apiKey: process.env.TYPESAFE_API_KEY,
           asker: process.env.JEV_PRUNER_TRANSPORT === 'codex-router'
-            ? createCodexRouterAsker()
+            ? createCodexRouterAsker({
+              baseUrl: process.env.JEV_PRUNER_CODEX_ROUTER_BASE_URL,
+              signal: controller.signal,
+            })
             : undefined,
           signal: controller.signal,
         })

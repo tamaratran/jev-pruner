@@ -161,12 +161,30 @@ codex login status
 Complete the browser sign-in with your ChatGPT account. If you already have
 Codex 0.152.1 installed and authenticated, skip the install and login commands.
 
-### 2. Configure Jev access
+### 2. Configure a Jev transport
 
-Create a [TypeSafe API key](https://console.typesafe.ai/settings/keys) and ensure
+Choose one transport for the shell session that launches Codex:
+
+- **TypeSafe direct (default):** set `TYPESAFE_API_KEY` as described below.
+- **Codex Router:** set `JEV_PRUNER_TRANSPORT=codex-router`. This uses a local
+  Codex Router with its OpenRouter Decisions route and its host-owned caller
+  capability. The wrapper never reads an OpenRouter API key. Set
+  `JEV_PRUNER_CODEX_ROUTER_BASE_URL` only when your router is not running at
+  `http://127.0.0.1:4202`.
+
+Codex Router mode requires an installed router version that exposes
+`/v1/decisions`, an enabled OpenRouter provider, and the hidden
+`openrouter-decisions/jev-latest` route. The router owns the provider
+credential. Do not copy its caller capability into a prompt, plugin setting, or
+repository. Missing router access, a timeout, or a rejected Decisions response
+leaves stdout unchanged.
+
+For direct TypeSafe access, create a [TypeSafe API key](https://console.typesafe.ai/settings/keys) and ensure
 your account has [API credits](https://console.typesafe.ai/settings/billing).
+
 **Your Codex subscription runs Codex; Jev scoring uses the separate TypeSafe API
-and incurs TypeSafe usage.**
+and incurs TypeSafe usage in direct mode. Codex Router mode incurs the router's
+configured OpenRouter Decisions usage instead.**
 
 Make `TYPESAFE_API_KEY` available in the terminal where you will launch Codex.
 You can use your existing secret manager or enter it without echoing the key
@@ -213,20 +231,22 @@ codex --sandbox workspace-write \
   -c tool_output_token_limit=30000
 ```
 
-This starts a new session with workspace-write sandboxing and network access so
-the wrapper can reach `https://api.typesafe.ai/v1/systemone`. Command approvals
-still apply. The 30,000-token setting raises Codex's separate host output limit;
-otherwise Codex can truncate a result even after the wrapper has pruned it.
+This starts a new session with workspace-write sandboxing and network access for
+direct TypeSafe access. In Codex Router mode, the wrapper calls loopback and the
+router owns upstream network access. Command approvals still apply. The
+30,000-token setting raises Codex's separate host output limit; otherwise Codex
+can truncate a result even after the wrapper has pruned it.
 
 Inside Codex, open `/hooks`, review the `jev-pruner` `PreToolUse` hook, and trust
 it. That hook records the current transcript location so Jev can score against
 the conversation. An untrusted hook leaves the wrapper without the history it
 needs, so output passes through unchanged.
 
-The API key must also reach Codex's shell commands. The wrapper does not change
-Codex's environment filtering, network policy, or approval settings. If your
-configuration blocks the key or endpoint, use your approved environment/network
-configuration; pruning fails open while access is unavailable.
+In direct mode, the API key must also reach Codex's shell commands. The wrapper
+does not change Codex's environment filtering, network policy, or approval
+settings. In router mode, only the transport selector and optional loopback URL
+are required by the wrapper; it reads the host-owned caller capability at
+runtime. If access is unavailable, pruning fails open.
 
 ### 5. Use the skill
 
@@ -293,7 +313,7 @@ in the projects where the commands ran.
 | `codex: command not found`, or no `plugin` subcommand | Check that npm's global executables are on `PATH` and `codex --version` reports the tested CLI version above. |
 | The skill is unavailable | Check `codex plugin list --json`, then start a new session after installation. |
 | `dist/codex/run.js` cannot be found | Run `npm ci` and `npm run build` in the checkout, then remove and reinstall the cached plugin as above. |
-| Large output is unchanged | Confirm Codex used the wrapper, the hook is trusted, the command succeeded, and the output is eligible. Check API-key availability, Jev network access, and TypeSafe credits; missing access or scoring failures preserve stdout. |
+| Large output is unchanged | Confirm Codex used the wrapper, the hook is trusted, the command succeeded, and the output is eligible. In direct mode check the API key, Jev network access, and TypeSafe credits. In router mode check the local router and its OpenRouter Decisions route. Missing access or scoring failures preserve stdout. |
 | Jev returns HTTP 402 | Add TypeSafe API credits. Your Codex subscription does not fund Jev requests. |
 | Codex reports output truncation | Use the larger `tool_output_token_limit` shown above and read the original archive when available. This limit is separate from the pruning threshold. |
 
