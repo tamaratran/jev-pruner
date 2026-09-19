@@ -29,7 +29,7 @@ Claude requests a Bash command → Command runs → Jev prunes stdout → Claude
 4. Jev receives `{ context, task, history, command, chunks }`, plus `category` and
    `categoryGuidance` for recognized build/test/install or search/excerpt commands,
    and one noul question
-   per chunk: “does any line in this chunk need to remain available?”. A single
+   per chunk: “does any line need to remain to complete, diagnose, or verify the task?”. A single
    needed line protects the chunk, including values required by earlier
    instructions even when the next reply must not repeat them. `history` includes
    user/assistant text, complete tool inputs, and tool-result text and structured
@@ -130,6 +130,13 @@ language or document format. Unrecognized content still goes to Jev with the
 instruction to retain information whose meaning or relevance is uncertain.
 The probability cutoff is a retention policy, not a measured error guarantee.
 All rules apply above the existing token floor; none lowers that floor.
+
+Scoring distinguishes intermediate progress from final results: individual
+successful test entries, input filename listings, and routine package operations
+can be unnecessary for a repair. Explicit requests for individual results,
+complete inventories, or package details still protect those facts. Filename
+listings are evaluated as listings rather than source code; the source-content
+protection and the `0.1` confidence ceiling remain unchanged.
 
 Refinement scores individual lines when a retained chunk exceeds its share of
 the character budget; otherwise it scores five-line groups. Each line still
