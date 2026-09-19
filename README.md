@@ -331,6 +331,20 @@ the lines retained verbatim, and the archive-recovery command and result.
 The synthetic fixture tests sustained history growth; it is not a benchmark of
 typical coding sessions.
 
+### Paired Codex source investigations
+
+With the same installed plugin, Codex login, and TypeSafe key, run
+`npm run test:codex-real` to compare native and pruned output on three source
+investigations. The test clones the current committed checkout into a private
+workspace, runs real repository searches above the token threshold, and checks
+each answer against facts withheld from the prompt. It requires actual pruning,
+unchanged retained lines, complete native output, and byte-exact archives.
+
+Private evidence is saved under `~/jev-codex-real-tasks-*`. Generate a side-by-side
+HTML report with `node tests/codex-real-tasks-report.mjs <evidence-directory>`.
+These are code-analysis checks with one run per condition, not implementation
+benchmarks or proof of general accuracy or total-cost savings.
+
 ## Claude Code install
 
 The project is named **jev-pruner**, but its current Claude Code plugin and
