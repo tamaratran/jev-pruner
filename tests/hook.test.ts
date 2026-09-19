@@ -25,6 +25,7 @@ describe('hook configuration', () => {
         keepThreshold: 0.8,
         maxStateTokens: 5_000,
         model: 'jev-custom',
+        baseUrl: 'https://openrouter.ai/api/alpha/decisions',
       }),
     ).toEqual({
       apiKey: 'key',
@@ -35,6 +36,7 @@ describe('hook configuration', () => {
       keepThreshold: 0.8,
       maxStateTokens: 5_000,
       model: 'jev-custom',
+      baseUrl: 'https://openrouter.ai/api/alpha/decisions',
     });
   });
 });

@@ -23,6 +23,7 @@
     "typecheck": "tsc --noEmit && npm run typecheck:hooks",
     "test": "vitest run",
     "test:live": "tsx --test tests/jev-live.ts",
+    "test:openrouter": "tsx --test tests/openrouter-live.ts",
     "test:long-session": "tsx tests/claude-long-session.ts",
     "test:codex-session": "npm run build && node tests/codex-long-session.mjs",
     "test:codex-real": "npm run build && node tests/codex-real-tasks.mjs",
