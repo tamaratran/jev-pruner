@@ -4,6 +4,8 @@ Trim long command output before Claude Code or Codex reads it. Jev picks what
 to keep. If the result includes an archive path, the agent can read the full
 output there.
 
+https://github.com/user-attachments/assets/4bd6e155-eb51-47bd-9789-a40b4ecf4a96
+
 Only output over 10,000 estimated tokens is eligible. The pruner keeps recognized
 code, docs, errors, and results. If pruning fails, the original output passes through.
 
