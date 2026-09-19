@@ -25,6 +25,8 @@ await mkdir(join(workspace, 'captures'), { mode: 0o700 });
 console.log(`Evidence: ${workspace}`);
 const rows = [];
 let sessionId;
+let sample;
+let recovery;
 const quote = value => `'${value.replaceAll("'", "'\\''")}'`;
 const command = stage =>
   `node --import ${quote(observer)} ${quote(wrapper)} -- node ${quote(producer)} ${stage}`;
@@ -153,6 +155,11 @@ async function audit(stage, item, text, usage) {
     artifactScore: score(artifact), rollbackScore: score(rollback),
     archive: path, retained: true, exactArchive: true, usage,
   });
+  sample = {
+    stage, command: item.command, original: original.stdout, visible: text,
+    kept: text.split('\n').filter(line => required.some(value => line.includes(value))),
+    archiveSha256: createHash('sha256').update(original.stdout).digest('hex'),
+  };
   await writeFile(join(workspace, 'progress.json'), JSON.stringify({ sessionId, rows }, null, 2), { mode: 0o600 });
   console.log(JSON.stringify(rows.at(-1)));
 }
@@ -200,15 +207,35 @@ Retain evidence for the final handoff but reply only STAGE_${stage}_DONE.`);
     assert(rows.some(row => row.partitions > 1), 'Sustained session did not exercise history partitions');
     assert(rows.some(row => row.partitions > 1 && row.parallel), 'No parallel history scoring observed');
   }
+  const omitted = sample.original.split('\n').find(line =>
+    line.startsWith('progress:') && !sample.visible.includes(line));
+  assert(omitted, 'No omitted line available for archive recovery');
+  const query = omitted.match(/cache entry \d+ /)?.[0];
+  assert(query, 'No unique recovery query');
+  const recovered = await turn('recovery', `The handoff is complete. Now demonstrate archive recovery.
+Use the archive footer from the last build result to retrieve the exact original line containing ${JSON.stringify(query)}.
+Run exactly one read-only shell command against that archive. Do not rerun the build or open source files.
+Reply with the recovered line verbatim.`);
+  const archive = rows.at(-1).archive;
+  assert.equal(recovered.commands.length, 1, 'Recovery did not use exactly one command');
+  assert.equal(recovered.commands[0].exit_code, 0, 'Archive recovery command failed');
+  assert(recovered.commands[0].command.includes(archive), 'Recovery did not read the archived output');
+  assert(recovered.visibleOutput?.includes(omitted), 'Archive read did not recover the omitted line');
+  assert(recovered.answer.includes(omitted.trim()), 'Recovery answer changed the omitted line');
+  assert.equal(await readFile(archive, 'utf8'), sample.original, 'Recovery changed the archive');
+  recovery = {
+    query, line: omitted, archive, command: recovered.commands[0].command,
+    visible: recovered.visibleOutput, answer: recovered.answer,
+  };
   const pointer = JSON.parse(await readFile(contextPath(sessionId), 'utf8'));
   await writeFile(join(workspace, 'result.json'), JSON.stringify({
-    passed: true, sessionId, stages, rows, final: final.answer, transcriptPointer: pointer,
+    passed: true, sessionId, stages, rows, sample, recovery, final: final.answer, transcriptPointer: pointer,
     hookTrustBypass: true, sandbox: 'workspace-write', network: true,
   }, null, 2), { mode: 0o600 });
-  console.log(`PASS: ${stages} stages and final handoff. Evidence: ${workspace}`);
+  console.log(`PASS: ${stages} stages, final handoff, and archive recovery. Evidence: ${workspace}`);
 } catch (error) {
   await writeFile(join(workspace, 'result.json'), JSON.stringify({
-    passed: false, sessionId, stages, completed: rows.length, error: error.message, rows,
+    passed: false, sessionId, stages, completed: rows.length, error: error.message, rows, sample, recovery,
   }, null, 2), { mode: 0o600 });
   console.error(`FAIL: ${error.message}. Evidence: ${workspace}`);
   process.exitCode = 1;
