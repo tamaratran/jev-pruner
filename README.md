@@ -252,6 +252,8 @@ scored are preserved; if they cannot fit, the original result passes through.
 Scoring uses complete chunks and allows one initial Jev request plus at most 40
 additional requests, shared by scoring, retries, and refinement. Library callers
 can change that allowance with `maxScoringRequests`, including zero.
+Requests take one output batch from every history segment before moving to the
+next batch, so a limited allowance can still finish scoring some chunks.
 
 A 76,379-char log went from a 2,227-char preview that did not contain the error
 line to 4,013 chars of pruned output that did.

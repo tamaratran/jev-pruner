@@ -250,7 +250,7 @@ function scoringRequests(
   const chunkTokens = new Map(chunks.map(({ id, text }) => [
     id, estimateStateTokens(JSON.stringify({ id, text })) + 1,
   ]));
-  return histories.flatMap(history => {
+  const byHistory = histories.map(history => {
     const baseTokens = estimateStateTokens(JSON.stringify(stateFor(input, [], history, category)));
     const groups: OutputChunk[][] = [];
     let group: OutputChunk[] = [];
@@ -273,6 +273,10 @@ function scoringRequests(
         .map(batch => ({ state, batch }));
     });
   });
+  return Array.from(
+    { length: Math.max(0, ...byHistory.map(requests => requests.length)) },
+    (_, index) => byHistory.flatMap(requests => requests.slice(index, index + 1)),
+  ).flat();
 }
 
 function untrimmed(output: string, chunks: number, scores: number[]): TrimOutputResult {
