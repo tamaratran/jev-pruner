@@ -115,6 +115,7 @@ def run(
         if fixtures
         else {name: (case.question, case.expected) for name, case in WORKLOADS.items()}
     )
+    tools = ["Bash", "Read", "Grep"] + ([] if fixtures else ["Edit"])
     for repetition in range(1, repetitions + 1):
         for index, (name, (question, expected)) in enumerate(cases.items()):
             arms = (
@@ -254,7 +255,7 @@ def run(
             "harbor": "not used",
             "modal": "not used",
             "retries": 0,
-            "tools": ["Bash", "Read", "Grep"],
+            "tools": tools,
             "plugin_options": plugin_options(),
             "limitations": [
                 "Small constructed projects and a standard-library reference task; not a real-world benchmark.",
@@ -374,7 +375,7 @@ def run(
             "",
             "--strict-mcp-config",
             "--tools",
-            "Bash,Read,Grep",
+            ",".join(tools),
             "--settings",
             json.dumps(arm_settings),
             *flags,
