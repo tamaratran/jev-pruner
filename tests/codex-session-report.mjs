@@ -23,6 +23,8 @@ for (const directory of directories) {
   sections.push(`
     <section>
       <h2>${result.passed ? 'PASS' : 'INCOMPLETE / FAILED'} · ${rows.length}/${result.stages} stages</h2>
+      ${result.note ? `<p>${escape(result.note)}</p>` : ''}
+      <p><strong>Run started:</strong> ${escape(metadata.started ?? 'Not recorded')}</p>
       <p><strong>Codex:</strong> ${escape(metadata.codex ?? '0.152.1')}
       · <strong>Model selection:</strong> ${escape(metadata.model ?? 'Codex default')}</p>
       <p><strong>Host output token limit:</strong> ${escape(metadata.toolOutputTokenLimit ?? 'Codex default (10,000)')}</p>
@@ -52,6 +54,7 @@ for (const directory of directories) {
       ${result.final ? `<h3>Final handoff (without tools)</h3><pre>${escape(result.final)}</pre>` : ''}
       ${result.recovery ? `
       <h3>Removed text, recovered by Codex</h3>
+      ${result.recovery.verifiedAt ? `<p><strong>Recovery verified:</strong> ${escape(result.recovery.verifiedAt)}</p>` : ''}
       <p>The line below was absent from the pruned result. After its final handoff, Codex received
       only the lookup text <code>${escape(result.recovery.query)}</code>, found the archive
       through the footer, and retrieved the complete line with this command:</p>

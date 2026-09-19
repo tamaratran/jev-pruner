@@ -224,6 +224,7 @@ Reply with the recovered line verbatim.`);
   assert(recovered.answer.includes(omitted.trim()), 'Recovery answer changed the omitted line');
   assert.equal(await readFile(archive, 'utf8'), sample.original, 'Recovery changed the archive');
   recovery = {
+    verifiedAt: new Date().toISOString(),
     query, line: omitted, archive, command: recovered.commands[0].command,
     visible: recovered.visibleOutput, answer: recovered.answer,
   };
