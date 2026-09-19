@@ -164,7 +164,7 @@ After building and installing the local plugin, authenticate Codex and supply
 
 ```sh
 JEV_CODEX_STAGES=2 npm run test:codex-session   # short harness check
-npm run test:codex-session                    # 40 stages plus final handoff
+npm run test:codex-session                    # 40 stages, handoff, then archive recovery
 ```
 
 Set `JEV_CODEX_PLUGIN_ROOT` if the installed plugin is outside the default
@@ -180,12 +180,16 @@ It sets `tool_output_token_limit=30000` for each invocation: a larger shell-call
 Each stage checks required values from an early user requirement and an earlier
 tool result, exact retained lines, stderr, pruning markers, archive bytes, and
 complete Jev responses. Later stages must exercise parallel history partitions.
-The final handoff cannot read archives. Missing commands, host truncation,
+The final handoff cannot read archives. A separate turn then requires Codex to
+use the archive footer to recover an omitted line with one read-only command;
+the full line is withheld from that request. Missing commands, host truncation,
 rate limits, timeouts, retention failures, and incomplete runs fail the test.
 Private evidence under `~/jev-codex-session-*` includes per-turn CLI events,
 header-free Jev requests/responses, per-stage metrics, and the final verdict.
 Generate a self-contained HTML report with
 `node tests/codex-session-report.mjs <evidence-directory> [...]`.
+The report shows the last stage's complete original and model-visible outputs,
+the lines retained verbatim, and the archive-recovery command and result.
 The synthetic fixture tests sustained history growth; it is not a benchmark of
 typical coding sessions.
 
