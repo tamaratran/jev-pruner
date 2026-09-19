@@ -150,17 +150,18 @@ Use the command exactly as written without adding or removing wrappers or argume
     row.original_chars = original.stdout.length + original.stderr.length;
     row.visible_chars = visible.length;
     row.recovery_commands = row.commands.filter(cmd => cmd.includes('.jev-pruner/')).length;
+    const stdout = visible.replace(original.stderr, '');
     if (row.pruned) {
       assert.equal(arm, 'pruned');
       assert(visible.length < row.original_chars);
       const archive = visible.match(/\[fast-jev-output full output: (.*?) \(Read or grep it if needed\)\]/)?.[1];
       assert(archive, 'Missing recovery footer');
       row.archive_exact = (await readFile(archive, 'utf8')) === original.stdout;
-      const lines = new Set((original.stdout + original.stderr).split('\n'));
-      row.retained_lines_verbatim = visible.split('\n').every(line =>
+      const lines = new Set(original.stdout.split('\n'));
+      row.retained_lines_verbatim = stdout.split('\n').every(line =>
         !line || line.startsWith('[fast-jev-output') || lines.has(line));
     } else {
-      assert(visible.includes(original.stdout), 'Unpruned output differs');
+      assert.equal(stdout, original.stdout, 'Unpruned output differs');
     }
     const artifact = `release-${pair.target}-stage${pair.stage}-${pair.target === 'Q7' ? '6d81' : '72bc'}.tar.gz`;
     const rollback = `snapshot-stage${pair.stage}-a312`;
