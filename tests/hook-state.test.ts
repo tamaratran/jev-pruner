@@ -59,6 +59,33 @@ function harness(options: Partial<HookConfig> = {}) {
 }
 
 describe('Bash pruning diagnostics', () => {
+  it.each([0, 8_000])('caps persisted replacements at the native visible size with budget %i', async persistedMaxChars => {
+    const h = harness({ diagnostics: true, chunkChars: 4_000, persistedMaxChars });
+    const complete = `${h.original.result.stdout}\nERROR: deployment blocked`;
+    h.original.result.persistedOutputPath = '/project/complete-log.txt';
+    h.original.result.stdout = 'host stdout preview '.repeat(1500);
+    h.original.text = 'native preview '.repeat(150);
+    h.read.mockResolvedValue(complete);
+    const result = await h.run();
+    expect(result).not.toBe(h.original);
+    expect(result.result?.stdout.length).toBeLessThanOrEqual(h.original.text.length);
+    expect(result.result?.stdout).toContain('ERROR: deployment blocked');
+    expect(result.result?.stdout).toContain('full output: /project/complete-log.txt');
+    expect(result.result?.stderr).toBe('');
+    expect(h.write).not.toHaveBeenCalled();
+    expect(h.log).toHaveBeenCalledWith(expect.stringContaining('"modelVisibleBudgetChars":2250'));
+  });
+
+  it.each(['', 'tiny'])('retains native output without scoring when its visible budget cannot fit a footer', async text => {
+    const h = harness({ diagnostics: true });
+    h.original.result.persistedOutputPath = '/project/complete-log.txt';
+    h.original.text = text;
+    h.read.mockResolvedValue(h.original.result.stdout);
+    expect(await h.run()).toBe(h.original);
+    expect(h.fetch).not.toHaveBeenCalled();
+    expect(h.log).toHaveBeenCalledWith(expect.stringContaining('"decision":"footer_exceeds_budget"'));
+  });
+
   it('records small-output skips without history, network or output text', async () => {
     const h = harness({ diagnostics: true });
     h.original.result.stdout = 'synthetic private content';
@@ -88,7 +115,7 @@ describe('Bash pruning diagnostics', () => {
     const complete = h.original.result.stdout;
     h.original.result.persistedOutputPath = '/project/output.txt';
     h.original.result.stdout = 'preview';
-    h.original.text = 'native preview with file reference';
+    h.original.text = 'native preview with file reference'.repeat(60);
     h.read.mockResolvedValue(complete);
     const result = await h.run();
     const text = h.log.mock.calls.at(-1)![0] as string;
@@ -96,10 +123,11 @@ describe('Bash pruning diagnostics', () => {
     expect(decision).toMatchObject({
       decision: 'pruned', persisted: true, sourceChars: complete.length,
       hookStdoutCharsBefore: 7, hookStdoutCharsAfter: result.result?.stdout.length,
-      modelVisibleCharsBefore: h.original.text.length, requests: h.fetch.mock.calls.length,
+      modelVisibleCharsBefore: h.original.text.length, modelVisibleBudgetChars: h.original.text.length,
+      requests: h.fetch.mock.calls.length,
     });
     expect(decision.sourceChars).toBeGreaterThan(decision.hookStdoutCharsAfter);
-    expect(decision.hookStdoutCharsAfter).toBeGreaterThan(decision.modelVisibleCharsBefore);
+    expect(decision.hookStdoutCharsAfter).toBeLessThanOrEqual(decision.modelVisibleCharsBefore);
   });
 
   it('retains the original result and identifies scoring failures', async () => {

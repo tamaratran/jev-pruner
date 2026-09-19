@@ -144,6 +144,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
     let requests = 0;
     let sourceChars: number | null = null;
     let sourceEstimatedTokens: number | null = null;
+    let modelVisibleBudgetChars: number | null = null;
     let pruning: TrimOutputResult | undefined;
     const original = answer.deny === undefined && !answer.isError ? answer.result : undefined;
     const hookStdoutCharsBefore = original?.stdout.length ?? null;
@@ -179,9 +180,15 @@ export const register: Register = (on: On, options: PluginOptions) => {
       const footer = path
         ? `\n\n[fast-jev-output full output: ${path} (Read or grep it if needed)]`
         : '';
-      const maxChars = persisted ? Math.max(0, configured.persistedMaxChars) : 0;
+      const maxChars = persisted
+        ? Math.min(
+          Math.max(0, configured.persistedMaxChars) || Infinity,
+          answer.text?.length ?? Infinity,
+        )
+        : Infinity;
+      if (Number.isFinite(maxChars)) modelVisibleBudgetChars = maxChars;
       decision = 'footer_exceeds_budget';
-      if (maxChars > 0 && maxChars <= footer.length) return answer;
+      if (maxChars <= footer.length) return answer;
       let archived: Promise<void> | undefined;
       const saveOutput = async (): Promise<void> => {
         if (!path || persisted) return;
@@ -212,7 +219,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
         ),
         {
           minTokens: configured.minTokens,
-          maxChars: maxChars > 0 ? maxChars - footer.length : 0,
+          maxChars: Number.isFinite(maxChars) ? maxChars - footer.length : 0,
           chunkLines: configured.chunkLines,
           chunkChars: configured.chunkChars,
           keepThreshold: configured.keepThreshold,
@@ -249,6 +256,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
             version: 1, toolUseId: event.tool_use_id ?? null, decision, stage,
             persisted: Boolean(original?.persistedOutputPath),
             modelVisibleCharsBefore: answer.text?.length ?? null,
+            modelVisibleBudgetChars,
             sourceChars, sourceEstimatedTokens, hookStdoutCharsBefore, hookStdoutCharsAfter,
             hookStderrCharsBefore: original?.stderr.length ?? null,
             hookStderrCharsAfter: decision === 'pruned' && original?.persistedOutputPath

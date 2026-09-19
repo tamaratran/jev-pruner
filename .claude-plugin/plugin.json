@@ -25,7 +25,7 @@
     "persistedMaxChars": {
       "type": "number",
       "title": "Budget for engine-saved output",
-      "description": "Rendered character budget including omission markers and the archive footer. If errors or unscored content cannot fit safely, the original result passes through. 0 disables the cap.",
+      "description": "Rendered character budget including omission markers and the archive footer, also capped by the native model-visible preview when available. If errors or unscored content cannot fit safely, the original result passes through. 0 disables this configured cap; the native preview cap still applies.",
       "default": 8000
     },
     "chunkLines": {

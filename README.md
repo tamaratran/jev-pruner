@@ -415,6 +415,11 @@ The plugin prunes that saved file instead, caps the result at
 the markers, so nothing becomes unrecoverable. Set `persistedOutputs` to false
 to leave those results alone.
 
+When the host supplies its model-visible preview, that preview's character count
+also caps the replacement, including omission markers and the archive footer.
+Compressing a large archive must not expand an already-short native preview.
+If protected content cannot fit, the original result passes through.
+
 The budget includes omission markers and the archive footer. Error lines and output that could not be
 scored are preserved; if they cannot fit, the original result passes through.
 Scoring uses complete chunks and allows one initial Jev request plus at most 40
@@ -446,7 +451,7 @@ Use `/plugin configure fast-jev-output` inside Claude Code, or merge a
 | `apiKey` | `TYPESAFE_API_KEY` | TypeSafe API key |
 | `minTokens` | `10000` | Estimated stdout token threshold; minimum 10,000; equality skips pruning |
 | `persistedOutputs` | `true` | Prune eligible output saved by Claude |
-| `persistedMaxChars` | `8000` | Rendered budget for saved output, including markers and the footer; 0 disables the cap |
+| `persistedMaxChars` | `8000` | Rendered budget for saved output, including markers and the footer; 0 disables this configured cap. The native preview size, when available, remains an upper bound |
 | `chunkLines` | `20` | Lines grouped into each Jev decision chunk |
 | `chunkChars` | `0` | Optional character target instead of line grouping; 0 uses `chunkLines` |
 | `diagnostics` | `false` | Log decision reasons, source/hook sizes, native model-visible size before pruning when available, request count and elapsed time; no commands or output text |
