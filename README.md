@@ -22,21 +22,38 @@ claude plugin install fast-jev-output@fast-jev-output
 ```
 
 Start a new session and use Claude as usual. The plugin trims eligible Bash output
-automatically. See the [Claude setup guide](GUIDE.md#claude-code-install) for details.
+automatically.
 
 ## Codex
 
 Codex uses a wrapper you invoke through a skill. It doesn't trim every shell command
-automatically. Follow the [Codex setup guide](GUIDE.md#codex) to install it, configure
-your API key, and trust the hook. Then ask Codex:
+automatically. With Node.js 18+, Git, and Codex CLI 0.152.1 installed, run:
+
+```sh
+git clone https://github.com/tamaratran/jev-pruner.git
+cd jev-pruner
+npm ci
+npm run build
+codex plugin marketplace add "$PWD"
+codex plugin add jev-pruner@jev-pruner-codex
+```
+
+Keep the checkout. Set `TYPESAFE_API_KEY` in your environment and sign in with
+`codex login`. Start Codex in your project:
+
+```sh
+codex --sandbox workspace-write \
+  -c sandbox_workspace_write.network_access=true \
+  -c tool_output_token_limit=30000
+```
+
+Open `/hooks` and trust the `jev-pruner` hook. Make sure Codex's shell can access
+your API key. Then ask:
 
 ```text
 $jev-pruner Run npm test through the pruner and report the test results.
 ```
 
-## More
-
-See the [full guide](GUIDE.md) for configuration, output recovery, privacy details,
-tests, and the demo.
+## Development
 
 To check a change locally, run `npm test`, `npm run typecheck`, and `npm run build`.
