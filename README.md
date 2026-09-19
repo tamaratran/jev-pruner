@@ -279,7 +279,7 @@ Read the full-output archive referenced in the last result and show the exact
 line containing "cache entry 20 ". Do not rerun the command.
 ```
 
-Short output, failed commands, protected formats, and output Jev considers
+Short output, interrupted commands, protected formats, and output Jev considers
 necessary may remain unchanged. Only an omission marker confirms pruning;
 the absence of an error does not.
 
@@ -308,7 +308,7 @@ in the projects where the commands ran.
 | `codex: command not found`, or no `plugin` subcommand | Check that npm's global executables are on `PATH` and `codex --version` reports the tested CLI version above. |
 | The skill is unavailable | Check `codex plugin list --json`, then start a new session after installation. |
 | `dist/codex/run.js` cannot be found | Run `npm ci` and `npm run build` in the checkout, then remove and reinstall the cached plugin as above. |
-| Large output is unchanged | Confirm Codex used the wrapper, the hook is trusted, the command succeeded, and the output is eligible. Check API-key availability, Jev network access, and TypeSafe credits; missing access or scoring failures preserve stdout. |
+| Large output is unchanged | Confirm Codex used the wrapper, the hook is trusted, and the output is eligible. Both successful and failed commands can prune stdout. Check API-key availability, Jev network access, and TypeSafe credits; missing access or scoring failures preserve stdout. |
 | Jev returns HTTP 402 | Add TypeSafe API credits. Your Codex subscription does not fund Jev requests. |
 | Codex reports output truncation | Use the larger `tool_output_token_limit` shown above and read the original archive when available. This limit is separate from the pruning threshold. |
 
@@ -332,8 +332,14 @@ environment, stdin, stderr, and exit status. Explicitly select a shell for a
 shell program (`-- bash -c 'command1 && command2'`). Interactive commands, live
 progress streams, servers, and machine-readable nested tool calls should use
 the ordinary shell. Stdout is buffered until command completion; above 8 MiB,
-the wrapper switches to unchanged streaming to bound memory use. Nonzero exits,
+the wrapper switches to unchanged streaming to bound memory use. Signals,
 invalid UTF-8, and credential-like commands/output pass through without scoring.
+
+Successful and failed commands use the same retention rules. The actual child
+exit code is included as `exitCode` in Jev's scoring context; the wrapper returns
+that code to Codex even if pruning or scoring fails. It does not append a synthetic
+status line to stdout or change the archived bytes. Diagnostics, warnings, result
+counts, artifact paths, reference material, and uncertain content stay protected.
 
 The strict over-10,000-token gate, categories, complete-history partitioning,
 verbatim retention, and incomplete-scoring safeguards reuse the same pruning
