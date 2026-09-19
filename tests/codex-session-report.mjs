@@ -25,6 +25,7 @@ for (const directory of directories) {
       <h2>${result.passed ? 'PASS' : 'INCOMPLETE / FAILED'} · ${rows.length}/${result.stages} stages</h2>
       <p><strong>Codex:</strong> ${escape(metadata.codex ?? '0.152.1')}
       · <strong>Model selection:</strong> ${escape(metadata.model ?? 'Codex default')}</p>
+      <p><strong>Host output token limit:</strong> ${escape(metadata.toolOutputTokenLimit ?? 'Codex default (10,000)')}</p>
       <p><strong>Session:</strong> <code>${escape(result.sessionId)}</code></p>
       <p><strong>Evidence:</strong> <code>${escape(directory)}</code></p>
       <div class="metrics">
