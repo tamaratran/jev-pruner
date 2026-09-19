@@ -6,9 +6,15 @@
   "userConfig": {
     "apiKey": {
       "type": "string",
-      "title": "TypeSafe API key",
-      "description": "TypeSafe API key. Leave unset to use TYPESAFE_API_KEY.",
+      "title": "Jev provider API key",
+      "description": "Provider API key. Leave unset to use TYPESAFE_API_KEY with the default TypeSafe endpoint.",
       "sensitive": true
+    },
+    "baseUrl": {
+      "type": "string",
+      "title": "Jev Decisions endpoint",
+      "description": "Advanced: override the TypeSafe System One endpoint with a compatible Decisions endpoint.",
+      "sensitive": false
     },
     "minTokens": {
       "type": "number",
@@ -61,7 +67,7 @@
     "model": {
       "type": "string",
       "title": "Jev model",
-      "description": "TypeSafe Jev model name.",
+      "description": "Jev model identifier for the configured endpoint.",
       "default": "jev-latest"
     }
   }

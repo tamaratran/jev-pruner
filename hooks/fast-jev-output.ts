@@ -44,6 +44,7 @@ export type HookFetch = (
 
 export type HookConfig = {
   apiKey?: string;
+  baseUrl?: string;
   chunkChars?: number;
   diagnostics?: boolean;
   chunkLines: number;
@@ -78,16 +79,18 @@ export function resolveHookConfig(options: PluginOptions): HookConfig {
   };
   const apiKey = optionString(options, 'apiKey');
   if (apiKey) config.apiKey = apiKey;
+  const baseUrl = optionString(options, 'baseUrl');
+  if (baseUrl) config.baseUrl = baseUrl;
   const chunkChars = optionNumber(options, 'chunkChars', 0);
   if (chunkChars > 0) config.chunkChars = chunkChars;
   if (options.diagnostics === true) config.diagnostics = true;
   return config;
 }
 
-export function jevAsker(fetchFn: HookFetch, apiKey: string, model: string): JevAsker {
+export function jevAsker(fetchFn: HookFetch, apiKey: string, model: string, baseUrl?: string): JevAsker {
   return {
     async ask(state, questions) {
-      const request = buildJevRequest({ apiKey, model }, state, questions);
+      const request = buildJevRequest({ apiKey, model, baseUrl }, state, questions);
       const response = await fetchFn(request.url, {
         method: request.method,
         headers: request.headers,
@@ -220,6 +223,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
           },
           apiKey,
           configured.model,
+          configured.baseUrl,
         ),
         {
           minTokens: configured.minTokens,

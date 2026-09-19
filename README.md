@@ -490,7 +490,8 @@ Use `/plugin configure fast-jev-output` inside Claude Code, or merge a
 
 | Option | Default | Description |
 | --- | ---: | --- |
-| `apiKey` | `TYPESAFE_API_KEY` | TypeSafe API key |
+| `apiKey` | `TYPESAFE_API_KEY` | Provider API key. With the default endpoint, the hook reads `TYPESAFE_API_KEY` when this option is unset |
+| `baseUrl` | TypeSafe System One | Advanced override for a compatible Jev Decisions endpoint. Configure its model and API key together |
 | `minTokens` | `10000` | Estimated stdout token threshold; minimum 10,000; equality skips pruning |
 | `persistedOutputs` | `true` | Prune eligible output saved by Claude |
 | `persistedMaxChars` | `8000` | Rendered budget for saved output, including markers and the footer; 0 disables this configured cap. The native preview size, when available, remains an upper bound |
@@ -499,9 +500,13 @@ Use `/plugin configure fast-jev-output` inside Claude Code, or merge a
 | `diagnostics` | `false` | Log decision reasons, source/hook sizes, native model-visible size before pruning when available, request count and elapsed time; no commands or output text |
 | `keepThreshold` | `0.5` | Minimum Jev probability for a chunk to remain; the uncertainty safeguard also retains scores above `0.1` |
 | `maxStateTokens` | `25000` | Estimated token budget for the Jev state |
-| `model` | `jev-latest` | TypeSafe Jev model name |
+| `model` | `jev-latest` | Jev model identifier for the configured endpoint |
 
 The old `minChars` option is no longer used; replace it with `minTokens`.
+
+`baseUrl` is intended for compatible Decisions transports, such as OpenRouter's
+Jev endpoint. It does not make a normal chat endpoint compatible, and it does
+not provide a Codex Router Decisions route where that route is unavailable.
 
 Diagnostics distinguish the complete source from the host's preview and the
 native text the model would have seen. The post-pruning model-visible size must
