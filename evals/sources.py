@@ -7,6 +7,22 @@ from pathlib import Path
 PRODUCTION = (".claude-plugin", "hooks", "src")
 
 
+def plugin_options() -> dict[str, int | bool]:
+    options: dict[str, int | bool] = {}
+    diagnostics = os.environ.get("JEV_EVAL_DIAGNOSTICS", "0")
+    if diagnostics not in {"0", "1"}:
+        raise ValueError("JEV_EVAL_DIAGNOSTICS must be 0 or 1")
+    if diagnostics == "1":
+        options["diagnostics"] = True
+    target = os.environ.get("JEV_EVAL_CHUNK_CHARS")
+    if target is not None:
+        value = int(target)
+        if value < 0:
+            raise ValueError("JEV_EVAL_CHUNK_CHARS must be nonnegative")
+        options["chunkChars"] = value
+    return options
+
+
 def production_root(repo: Path) -> Path:
     value = os.environ.get("JEV_EVAL_PLUGIN_DIR")
     if not value:

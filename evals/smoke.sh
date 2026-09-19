@@ -26,6 +26,7 @@ case "${JEV_EVAL_AUTH_MODE:-api}" in
     exit 1
     ;;
 esac
+settings="$(python3 -c 'import json, sys; from evals.sources import plugin_options; print(json.dumps({**json.loads(sys.argv[1]), "pluginConfigs": {"fast-jev-output@inline": {"options": plugin_options()}}}, separators=(",", ":")))' "$settings")"
 python3 -c '
 import os
 import sys

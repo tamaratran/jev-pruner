@@ -36,9 +36,15 @@ const CATEGORY_GUIDANCE = {
   search: 'Search results or file excerpts: matching source text, file paths, line numbers, and surrounding context can be evidence for the investigation. Judge relevance using the task and history; repetition alone does not make a match disposable. Retain evidence needed to compare matches or establish absence, counts, or completeness when requested.',
 };
 
+export type TrimDecision = 'below_threshold' | 'binary' | 'document' | 'few_chunks' |
+  'no_scoring_capacity' | 'budget_unfit' | 'incomplete_coverage' | 'kept_all' | 'pruned';
+
 export interface TrimOutputOptions {
   minTokens?: number;
   chunkLines?: number;
+  /** Optional character target instead of line grouping; 0 uses chunkLines. */
+  chunkChars?: number;
+  onDecision?: (reason: TrimDecision) => void;
   keepThreshold?: number;
   maxStateTokens?: number;
   /**
@@ -153,15 +159,31 @@ function splitLongLines(output: string): string[] {
   return out;
 }
 
-function chunkOutput(output: string, chunkLines: number): OutputChunk[] {
+function chunkOutput(output: string, chunkLines: number, chunkChars: number): OutputChunk[] {
   const lines = splitLongLines(output);
+  const target = chunkChars > 0 ? Math.max(chunkChars, Math.ceil(output.length / MAX_CHUNKS)) : 0;
+  const groups: string[][] = [];
+  let current: string[] = [];
+  let chars = 0;
+  for (const line of lines) {
+    if (current.length > 0 && (target > 0 ? chars + 1 + line.length > target : current.length >= chunkLines)) {
+      groups.push(current);
+      current = [];
+      chars = 0;
+    }
+    chars += line.length + Number(current.length > 0);
+    current.push(line);
+  }
+  if (current.length > 0) groups.push(current);
+  const merge = Math.max(1, Math.ceil(groups.length / MAX_CHUNKS));
   const chunks: OutputChunk[] = [];
-  for (let start = 0; start < lines.length; start += chunkLines) {
-    const text = lines.slice(start, start + chunkLines).join('\n');
+  for (let start = 0; start < groups.length; start += merge) {
+    const group = groups.slice(start, start + merge).flat();
+    const text = group.join('\n');
     chunks.push({
       id: `c${chunks.length + 1}`,
       text,
-      lines: Math.min(chunkLines, lines.length - start),
+      lines: group.length,
       chars: text.length,
     });
   }
@@ -279,7 +301,11 @@ function scoringRequests(
   ).flat();
 }
 
-function untrimmed(output: string, chunks: number, scores: number[]): TrimOutputResult {
+function untrimmed(
+  output: string, chunks: number, scores: number[],
+  reason: TrimDecision, onDecision?: TrimOutputOptions['onDecision'],
+): TrimOutputResult {
+  onDecision?.(reason);
   return {
     output,
     trimmed: false,
@@ -313,16 +339,16 @@ async function trimOutputAttempt(
     finite(options.maxStateTokens, DEFAULT_MAX_STATE_TOKENS),
   );
 
-  if (!exceedsOutputThreshold(input.output, options.minTokens)) return untrimmed(input.output, 0, []);
+  if (!exceedsOutputThreshold(input.output, options.minTokens)) return untrimmed(input.output, 0, [], 'below_threshold', options.onDecision);
 
-  if (looksBinary(input.output)) return untrimmed(input.output, 0, []);
+  if (looksBinary(input.output)) return untrimmed(input.output, 0, [], 'binary', options.onDecision);
   const category = classifyOutput(input.command, input.output);
-  if (category === 'document') return untrimmed(input.output, 0, []);
+  if (category === 'document') return untrimmed(input.output, 0, [], 'document', options.onDecision);
 
   const lineCount = splitLongLines(input.output).length;
   const perChunk = Math.max(chunkLines, Math.ceil(lineCount / MAX_CHUNKS));
-  const chunks = chunkOutput(input.output, perChunk);
-  if (chunks.length <= 2) return untrimmed(input.output, chunks.length, []);
+  const chunks = chunkOutput(input.output, perChunk, Math.max(0, finite(options.chunkChars, 0)));
+  if (chunks.length <= 2) return untrimmed(input.output, chunks.length, [], 'few_chunks', options.onDecision);
 
   const outputTokens = estimateStateTokens(JSON.stringify(stateFor(input, chunks, [], category)));
   const histories = splitHistory(
@@ -342,7 +368,7 @@ async function trimOutputAttempt(
   try {
     const requests = scoringRequests(input, chunks, histories, maxStateTokens)
       .slice(0, requestBudget.remaining);
-    if (requests.length === 0) return untrimmed(input.output, chunks.length, []);
+    if (requests.length === 0) return untrimmed(input.output, chunks.length, [], 'no_scoring_capacity', options.onDecision);
     const answered = await Promise.allSettled(requests.map(async ({ state, batch }) =>
       limitedAsker.ask(state, Object.assign({}, ...batch.map(questionFor))),
     ));
@@ -376,6 +402,7 @@ async function trimOutputAttempt(
     asker: limitedAsker,
     maxStateTokens,
     requestBudget,
+    onDecision: options.onDecision,
   });
 }
 
@@ -391,6 +418,7 @@ async function assemble(
     asker: JevAsker;
     maxStateTokens: number;
     requestBudget: { remaining: number };
+    onDecision?: TrimOutputOptions['onDecision'];
   },
 ): Promise<TrimOutputResult> {
   const { keepThreshold, maxChars, histories, asker, maxStateTokens } = opts;
@@ -409,7 +437,7 @@ async function assemble(
   const shrunk = new Map<number, string>();
   const render = (kept = keptIndexes) => renderOutput(input, chunks, kept, shrunk);
   if (maxChars > 0 && render(omitted).length > maxChars) {
-    return untrimmed(input.output, chunks.length, scores);
+    return untrimmed(input.output, chunks.length, scores, 'budget_unfit', opts.onDecision);
   }
   if (maxChars > 0) {
     for (const index of [...keptIndexes].filter(index => !omitted.has(index)).sort(
@@ -457,7 +485,7 @@ async function assemble(
       const text = shrinkChunkText(chunks[index]!.text, 0, 0);
       if (text.length < textOf(index).length) shrunk.set(index, text);
     }
-    if (render(fitted).length > maxChars) return untrimmed(input.output, chunks.length, scores);
+    if (render(fitted).length > maxChars) return untrimmed(input.output, chunks.length, scores, 'budget_unfit', opts.onDecision);
     const priority = [...keptIndexes].filter(index => !fitted.has(index)).sort((a, b) => {
       const edges = Number(b === 0 || b === chunks.length - 1) - Number(a === 0 || a === chunks.length - 1);
       return edges || (scores[b] ?? 0) - (scores[a] ?? 0);
@@ -492,9 +520,13 @@ async function assemble(
   const droppedIndexes = chunks
     .map((_, index) => index)
     .filter((index) => !keptIndexes.has(index));
-  if (droppedIndexes.length === 0 && shrunk.size === 0) return untrimmed(input.output, chunks.length, scores);
+  if (droppedIndexes.length === 0 && shrunk.size === 0) return untrimmed(
+    input.output, chunks.length, scores,
+    omitted.size > 0 ? 'incomplete_coverage' : 'kept_all', opts.onDecision,
+  );
 
   const output = render();
+  opts.onDecision?.('pruned');
   return {
     output,
     trimmed: true,

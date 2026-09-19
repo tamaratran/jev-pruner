@@ -15,7 +15,12 @@ from typing import Protocol
 import tomllib
 
 from evals.auth import AUTH_OVERRIDES, subscription_mounts
-from evals.sources import PRODUCTION, production_provenance, production_root
+from evals.sources import (
+    PRODUCTION,
+    plugin_options,
+    production_provenance,
+    production_root,
+)
 from evals.summarize import read_events, summarize_trial
 
 REPO = Path(__file__).resolve().parents[1]
@@ -226,13 +231,20 @@ def aggregate(rows: list[dict]) -> dict:
             ),
         }
     pairs = []
-    for task in sorted({row["task"] for row in rows}):
-        by_arm = {row["arm"]: row for row in rows if row["task"] == task}
+    for task, repetition in sorted(
+        {(row["task"], row.get("repetition", 1)) for row in rows}
+    ):
+        by_arm = {
+            row["arm"]: row
+            for row in rows
+            if row["task"] == task and row.get("repetition", 1) == repetition
+        }
         control, plugin = by_arm["control"], by_arm["plugin"]
         complete = all(row.get("reward") is not None for row in (control, plugin))
         pairs.append(
             {
                 "task": task,
+                "repetition": repetition,
                 "both_rewards_available": complete,
                 "control_state": control["state"],
                 "plugin_state": plugin["state"],
@@ -257,12 +269,17 @@ def checkpoint(root: Path, rows: list[dict]) -> None:
 
 
 def next_pending(rows: list[dict]) -> int | None:
-    running_tasks = {row["task"] for row in rows if row["state"] == "running"}
+    running_tasks = {
+        (row["task"], row.get("repetition", 1))
+        for row in rows
+        if row["state"] == "running"
+    }
     return next(
         (
             index
             for index, row in enumerate(rows)
-            if row["state"] == "pending" and row["task"] not in running_tasks
+            if row["state"] == "pending"
+            and (row["task"], row.get("repetition", 1)) not in running_tasks
         ),
         None,
     )
@@ -340,6 +357,8 @@ def continuation_rows(
     inflight: set[str] | None = None,
 ) -> list[dict]:
     previous = json.loads((root / "execution-provenance.json").read_text())
+    if previous.get("plugin_options", {}) != plugin_options():
+        raise ValueError("Cannot resume with different plugin options")
     if previous["flags"] != flags:
         raise ValueError("Cannot resume with different trial flags")
     production = (".claude-plugin/", "hooks/", "src/")
@@ -390,14 +409,27 @@ def continuation_rows(
     return rows
 
 
-def validate_manifest(manifest: list[dict], task_count: int = 89) -> None:
+def validate_manifest(
+    manifest: list[dict], task_count: int = 89, repetitions: int = 1
+) -> None:
     tasks = {row["task"] for row in manifest}
-    if task_count < 1 or len(tasks) != task_count or len(manifest) != task_count * 2:
-        raise ValueError(f"Expected {task_count} tasks and {task_count * 2} trials")
-    if {(row["task"], row["arm"]) for row in manifest} != {
-        (task, arm) for task in tasks for arm in ("control", "plugin")
+    count = task_count * repetitions * 2
+    if (
+        repetitions < 1
+        or task_count < 1
+        or len(tasks) != task_count
+        or len(manifest) != count
+    ):
+        raise ValueError(f"Expected {task_count} tasks and {count} trials")
+    if {(row["task"], row["arm"], row.get("repetition", 1)) for row in manifest} != {
+        (task, arm, repetition)
+        for task in tasks
+        for arm in ("control", "plugin")
+        for repetition in range(1, repetitions + 1)
     }:
-        raise ValueError("Each task must have exactly one control and one plugin arm")
+        raise ValueError(
+            "Each task repetition must have exactly one control and one plugin arm"
+        )
     if len({row["job_name"] for row in manifest}) != len(manifest):
         raise ValueError("Each trial must have a unique job_name")
 
@@ -411,6 +443,7 @@ def run(
     concurrency: int = 1,
     inflight: dict[str, TrialProcess] | None = None,
     task_count: int = 89,
+    repetitions: int = 1,
 ) -> None:
     if concurrency < 1:
         raise ValueError("Concurrency must be positive")
@@ -443,7 +476,7 @@ def run(
     if not env.get("TYPESAFE_API_KEY") or env["TYPESAFE_API_KEY"].startswith("secret:"):
         raise ValueError("Inject the Jev key before execution")
     manifest = json.loads((root / "manifest.json").read_text())
-    validate_manifest(manifest, task_count)
+    validate_manifest(manifest, task_count, repetitions)
     pin = source_hashes()
     rows = (
         continuation_rows(
@@ -471,11 +504,13 @@ def run(
             env["MODAL_IMAGE_BUILDER_VERSION"] if environment == "modal" else None
         ),
         "auth_mode": "subscription",
+        "plugin_options": plugin_options(),
         "api_overrides_present_in_launcher": sorted(set(AUTH_OVERRIDES) & set(env)),
         "concurrency": concurrency,
         "task_count": task_count,
+        "repetitions": repetitions,
         "trial_count": len(manifest),
-        "pair_arm_order": "manifest; arms of the same task never overlap",
+        "pair_arm_order": "manifest; arms of the same task repetition never overlap",
         "harbor_retries": 0,
         "resume": resume,
         "adopted_jobs": sorted(inflight or {}),
@@ -620,6 +655,7 @@ if __name__ == "__main__":
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--concurrency", type=int, default=1)
     parser.add_argument("--task-count", type=int, default=89)
+    parser.add_argument("--repetitions", type=int, default=1)
     args = parser.parse_args()
     run(
         args.evidence.resolve(),
@@ -629,4 +665,5 @@ if __name__ == "__main__":
         args.resume,
         args.concurrency,
         task_count=args.task_count,
+        repetitions=args.repetitions,
     )

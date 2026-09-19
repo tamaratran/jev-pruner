@@ -26,6 +26,60 @@ function estimateOutputTokens(text: string): number {
   return estimateTokens(text) + (text.match(/\d/g)?.length ?? 0) / 2;
 }
 
+describe('character-based chunks', () => {
+  const output = Array.from({ length: 30 }, (_, index) => `INFO ${index} ${'log '.repeat(360)}`).join('\n');
+
+  it('can prune a large log that has only two line-based chunks', async () => {
+    const calls = { count: 0 };
+    const input = { command: 'make', goal: 'check build status', output };
+    expect(estimateTokens(output)).toBeGreaterThan(10_000);
+    expect((await trimOutput(input, askerFor(() => 0, calls))).trimmed).toBe(false);
+    expect(calls.count).toBe(0);
+    const result = await trimOutput(input, askerFor(() => 0, calls), { chunkChars: 4_000 });
+    expect(result.trimmed).toBe(true);
+    expect(result.chunks).toBe(15);
+    expect(result.output).toContain(output.split('\n')[0]);
+    expect(result.output).toContain(output.split('\n').at(-1));
+    expect(result.charsAfter).toBeLessThan(result.charsBefore);
+  });
+
+  it('preserves documents and errors with character-based chunks', async () => {
+    const calls = { count: 0 };
+    const asker = askerFor(() => 0, calls);
+    const document = await trimOutput({ command: 'cat build.log', goal: 'read', output }, asker, { chunkChars: 4_000 });
+    expect(document.output).toBe(output);
+    expect(calls.count).toBe(0);
+    const lines = output.split('\n');
+    lines[14] = 'ERROR missing required object engine.o';
+    const result = await trimOutput({ command: 'make', goal: 'fix build', output: lines.join('\n') }, asker, { chunkChars: 4_000 });
+    expect(result.trimmed).toBe(true);
+    expect(result.output).toContain(lines[14]);
+  });
+
+  it('caps decisions and preserves every character when all chunks are kept', async () => {
+    const large = Array.from({ length: 1_000 }, (_, index) => `${index}: ${'x'.repeat(1700)}`).join('\n');
+    const result = await trimOutput(
+      { command: 'make', goal: 'inspect', output: large },
+      askerFor(() => 1, { count: 0 }),
+      { chunkChars: 10, maxStateTokens: 30_000 },
+    );
+    expect(result.chunks).toBeLessThanOrEqual(200);
+    expect(result.output).toBe(large);
+  });
+
+  it('does not bypass the token floor', async () => {
+    const calls = { count: 0 };
+    const short = output.slice(0, 30_000);
+    const result = await trimOutput(
+      { command: 'make', goal: 'check', output: short },
+      askerFor(() => 0, calls),
+      { chunkChars: 1, minTokens: 0 },
+    );
+    expect(result.output).toBe(short);
+    expect(calls.count).toBe(0);
+  });
+});
+
 describe('trimOutput', () => {
   it('passes short output through without asking Jev', async () => {
     const calls = { count: 0 };

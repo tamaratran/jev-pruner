@@ -6,10 +6,35 @@ from pathlib import Path
 from unittest.mock import patch
 
 from evals.full import source_hashes
-from evals.sources import PRODUCTION, production_provenance, production_root
+from evals.sources import (
+    PRODUCTION,
+    plugin_options,
+    production_provenance,
+    production_root,
+)
 
 
 class SourceTests(unittest.TestCase):
+    def test_options_are_explicit_and_validated(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(plugin_options(), {})
+        with patch.dict(
+            os.environ,
+            {"JEV_EVAL_DIAGNOSTICS": "1", "JEV_EVAL_CHUNK_CHARS": "4000"},
+            clear=True,
+        ):
+            self.assertEqual(
+                plugin_options(), {"diagnostics": True, "chunkChars": 4000}
+            )
+        for name, value in (
+            ("JEV_EVAL_DIAGNOSTICS", "yes"),
+            ("JEV_EVAL_CHUNK_CHARS", "-1"),
+            ("JEV_EVAL_CHUNK_CHARS", "nan"),
+        ):
+            with patch.dict(os.environ, {name: value}, clear=True):
+                with self.assertRaises(ValueError):
+                    plugin_options()
+
     def test_hashes_follow_selected_production_and_local_harness(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

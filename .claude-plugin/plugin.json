@@ -34,6 +34,18 @@
       "description": "Number of Bash output lines grouped into each Jev chunk.",
       "default": 20
     },
+    "chunkChars": {
+      "type": "number",
+      "title": "Bash output chunk character target",
+      "description": "Optional character target instead of line grouping. Preserves line boundaries after long-line splitting; adjacent chunks merge if needed to stay within 200 decisions. 0 uses chunkLines.",
+      "default": 0
+    },
+    "diagnostics": {
+      "type": "boolean",
+      "title": "Log pruning decisions",
+      "description": "Log skip reasons, source and hook-returned character counts, request counts, and elapsed time. Does not include commands or output content. Hook counts are not final model-visible token counts.",
+      "default": false
+    },
     "keepThreshold": {
       "type": "number",
       "title": "Keep threshold",

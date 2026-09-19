@@ -1,5 +1,42 @@
 # Eval suite
 
+## Pruning diagnostics and character chunking
+
+Set `JEV_EVAL_DIAGNOSTICS=1` to capture a metadata-only decision for each Bash
+result in the observer's UI logs. Set `JEV_EVAL_CHUNK_CHARS=4000` to opt into
+character-target chunks; omit it to retain the production line-based default.
+Both the smoke and Harbor adapter pass these through the inline plugin's
+`pluginConfigs` entry. Full-run provenance records the options and refuses a
+resume with different options.
+
+The summarizer joins decisions to the final Claude transcript by tool-use ID.
+It separates complete source size, hook stdout size, the host's native
+model-visible text before pruning, and final model-visible text after pruning.
+A positive `model_visible_char_delta_on_measured_calls` means the plugin made
+those results *larger* than their native rendering, even if their archived source
+was shortened. Missing before/after pairs remain unknown, never zero savings.
+Counts use UTF-16 code units for consistency with the hook; they are not billed
+token counts or a measurement of subsequent context replay.
+
+`archive_accesses_observed` matches explicit archive paths in Read, Grep and Bash
+arguments; it cannot see indirect filesystem reads. `repeated_bash_calls` counts
+exact repeated command strings, not whether a repetition was caused by pruning.
+The old `bash_observed_outputs_above_min_chars` field remains a historical
+4,000-character statistic, not an activation metric for the 10,000-token gate.
+
+For repeated comparisons, predeclare a complete paired manifest with an integer
+`repetition` on each row and pass `--repetitions N` to `evals.full` (default 1).
+Every task must have both arms in each repetition, with unique job names.
+The coordinator can run separate repetitions concurrently but never overlaps
+the two arms of the same task repetition. Aggregation preserves every pair.
+Use a fresh evidence directory for each experiment. Pin task selection, repetitions,
+arm order, options, model, versions and budgets before inference. Report all
+planned rows and failures, success and total model-price estimates together,
+with each repetition separate from historical trials. Subsets selected using
+prior outputs are exploratory and do not estimate full-benchmark performance.
+
+## Historical plugin evals
+
 The plugin and manual sweeps below predate the 10,000-token minimum. Their
 recorded results are historical; cases at or below the current threshold pass
 through without scoring. The Terminal-Bench harness is documented separately below.

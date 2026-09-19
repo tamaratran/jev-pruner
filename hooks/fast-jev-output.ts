@@ -5,8 +5,9 @@ import type {
   SessionMessage,
 } from 'claude-code';
 
-import { DEFAULT_MODEL, buildJevRequest, parseJevResponse } from '../src/jev.js';
-import { exceedsOutputThreshold, MIN_OUTPUT_TOKENS, trimOutput } from '../src/output.js';
+import { DEFAULT_MODEL, buildJevRequest, estimateTokens, parseJevResponse } from '../src/jev.js';
+import { classifyOutput, exceedsOutputThreshold, looksBinary, MIN_OUTPUT_TOKENS, trimOutput } from '../src/output.js';
+import type { TrimOutputResult } from '../src/output.js';
 import type { JevAsker } from '../src/jev.js';
 import { looksSecret } from '../src/secrets.js';
 
@@ -41,6 +42,8 @@ export type HookFetch = (
 
 export type HookConfig = {
   apiKey?: string;
+  chunkChars?: number;
+  diagnostics?: boolean;
   chunkLines: number;
   keepThreshold: number;
   maxStateTokens: number;
@@ -73,6 +76,9 @@ export function resolveHookConfig(options: PluginOptions): HookConfig {
   };
   const apiKey = optionString(options, 'apiKey');
   if (apiKey) config.apiKey = apiKey;
+  const chunkChars = optionNumber(options, 'chunkChars', 0);
+  if (chunkChars > 0) config.chunkChars = chunkChars;
+  if (options.diagnostics === true) config.diagnostics = true;
   return config;
 }
 
@@ -132,16 +138,38 @@ export const register: Register = (on: On, options: PluginOptions) => {
 
   on('tool.call', { tool: 'Bash' }, async ($, event, next) => {
     const answer = await next(event);
+    const started = Date.now();
+    let decision = answer.deny !== undefined ? 'denied' : answer.isError ? 'tool_error' : 'missing_result';
+    let stage = 'result';
+    let requests = 0;
+    let sourceChars: number | null = null;
+    let sourceEstimatedTokens: number | null = null;
+    let pruning: TrimOutputResult | undefined;
+    const original = answer.deny === undefined && !answer.isError ? answer.result : undefined;
+    const hookStdoutCharsBefore = original?.stdout.length ?? null;
+    let hookStdoutCharsAfter = hookStdoutCharsBefore;
     try {
       if (answer.deny !== undefined || answer.isError || !answer.result) return answer;
       const record = answer.result;
       const persisted = record.persistedOutputPath;
+      decision = 'persisted_disabled';
       if (persisted && !configured.persistedOutputs) return answer;
+      stage = 'read_output';
       const output = persisted ? await $.fs.read(persisted) : record.stdout;
+      sourceChars = output.length;
+      if (configured.diagnostics) sourceEstimatedTokens = estimateTokens(output);
+      decision = 'below_threshold';
       if (!exceedsOutputThreshold(output, configured.minTokens)) return answer;
+      decision = 'binary';
+      if (looksBinary(output)) return answer;
+      decision = 'document';
+      if (classifyOutput(event.command, output) === 'document') return answer;
       const combined = persisted ? output : output + (record.stderr ? `\n${record.stderr}` : '');
+      stage = 'credentials';
       const apiKey = await getApiKey($, configured);
+      decision = 'missing_key';
       if (!apiKey) return answer;
+      stage = 'history';
       const messages = await $.session.messages();
       const goal = goalFromMessages(messages);
       const secret = looksSecret(event.command, combined);
@@ -152,6 +180,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
         ? `\n\n[fast-jev-output full output: ${path} (Read or grep it if needed)]`
         : '';
       const maxChars = persisted ? Math.max(0, configured.persistedMaxChars) : 0;
+      decision = 'footer_exceeds_budget';
       if (maxChars > 0 && maxChars <= footer.length) return answer;
       let archived: Promise<void> | undefined;
       const saveOutput = async (): Promise<void> => {
@@ -160,6 +189,7 @@ export const register: Register = (on: On, options: PluginOptions) => {
         if (!(await $.fs.exists(ignorePath))) await $.fs.write(ignorePath, '*\n');
         await $.fs.write(path, combined);
       };
+      stage = 'scoring';
       const trimmed = await trimOutput(
         {
           command: event.command,
@@ -170,7 +200,10 @@ export const register: Register = (on: On, options: PluginOptions) => {
         },
         jevAsker(
           async (url, init) => {
+            stage = 'archive';
             if (path) await (archived ??= saveOutput());
+            stage = 'scoring';
+            requests += 1;
             const response = await $.http.fetch(url, init);
             return { status: response.status, ok: response.ok, text: response.text };
           },
@@ -181,11 +214,15 @@ export const register: Register = (on: On, options: PluginOptions) => {
           minTokens: configured.minTokens,
           maxChars: maxChars > 0 ? maxChars - footer.length : 0,
           chunkLines: configured.chunkLines,
+          chunkChars: configured.chunkChars,
           keepThreshold: configured.keepThreshold,
           maxStateTokens: configured.maxStateTokens,
+          onDecision: reason => { decision = reason; },
         },
       );
+      pruning = trimmed;
       if (!trimmed.trimmed) return answer;
+      stage = 'publish';
       const stdout = trimmed.output + footer;
       const scores = trimmed.scores.map((score) => score.toFixed(2)).join(',');
       $.ui.log(
@@ -199,11 +236,31 @@ export const register: Register = (on: On, options: PluginOptions) => {
       delete result.persistedOutputPath;
       delete result.persistedOutputSize;
       if (persisted) result.stderr = '';
+      hookStdoutCharsAfter = stdout.length;
       return { result };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      $.ui.log(`bash output trim skipped (${message})`);
+    } catch {
+      decision = 'hook_error';
+      $.ui.log(`bash output trim skipped (stage=${stage})`);
       return answer;
+    } finally {
+      if (configured.diagnostics) {
+        try {
+          $.ui.log(`fast-jev-output decision ${JSON.stringify({
+            version: 1, toolUseId: event.tool_use_id ?? null, decision, stage,
+            persisted: Boolean(original?.persistedOutputPath),
+            modelVisibleCharsBefore: answer.text?.length ?? null,
+            sourceChars, sourceEstimatedTokens, hookStdoutCharsBefore, hookStdoutCharsAfter,
+            hookStderrCharsBefore: original?.stderr.length ?? null,
+            hookStderrCharsAfter: decision === 'pruned' && original?.persistedOutputPath
+              ? 0 : original?.stderr.length ?? null,
+            chunks: pruning?.chunks ?? 0, kept: pruning?.kept ?? 0, dropped: pruning?.dropped ?? 0,
+            withinChunkOnly: Boolean(pruning?.trimmed && pruning.dropped === 0),
+            requests, elapsedMs: Date.now() - started,
+          })}`);
+        } catch {
+          // Diagnostics cannot change the tool result.
+        }
+      }
     }
   });
 };

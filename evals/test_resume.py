@@ -63,6 +63,11 @@ class ContinuationTests(unittest.TestCase):
                 self.root, list(reversed(self.manifest)), self.flags, self.pin
             )
 
+    def test_plugin_option_changes_are_rejected(self) -> None:
+        with patch("evals.full.plugin_options", return_value={"chunkChars": 4000}):
+            with self.assertRaisesRegex(ValueError, "plugin options"):
+                continuation_rows(self.root, self.manifest, self.flags, self.pin)
+
     def test_running_trial_is_never_retried(self) -> None:
         self.rows[0]["state"] = "running"
         self.write("progress.json", self.rows)
