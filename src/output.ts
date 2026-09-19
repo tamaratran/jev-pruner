@@ -445,11 +445,16 @@ async function assemble(
           maxStateTokens,
           opts.requestBudget.remaining,
           maxChars / keptIndexes.size,
+          {
+            first: index === 0 || isProtectedLine(chunks[index - 1]?.text.split('\n').at(-1) ?? ''),
+            last: index === chunks.length - 1 || isProtectedLine(chunks[index + 1]?.text.split('\n')[0] ?? ''),
+          },
         );
       } catch {
         text = chunks[index]!.text;
       }
-      if (text.length < chunks[index]!.chars) shrunk.set(index, text);
+      if (text.length === 0) keptIndexes.delete(index);
+      else if (text.length < chunks[index]!.chars) shrunk.set(index, text);
     }
   }
   if (maxChars > 0 && render().length > maxChars) {
@@ -516,6 +521,7 @@ async function shrinkChunkWithJev(
   maxStateTokens: number,
   maxRequests: number,
   targetChars: number,
+  boundary: { first: boolean; last: boolean },
 ): Promise<string> {
   const lines = chunk.text.split('\n');
   const groupLines = chunk.chars > targetChars ? 1 : REFINE_GROUP_LINES;
@@ -545,7 +551,9 @@ async function shrinkChunkWithJev(
   } catch {
     return chunk.text;
   }
-  const keep = new Set<number>([0, lines.length - 1]);
+  const keep = new Set<number>();
+  if (boundary.first) keep.add(0);
+  if (boundary.last) keep.add(lines.length - 1);
   groups.forEach((group, index) => {
     if (keepScore(scores[index]!, keepThreshold)) {
       for (let at = index * groupLines; at < (index + 1) * groupLines && at < lines.length; at += 1) keep.add(at);
@@ -557,6 +565,7 @@ async function shrinkChunkWithJev(
     }
   });
   if (keep.size === lines.length) return chunk.text;
+  if (keep.size === 0) return '';
   const parts: string[] = [];
   let removed = 0;
   lines.forEach((line, index) => {

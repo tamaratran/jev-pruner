@@ -159,7 +159,8 @@ describe('rendered output budgets', () => {
 
   it('returns within-chunk shrinking even when no whole chunk is dropped', async () => {
     const output = Array.from({ length: 300 }, (_, index) =>
-      `INFO ${String(index).padStart(3, '0')} ${'x'.repeat(200)}`,
+      index % 100 === 50 ? `ERROR: shard ${index} is unavailable`
+        : `INFO ${String(index).padStart(3, '0')} ${'x'.repeat(200)}`,
     ).join('\n');
     expect(estimateTokens(output)).toBeGreaterThan(10_000);
     let refinements = 0;
@@ -179,6 +180,9 @@ describe('rendered output budgets', () => {
     expect(result.trimmed).toBe(true);
     expect(result.output).not.toBe(output);
     expect(result.output.length).toBeLessThanOrEqual(35_000);
+    for (const index of [50, 150, 250]) {
+      expect(result.output).toContain(`ERROR: shard ${index} is unavailable`);
+    }
   });
 
   it('preserves every failure when the failures alone exceed the budget', async () => {

@@ -129,6 +129,8 @@ requires complete history coverage and the same confidence check before
 removal. Diagnostics, results, and their adjacent context remain protected.
 Scoring includes detected diagnostic and result lines from the complete output,
 so a progress-only fragment can be evaluated alongside the final outcome.
+Only the complete output's boundaries and context beside protected facts are
+mandatory; internal chunk edges can be removed after complete line scoring.
 
 Retention takes precedence over the output-size budget. If safe refinement
 cannot fit, the hook returns the original host result, including its native
