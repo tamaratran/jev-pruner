@@ -63,6 +63,29 @@ Generate a fixture without making network requests:
 npx tsx evals/manual/retention.mts --emit documentation
 ```
 
+After native activation succeeds, run a small recovery-enabled comparison on
+these fixtures:
+
+```sh
+JEV_EVAL_AUTH_MODE=subscription \
+JEV_EVAL_CLAUDE_AUTH_DIR=/private/official-claude-config \
+JEV_EVAL_DIAGNOSTICS=1 \
+python3 -m evals.retention_cohort /new/cohort-evidence \
+  --fixtures /completed/retention-preflight
+```
+
+This uses the pinned local Docker smoke image, live Jev, and official Claude
+subscription authentication. It predeclares six cases, three repetitions and
+both arms (36 trials), alternating the first arm across cases/repetitions.
+Recovery tools are allowed; subagents are unavailable. Each trial has 12 turns,
+a five-minute timeout, a $1 CLI model-price budget and no retry. Grader answers
+are not mounted in the container. Source hashes, prompts, fixture hashes, usage,
+diagnostics, final answers, strict fact scores and every pending/finished row
+are preserved. Instrumentation/authentication failures stop further launches.
+This synthetic cohort uses neither Harbor nor Modal and cannot estimate
+full-benchmark performance. Shared prompt caching limits cost attribution;
+reported model-price estimates are not Claude Max charges.
+
 ## Historical plugin evals
 
 The plugin and manual sweeps below predate the 10,000-token minimum. Their
