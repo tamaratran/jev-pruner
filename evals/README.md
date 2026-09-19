@@ -53,7 +53,7 @@ python -m evals.retention_cohort "$HOME/retention-disabled-new" \
   --cache-mode disabled --repetitions 2
 ```
 
-This runs twelve paired trials plus two startup checks, sequentially with
+This runs six task pairs (twelve trials) plus two startup checks, sequentially with
 alternating arm order. The protocol and source hashes are written before
 inference. Startup must authenticate, run the requested tool, produce a usable
 result, and satisfy the requested cache mode. Disabled mode exports the documented
@@ -68,6 +68,11 @@ commands print the actual nonzero exit status and return normally so Claude give
 the hook a structured Bash record; throwing tool errors remain unchanged. The
 reference task runs `pydoc pathlib`. These are controlled workloads, not a
 Terminal-Bench or representative production sample.
+
+Constructed workloads expose `Bash`, `Read`, `Grep`, and `Edit`; legacy fixture
+mode exposes only `Bash`, `Read`, and `Grep`. The protocol records the same tool
+list passed to Claude. Protected-file checks still reject edits outside the
+permitted repair target.
 
 `task_success`/`success` require an executable repair verifier and unchanged
 protected input files, or a factual answer for the reference task. Report
