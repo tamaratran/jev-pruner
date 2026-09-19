@@ -179,6 +179,7 @@ function stateFor(
   chunks: readonly OutputChunk[],
   history: HistoryEntry[],
   category: OutputCategory,
+  diagnosticsAndResults: readonly string[],
 ) {
   return {
     context: OUTPUT_CONTEXT,
@@ -188,6 +189,7 @@ function stateFor(
     task: input.goal,
     history,
     command: input.command,
+    diagnosticsAndResults,
     chunks: chunks.map(({ id, text }) => ({ id, text })),
   };
 }
@@ -253,11 +255,12 @@ function scoringRequests(
   maxStateTokens: number,
 ) {
   const category = classifyOutput(input.command, input.output);
+  const diagnosticsAndResults = [...new Set(input.output.split('\n').filter(isProtectedLine))];
   const chunkTokens = new Map(chunks.map(({ id, text }) => [
     id, estimateStateTokens(JSON.stringify({ id, text })) + 1,
   ]));
   const byHistory = histories.map(history => {
-    const baseTokens = estimateStateTokens(JSON.stringify(stateFor(input, [], history, category)));
+    const baseTokens = estimateStateTokens(JSON.stringify(stateFor(input, [], history, category, diagnosticsAndResults)));
     const groups: OutputChunk[][] = [];
     let group: OutputChunk[] = [];
     let tokens = baseTokens;
@@ -274,7 +277,7 @@ function scoringRequests(
     }
     if (group.length > 0) groups.push(group);
     return groups.flatMap(group => {
-      const state = stateFor(input, group, history, category);
+      const state = stateFor(input, group, history, category, diagnosticsAndResults);
       return batches(group, estimateStateTokens(JSON.stringify(state)))
         .map(batch => ({ state, batch }));
     });
@@ -334,7 +337,8 @@ async function trimOutputAttempt(
   const chunks = chunkOutput(input.output, perChunk, Math.max(0, finite(options.chunkChars, 0)));
   if (chunks.length <= 2) return untrimmed(input.output, chunks.length, [], 'few_chunks', options.onDecision);
 
-  const outputTokens = estimateStateTokens(JSON.stringify(stateFor(input, chunks, [], category)));
+  const diagnosticsAndResults = [...new Set(input.output.split('\n').filter(isProtectedLine))];
+  const outputTokens = estimateStateTokens(JSON.stringify(stateFor(input, chunks, [], category, diagnosticsAndResults)));
   const histories = splitHistory(
     input.messages ?? [],
     maxStateTokens - Math.min(outputTokens, Math.ceil(maxStateTokens / 2)),

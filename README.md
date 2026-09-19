@@ -127,6 +127,8 @@ Refinement scores individual lines when a retained chunk exceeds its share of
 the character budget; otherwise it scores five-line groups. Each line still
 requires complete history coverage and the same confidence check before
 removal. Diagnostics, results, and their adjacent context remain protected.
+Scoring includes detected diagnostic and result lines from the complete output,
+so a progress-only fragment can be evaluated alongside the final outcome.
 
 Retention takes precedence over the output-size budget. If safe refinement
 cannot fit, the hook returns the original host result, including its native
