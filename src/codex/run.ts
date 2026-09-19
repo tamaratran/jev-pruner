@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { pruneCodexOutput } from './prune.js';
+import { createCodexRouterAsker } from './router-asker.js';
 
 const args = process.argv.slice(2);
 if (args[0] !== '--' || args.length < 2) {
@@ -49,6 +50,9 @@ if (args[0] !== '--' || args.length < 2) {
           cwd: process.cwd(),
           sessionId: process.env.CODEX_THREAD_ID,
           apiKey: process.env.TYPESAFE_API_KEY,
+          asker: process.env.JEV_PRUNER_TRANSPORT === 'codex-router'
+            ? createCodexRouterAsker()
+            : undefined,
           signal: controller.signal,
         })
         : output;
