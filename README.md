@@ -163,6 +163,7 @@ npm run test:codex-session                    # 40 stages plus final handoff
 
 Set `JEV_CODEX_PLUGIN_ROOT` if the installed plugin is outside the default
 `~/.codex/plugins/cache/jev-pruner-codex/jev-pruner/0.1.0` directory.
+Set `JEV_CODEX_MODEL` to select an available Codex model instead of its default.
 Reinstall the plugin after rebuilding changed source so the test exercises that revision.
 The harness runs this reviewed local plugin with Codex's per-invocation hook-trust
 bypass. It retains the `workspace-write` sandbox and enables network access for
@@ -175,6 +176,8 @@ The final handoff cannot read archives. Missing commands, host truncation,
 rate limits, timeouts, retention failures, and incomplete runs fail the test.
 Private evidence under `~/jev-codex-session-*` includes per-turn CLI events,
 header-free Jev requests/responses, per-stage metrics, and the final verdict.
+Generate a self-contained HTML report with
+`node tests/codex-session-report.mjs <evidence-directory> [...]`.
 The synthetic fixture tests sustained history growth; it is not a benchmark of
 typical coding sessions.
 

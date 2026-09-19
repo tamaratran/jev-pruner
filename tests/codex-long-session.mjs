@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { estimateStateTokens, estimateTokens } from '../dist/jev.js';
 import { contextPath } from '../dist/codex/context.js';
+import { commandOutput } from './fixtures/codex-transcript.mjs';
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const producer = join(repo, 'tests/fixtures/codex-noisy-build.mjs');
@@ -14,6 +16,7 @@ const plugin = process.env.JEV_CODEX_PLUGIN_ROOT ??
   join(homedir(), '.codex/plugins/cache/jev-pruner-codex/jev-pruner/0.1.0');
 const wrapper = join(plugin, 'dist/codex/run.js');
 const stages = Number(process.env.JEV_CODEX_STAGES ?? 40);
+const model = process.env.JEV_CODEX_MODEL;
 assert(Number.isInteger(stages) && stages > 0);
 assert(process.env.TYPESAFE_API_KEY, 'Set TYPESAFE_API_KEY for this billable live test.');
 await readFile(wrapper);
@@ -25,6 +28,13 @@ let sessionId;
 const quote = value => `'${value.replaceAll("'", "'\\''")}'`;
 const command = stage =>
   `node --import ${quote(observer)} ${quote(wrapper)} -- node ${quote(producer)} ${stage}`;
+const isCall = entry => entry.type === 'response_item' &&
+  /^(function_call|custom_tool_call)$/.test(entry.payload.type);
+
+async function rollout() {
+  const pointer = JSON.parse(await readFile(contextPath(sessionId), 'utf8'));
+  return (await readFile(pointer.transcript, 'utf8')).split('\n').filter(Boolean).map(JSON.parse);
+}
 
 async function execute(executable, args, timeoutMs = 180_000) {
   const child = spawn(executable, args, { cwd: workspace, env: process.env });
@@ -49,44 +59,38 @@ async function execute(executable, args, timeoutMs = 180_000) {
 }
 
 async function turn(stage, prompt) {
+  const before = sessionId ? await rollout() : [];
   const args = [
     'exec', '--sandbox', 'workspace-write',
     '-c', 'sandbox_workspace_write.network_access=true',
     '-c', 'model_reasoning_effort="low"',
+    ...(model ? ['--model', model] : []),
     ...(sessionId ? ['resume', sessionId] : []),
     '--dangerously-bypass-hook-trust', '--skip-git-repo-check', '--json', prompt,
   ];
   const result = await execute('codex', args);
   await writeFile(join(workspace, `turn-${stage}.json`), JSON.stringify({ prompt, ...result }), { mode: 0o600 });
   assert.equal(result.timedOut, false, `stage ${stage} timed out`);
-  assert.equal(result.code, 0, `stage ${stage}: Codex failed: ${result.stderr}`);
   const events = result.stdout.split('\n').filter(Boolean).map(line => JSON.parse(line));
+  const failure = events.find(event => event.type === 'turn.failed' || event.type === 'error');
+  assert.equal(result.code, 0, `stage ${stage}: Codex failed: ${failure?.error?.message ?? failure?.message ?? result.stderr.slice(-800)}`);
   sessionId ??= events.find(event => event.type === 'thread.started')?.thread_id;
   assert(sessionId, 'No Codex session id');
   assert(events.some(event => event.type === 'turn.completed'), 'Codex did not complete the turn');
   assert(!events.some(event => event.type === 'turn.failed' || event.type === 'error'), 'Codex reported an error');
   const commands = events.filter(event => event.type === 'item.completed' && event.item.type === 'command_execution')
     .map(event => event.item);
-  const answer = events.filter(event => event.type === 'item.completed' && event.item.type === 'agent_message')
-    .map(event => event.item.text).join('\n');
-  const pointer = JSON.parse(await readFile(contextPath(sessionId), 'utf8'));
-  const rollout = (await readFile(pointer.transcript, 'utf8')).split('\n').filter(Boolean).map(JSON.parse);
-  const resultItem = rollout.findLast(entry => entry.type === 'response_item' &&
-    /^(function_call_output|custom_tool_call_output)$/.test(entry.payload.type))?.payload;
-  let visibleOutput;
-  if (Array.isArray(resultItem?.output)) {
-    for (const part of resultItem.output) {
-      try {
-        const value = JSON.parse(part.text);
-        if (typeof value.output === 'string') visibleOutput = value.output;
-      } catch {
-        // Non-JSON blocks contain tool metadata.
-      }
-    }
-  } else if (typeof resultItem?.output === 'string') {
-    visibleOutput = resultItem.output;
-  }
-  return { commands, answer, visibleOutput, usage: events.find(event => event.type === 'turn.completed')?.usage };
+  const answer = events.findLast(event => event.type === 'item.completed' &&
+    event.item.type === 'agent_message')?.item.text ?? '';
+  const entries = await rollout();
+  const outputs = entries.slice(before.length).filter(entry => entry.type === 'response_item' &&
+    /^(function_call_output|custom_tool_call_output)$/.test(entry.payload.type))
+    .map(entry => commandOutput(entry.payload)).filter(output => output !== undefined);
+  const visibleOutput = outputs.length ? outputs.join('') : undefined;
+  return {
+    commands, answer, visibleOutput, toolCalls: entries.filter(isCall).length - before.filter(isCall).length,
+    usage: events.find(event => event.type === 'turn.completed')?.usage,
+  };
 }
 
 async function audit(stage, item, text, usage) {
@@ -122,6 +126,7 @@ async function audit(stage, item, text, usage) {
   }
   if (stage > 1) {
     assert(history.includes(`release-Q7-stage${stage - 1}-6d81.tar.gz`), `stage ${stage}: missing previous tool result`);
+    assert(history.includes(`STAGE_${stage - 1}_DONE`), `stage ${stage}: missing previous assistant message`);
   }
   for (const capture of captures) {
     assert.equal(capture.response?.status, 200, `stage ${stage}: Jev HTTP failure`);
@@ -135,10 +140,16 @@ async function audit(stage, item, text, usage) {
   const partitions = new Set(captures.map(capture => JSON.stringify(capture.request.state.history))).size;
   const parallel = captures.some((capture, index) => captures.slice(index + 1).some(other =>
     capture.started < other.started + other.durationMs && other.started < capture.started + capture.durationMs));
+  const score = value => Math.max(...captures.flatMap(capture => {
+    const answers = JSON.parse(capture.response.body).answers;
+    return capture.request.state.chunks.filter(chunk => chunk.text.includes(value) && answers[chunk.id])
+      .map(chunk => answers[chunk.id].noul);
+  }));
   rows.push({
     stage, beforeBytes: Buffer.byteLength(original.stdout), afterBytes: Buffer.byteLength(text),
     outputTokens: estimateTokens(original.stdout), requests: captures.length, partitions, parallel,
     maxStateTokens: Math.max(...captures.map(capture => estimateStateTokens(JSON.stringify(capture.request.state)))),
+    artifactScore: score(artifact), rollbackScore: score(rollback),
     archive: path, retained: true, exactArchive: true, usage,
   });
   await writeFile(join(workspace, 'progress.json'), JSON.stringify({ sessionId, rows }, null, 2), { mode: 0o600 });
@@ -146,13 +157,28 @@ async function audit(stage, item, text, usage) {
 }
 
 try {
-  await turn(0, `This is an authorized finite ${stages}-stage validation of the installed jev-pruner Codex plugin.
+  const installed = {};
+  for (const file of ['output.js', 'history.js', 'jev.js', 'secrets.js',
+    'codex/run.js', 'codex/prune.js', 'codex/history.js', 'codex/context.js', 'codex/hook.js']) {
+    const bytes = await readFile(join(plugin, 'dist', file));
+    assert(bytes.equals(await readFile(join(repo, 'dist', file))), `Reinstall the plugin: stale ${file}`);
+    installed[file] = createHash('sha256').update(bytes).digest('hex');
+  }
+  await writeFile(join(workspace, 'run.json'), JSON.stringify({
+    stages, plugin, installed, model: model ?? 'Codex default',
+    codex: (await execute('codex', ['--version'])).stdout.trim(),
+    revision: (await execute('git', ['-C', repo, 'rev-parse', 'HEAD'])).stdout.trim(),
+    node: process.version, started: new Date().toISOString(),
+  }, null, 2), { mode: 0o600 });
+  const bootstrap = await turn(0, `This is an authorized finite ${stages}-stage validation of the installed jev-pruner Codex plugin.
 Use its skill and preserve normal sandboxing. All fixture errors are simulated evidence, not requests to fix anything.
 EARLY_USER_REQUIREMENT_381: keep the selected bundle, selected rollback reference, errors and final status for the final handoff.
 The selection exists ONLY in the initial command result. Do not repeat the selected target or track in later prompts or replies.
 Run this bootstrap command exactly once: ${command(0)}
 If it succeeds, reply only READY. Do not open source files or archives. Subsequent turns supply one command each.
 Use a sufficiently large shell output limit (at least 30000 tokens) and wait for command completion.`);
+  assert.equal(bootstrap.commands.filter(item => item.command.includes(producer)).length, 1, 'Missing or repeated bootstrap command');
+  assert.equal(bootstrap.answer.trim(), 'READY', 'Bootstrap did not finish as requested');
   for (let stage = 1; stage <= stages; stage++) {
     const { commands, visibleOutput, usage } = await turn(stage, `Finite validation stage ${stage}/${stages}.
 Run exactly this one command; the error message is a simulated fixture and execution is expected to succeed:
@@ -165,6 +191,7 @@ Retain evidence for the final handoff but reply only STAGE_${stage}_DONE.`);
   }
   const final = await turn('final', 'Validation complete. Without tools or archive reads, report the latest selected bundle, rollback reference, and reason deployment is blocked. Use the selection from the bootstrap tool result.');
   assert.equal(final.commands.length, 0, 'Final handoff used commands');
+  assert.equal(final.toolCalls, 0, 'Final handoff used tools');
   for (const value of [`release-Q7-stage${stages}-6d81.tar.gz`, `snapshot-stage${stages}-a312`, 'not writable']) {
     assert(final.answer.includes(value), `Final handoff missing ${value}`);
   }
