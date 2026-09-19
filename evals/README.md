@@ -391,10 +391,13 @@ drain active trials without interrupting an agent attempt. `active-trials.json`
 records the configured limit, launch count and active job names.
 
 Parallel launches require the private access expiry to exceed each selected
-trial's full build/runtime bound plus ten minutes. Near expiry the runner falls
-back to one trial so a runtime refresh can be checkpointed without concurrent
-writers. Unexpected competing credential updates still fail closed. This
-does not bypass Claude subscription limits; access failures stop scheduling.
+trial's full build/runtime bound plus ten minutes. Eligible rows that fit this
+window run before longer rows that require exclusive execution, retaining
+manifest order within each group and the original arm order within each task.
+After safe rows finish, the runner falls back to one trial so a runtime refresh
+can be checkpointed without concurrent writers. The initial subscription recheck
+remains an exclusive barrier. Unexpected competing credential updates still fail
+closed. This does not bypass Claude subscription limits; access failures stop scheduling.
 
 Use `--checkpoint-tasks 10` to save `small-results.json` once the first ten
 manifest tasks finish both arms. These are the first tasks in alphabetical
@@ -466,12 +469,14 @@ lifetime and cost reservations include this overhead without changing task
 agent or verifier limits. Subscription refresh state is checkpointed before
 agent-log downloads and again before sandbox termination.
 
-Modal scored trials also pass the remaining agent time to each remote exec.
-Cancelling a local output reader does not terminate the remote process; Modal's
-server-side exec deadline does. The same task agent limit governs the whole
-agent phase, with remaining time rounded up to Modal's integer-second API.
+Modal scored trials wrap agent execs in GNU `timeout --signal=KILL`, with the
+remaining task agent time as a fractional-second process-group deadline.
+Cancelling a local output reader does not stop remote execution, and Modal's
+server-side exec timeout alone can leave child processes alive. A separate Modal
+parent-exec deadline rounds up and adds five seconds as a transport backstop;
+it does not extend the GNU agent deadline. Setup verifies GNU timeout is present.
 Setup and verifier limits remain separate. Historical timed-out attempts without
-this remote deadline retain their observed rewards and require a timing caveat.
+this group deadline retain their observed rewards and require a timing caveat.
 
 ## Checks
 

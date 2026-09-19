@@ -331,6 +331,27 @@ def fits_before_refresh(spec: dict, preflight: bool, expires_at: float) -> bool:
     return expires_at / 1000 - time.time() > trial_bound(spec, preflight) + 600
 
 
+def select_candidate(
+    candidates: list[dict],
+    specs: dict[str, dict],
+    expires_at: float | None,
+    active_tasks: set[str],
+) -> tuple[dict | None, bool]:
+    def exclusive(row: dict) -> bool:
+        return bool(row.get("subscription_recheck")) or (
+            expires_at is not None
+            and not fits_before_refresh(
+                specs[row["task"]], row["arm"] == "preflight", expires_at
+            )
+        )
+
+    available = [row for row in candidates if row["task"] not in active_tasks]
+    if not available:
+        return None, False
+    row = min(available, key=exclusive)
+    return row, exclusive(row)
+
+
 def retain_trial_summary(row: dict, summary: dict) -> None:
     row.update(
         {key: value for key, value in summary.items() if key not in {"task", "arm"}}
@@ -1130,19 +1151,12 @@ async def execute(args: argparse.Namespace) -> None:
                     else [row for row in rows if row["state"] != "finished"][:1]
                 )
                 active_tasks = {row["task"] for row in started.values()}
-                candidate = next(
-                    (row for row in candidates if row["task"] not in active_tasks),
-                    None,
+                candidate, exclusive = select_candidate(
+                    candidates, specs, expiry, active_tasks
                 )
                 if candidate is None:
                     break
                 row = candidate
-                exclusive = bool(row.get("subscription_recheck")) or (
-                    expiry is not None
-                    and not fits_before_refresh(
-                        specs[row["task"]], row["arm"] == "preflight", expiry
-                    )
-                )
                 if exclusive and started:
                     break
                 build_margin = (

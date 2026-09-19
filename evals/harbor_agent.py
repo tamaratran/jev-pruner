@@ -72,6 +72,10 @@ class JevClaudeCode(ClaudeCode):
         )
         if self.parse_version(version.stdout or "") != CLAUDE_VERSION:
             raise RuntimeError("Installed Claude version does not match pin")
+        if self.remote_timeout_seconds is not None:
+            timeout = await self.exec_as_agent(environment, "timeout --version")
+            if timeout.return_code or "GNU coreutils" not in (timeout.stdout or ""):
+                raise RuntimeError("Remote agent deadlines require GNU timeout")
         for directory in (".claude-plugin", "hooks", "src"):
             await environment.upload_dir(
                 REPO / directory, f"{REMOTE}/production/{directory}"
@@ -93,6 +97,9 @@ class JevClaudeCode(ClaudeCode):
                     "auth_mode": auth_mode(),
                     "auth_status": auth_status,
                     "remote_timeout_seconds": self.remote_timeout_seconds,
+                    "remote_timeout_backend": "GNU timeout process group"
+                    if self.remote_timeout_seconds is not None
+                    else None,
                 },
                 indent=2,
             )
@@ -166,12 +173,14 @@ class JevClaudeCode(ClaudeCode):
             remaining = self.remote_deadline - monotonic()
             if remaining <= 0:
                 raise TimeoutError("Agent execution deadline reached")
-            remote_timeout = math.ceil(remaining)
-            timeout_sec = (
-                min(timeout_sec, remote_timeout)
-                if timeout_sec is not None
-                else remote_timeout
+            limit = (
+                min(timeout_sec, remaining) if timeout_sec is not None else remaining
             )
+            command = (
+                f"timeout --signal=KILL {float(limit)}s "
+                f"bash -o pipefail -c {shlex.quote(command)}"
+            )
+            timeout_sec = math.ceil(limit) + 5
         effective_env = {
             **(env or {}),
             "DISABLE_TELEMETRY": "1",
