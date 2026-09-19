@@ -17,7 +17,7 @@ export { looksSecret } from '../src/secrets.js';
 
 const ARCHIVE_DIR = '.claude/fast-jev-output';
 const DEFAULT_MAX_SCORING_REQUESTS = 11;
-const VISIBLE_CHARS_PER_REQUEST = 256;
+const VISIBLE_CHARS_PER_REQUEST = 192;
 const DEFAULTS = {
   persistedMaxChars: 8_000,
   chunkLines: 20,

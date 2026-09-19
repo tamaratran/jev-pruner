@@ -61,7 +61,7 @@
     "maxScoringRequests": {
       "type": "number",
       "title": "Maximum additional scoring requests",
-      "description": "Additional Jev calls beyond the first, shared by scoring, retries and refinement. The hook also limits total calls to one per 256 visible preview characters, rounded up. 0 permits only the initial call.",
+      "description": "Additional Jev calls beyond the first, shared by scoring, retries and refinement. The hook also limits total calls to one per 192 visible preview characters, rounded up. 0 permits only the initial call.",
       "default": 11
     },
     "model": {

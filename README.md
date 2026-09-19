@@ -478,10 +478,10 @@ request is made. Refinement also stops once lines already retained make a fit
 impossible.
 
 The Claude hook allows at most 12 total Jev requests by default, further limited
-to `ceil(visibleChars / 256)` (minimum one). `visibleChars` is the smaller of the
+to `ceil(visibleChars / 192)` (minimum one). `visibleChars` is the smaller of the
 native preview size and the configured output cap; without a native preview it
 uses the source size capped by the configured output budget. For a 2,146-character
-preview this allows nine requests. This is an effort heuristic, not a pricing or
+preview this allows twelve requests. This is an effort heuristic, not a pricing or
 savings guarantee.
 
 `maxScoringRequests` limits additional calls beyond the first, shared by initial

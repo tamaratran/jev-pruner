@@ -60,8 +60,8 @@ function harness(options: Partial<HookConfig> = {}) {
 
 describe('Bash pruning diagnostics', () => {
   it.each([
-    [2048, 8],
-    [2146, 9],
+    [2048, 11],
+    [2146, 12],
     [8000, 12],
   ])('bounds scoring using a %i-character preview instead of archive size', async (size, limit) => {
     const h = harness({ diagnostics: true });
@@ -85,13 +85,13 @@ describe('Bash pruning diagnostics', () => {
 
   it('preserves an unscored tail when its preview only permits one request', async () => {
     const h = harness({ diagnostics: true });
-    const full = Array.from({ length: 4000 }, (_, i) =>
+    const full = 'start\n' + Array.from({ length: 4000 }, (_, i) =>
       `progress ${i} ${'cached '.repeat(30)}`).join('\n') + '\nserial=important-tail';
     h.original.result.persistedOutputPath = '/project/full.txt';
-    h.original.text = 'p'.repeat(250);
+    h.original.text = 'p'.repeat(192);
     h.read.mockResolvedValue(full);
     expect(await h.run()).toBe(h.original);
-    expect(h.fetch.mock.calls.length).toBeLessThanOrEqual(1);
+    expect(h.fetch).toHaveBeenCalledTimes(1);
     expect(h.log).toHaveBeenCalledWith(expect.stringContaining('"requestLimit":1'));
   });
 
