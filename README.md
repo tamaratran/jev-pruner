@@ -21,6 +21,10 @@ Claude requests a Bash command → Command runs → Jev prunes stdout → Claude
    `openssl`) are left untouched.
 3. Output is split into chunks of `chunkLines` lines, capped at 200 chunks;
    lines longer than 2,000 characters are split first.
+   The opt-in `chunkChars` setting groups these lines toward a character target
+   instead. Adjacent groups merge as needed to retain the 200-chunk cap, so the
+   target is not a hard maximum. Neither mode bypasses the token floor or
+   document/error protections.
 4. Jev receives `{ context, task, history, command, chunks }`, plus `category` and
    `categoryGuidance` for recognized build/test/install or search/excerpt commands,
    and one noul question
@@ -411,6 +415,11 @@ The plugin prunes that saved file instead, caps the result at
 the markers, so nothing becomes unrecoverable. Set `persistedOutputs` to false
 to leave those results alone.
 
+When the host supplies its model-visible preview, that preview's character count
+also caps the replacement, including omission markers and the archive footer.
+Compressing a large archive must not expand an already-short native preview.
+If protected content cannot fit, the original result passes through.
+
 The budget includes omission markers and the archive footer. Error lines and output that could not be
 scored are preserved; if they cannot fit, the original result passes through.
 Scoring uses complete chunks and allows one initial Jev request plus at most 40
@@ -442,13 +451,21 @@ Use `/plugin configure fast-jev-output` inside Claude Code, or merge a
 | `apiKey` | `TYPESAFE_API_KEY` | TypeSafe API key |
 | `minTokens` | `10000` | Estimated stdout token threshold; minimum 10,000; equality skips pruning |
 | `persistedOutputs` | `true` | Prune eligible output saved by Claude |
-| `persistedMaxChars` | `8000` | Rendered budget for saved output, including markers and the footer; 0 disables the cap |
+| `persistedMaxChars` | `8000` | Rendered budget for saved output, including markers and the footer; 0 disables this configured cap. The native preview size, when available, remains an upper bound |
 | `chunkLines` | `20` | Lines grouped into each Jev decision chunk |
+| `chunkChars` | `0` | Optional character target instead of line grouping; 0 uses `chunkLines` |
+| `diagnostics` | `false` | Log decision reasons, source/hook sizes, native model-visible size before pruning when available, request count and elapsed time; no commands or output text |
 | `keepThreshold` | `0.5` | Minimum Jev probability for a chunk to remain |
 | `maxStateTokens` | `25000` | Estimated token budget for the Jev state |
 | `model` | `jev-latest` | TypeSafe Jev model name |
 
 The old `minChars` option is no longer used; replace it with `minTokens`.
+
+Diagnostics distinguish the complete source from the host's preview and the
+native text the model would have seen. The post-pruning model-visible size must
+be read from the final transcript: the host may persist the returned text again.
+Character counts are UTF-16 code units, not billed tokens. Library callers may
+use `onDecision(reason)` in `trimOutput` options for the terminal decision.
 
 ## Data and privacy
 

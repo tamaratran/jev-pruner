@@ -26,6 +26,7 @@ case "${JEV_EVAL_AUTH_MODE:-api}" in
     exit 1
     ;;
 esac
+plugin_settings="$(python3 -c 'import json, sys; from evals.sources import plugin_options; print(json.dumps({**json.loads(sys.argv[1]), "pluginConfigs": {"fast-jev-output@inline": {"options": plugin_options()}}}, separators=(",", ":")))' "$settings")"
 python3 -c '
 import os
 import sys
@@ -54,7 +55,11 @@ printf '%s\n' "${JEV_EVAL_AUTH_MODE:-api}" > "$EVIDENCE_DIR/auth-mode.txt"
 for arm in control plugin; do
   mkdir -p "$EVIDENCE_DIR/$arm"
   flags=(--plugin-dir /plugin/evals/observer)
-  if [[ "$arm" == plugin ]]; then flags+=(--plugin-dir /production); fi
+  arm_settings="$settings"
+  if [[ "$arm" == plugin ]]; then
+    flags+=(--plugin-dir /production)
+    arm_settings="$plugin_settings"
+  fi
   docker run --rm --workdir /workspace \
     "${auth_args[@]}" --env TYPESAFE_API_KEY \
     --env CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 \
@@ -70,7 +75,7 @@ for arm in control plugin; do
     --model claude-sonnet-5 --max-budget-usd 1 --max-turns 3 --effort high \
     --verbose --output-format stream-json --permission-mode bypassPermissions \
     --setting-sources '' --strict-mcp-config --tools Bash \
-    --settings "$settings" "${flags[@]}" \
+    --settings "$arm_settings" "${flags[@]}" \
     > "$EVIDENCE_DIR/$arm/events.jsonl" 2> "$EVIDENCE_DIR/$arm/stderr.txt"
   python3 "$repo/evals/summarize.py" "$EVIDENCE_DIR/$arm" --smoke-arm "$arm"
 done

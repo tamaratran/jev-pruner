@@ -40,7 +40,7 @@ function harness(options: Partial<HookConfig> = {}) {
     fs: { exists: async () => false, read, write },
     ui: { log: vi.fn(), toast: vi.fn() },
   };
-  const original: { result: BuiltinToolResults['Bash'] } = {
+  const original: { result: BuiltinToolResults['Bash']; text?: string } = {
     result: {
       stdout: Array.from({ length: 200 }, (_, i) => `${'cache '.repeat(55)}compiled module ${i} successfully`).join('\n'),
       stderr: 'stderr stays intact',
@@ -49,14 +49,101 @@ function harness(options: Partial<HookConfig> = {}) {
   };
   const next = vi.fn(async () => original);
   return {
-    bodies, messages, readMessages, read, fetch, write, original, next,
+    bodies, messages, readMessages, read, fetch, write, original, next, log: host.ui.log,
     run: () => hook(
       host as unknown as Parameters<BashHook>[0],
       { tool: 'Bash', command: 'build', tool_use_id: 'bash-test' },
       next as unknown as Parameters<BashHook>[2],
     ),
-  };
+};
 }
+
+describe('Bash pruning diagnostics', () => {
+  it.each([0, 8_000])('caps persisted replacements at the native visible size with budget %i', async persistedMaxChars => {
+    const h = harness({ diagnostics: true, chunkChars: 4_000, persistedMaxChars });
+    const complete = `${h.original.result.stdout}\nERROR: deployment blocked`;
+    h.original.result.persistedOutputPath = '/project/complete-log.txt';
+    h.original.result.stdout = 'host stdout preview '.repeat(1500);
+    h.original.text = 'native preview '.repeat(150);
+    h.read.mockResolvedValue(complete);
+    const result = await h.run();
+    expect(result).not.toBe(h.original);
+    expect(result.result?.stdout.length).toBeLessThanOrEqual(h.original.text.length);
+    expect(result.result?.stdout).toContain('ERROR: deployment blocked');
+    expect(result.result?.stdout).toContain('full output: /project/complete-log.txt');
+    expect(result.result?.stderr).toBe('');
+    expect(h.write).not.toHaveBeenCalled();
+    expect(h.log).toHaveBeenCalledWith(expect.stringContaining('"modelVisibleBudgetChars":2250'));
+  });
+
+  it.each(['', 'tiny'])('retains native output without scoring when its visible budget cannot fit a footer', async text => {
+    const h = harness({ diagnostics: true });
+    h.original.result.persistedOutputPath = '/project/complete-log.txt';
+    h.original.text = text;
+    h.read.mockResolvedValue(h.original.result.stdout);
+    expect(await h.run()).toBe(h.original);
+    expect(h.fetch).not.toHaveBeenCalled();
+    expect(h.log).toHaveBeenCalledWith(expect.stringContaining('"decision":"footer_exceeds_budget"'));
+  });
+
+  it('records small-output skips without history, network or output text', async () => {
+    const h = harness({ diagnostics: true });
+    h.original.result.stdout = 'synthetic private content';
+    h.original.text = 'native rendered text';
+    expect(await h.run()).toBe(h.original);
+    const text = h.log.mock.calls[0]![0] as string;
+    expect(JSON.parse(text.slice('fast-jev-output decision '.length))).toMatchObject({
+      decision: 'below_threshold', requests: 0, sourceChars: 25,
+      modelVisibleCharsBefore: 20, hookStdoutCharsBefore: 25, hookStdoutCharsAfter: 25,
+    });
+    expect(text).not.toContain('synthetic private');
+    expect(h.readMessages).not.toHaveBeenCalled();
+    expect(h.fetch).not.toHaveBeenCalled();
+  });
+
+  it('skips protected documents before reading history', async () => {
+    const h = harness({ diagnostics: true });
+    h.original.result.stdout = JSON.stringify({ data: 'cache '.repeat(12_000) });
+    expect(await h.run()).toBe(h.original);
+    expect(h.log).toHaveBeenCalledWith(expect.stringContaining('"decision":"document"'));
+    expect(h.readMessages).not.toHaveBeenCalled();
+    expect(h.fetch).not.toHaveBeenCalled();
+  });
+
+  it('distinguishes the archived source, hook preview and native visible text', async () => {
+    const h = harness({ diagnostics: true, chunkChars: 4_000 });
+    const complete = h.original.result.stdout;
+    h.original.result.persistedOutputPath = '/project/output.txt';
+    h.original.result.stdout = 'preview';
+    h.original.text = 'native preview with file reference'.repeat(60);
+    h.read.mockResolvedValue(complete);
+    const result = await h.run();
+    const text = h.log.mock.calls.at(-1)![0] as string;
+    const decision = JSON.parse(text.slice('fast-jev-output decision '.length));
+    expect(decision).toMatchObject({
+      decision: 'pruned', persisted: true, sourceChars: complete.length,
+      hookStdoutCharsBefore: 7, hookStdoutCharsAfter: result.result?.stdout.length,
+      modelVisibleCharsBefore: h.original.text.length, modelVisibleBudgetChars: h.original.text.length,
+      requests: h.fetch.mock.calls.length,
+    });
+    expect(decision.sourceChars).toBeGreaterThan(decision.hookStdoutCharsAfter);
+    expect(decision.hookStdoutCharsAfter).toBeLessThanOrEqual(decision.modelVisibleCharsBefore);
+  });
+
+  it('retains the original result and identifies scoring failures', async () => {
+    const h = harness({ diagnostics: true });
+    h.fetch.mockRejectedValue(new Error('unavailable'));
+    expect(await h.run()).toBe(h.original);
+    expect(h.log.mock.calls.at(-1)![0]).toContain('"decision":"hook_error","stage":"scoring"');
+  });
+
+  it('ignores diagnostic logger failures', async () => {
+    const h = harness({ diagnostics: true });
+    h.original.result.stdout = 'short';
+    h.log.mockImplementation(() => { throw new Error('logger unavailable'); });
+    expect(await h.run()).toBe(h.original);
+  });
+});
 
 describe('Bash hook conversation state', () => {
   it('reads fresh history per command and includes it in the actual HTTP body', async () => {

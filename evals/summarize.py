@@ -3,12 +3,17 @@
 import argparse
 import json
 import re
+from collections import Counter
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 from statistics import median
 
 TRIM_LOG = re.compile(r"kept (\d+)/(\d+) chunks \((\d+)→(\d+) chars\)")
 TRIM_MARKER = re.compile(r"\[fast-jev-output trimmed (\d+) lines \((\d+) chars\)")
+PRUNED_OUTPUT = re.compile(
+    r"\[fast-jev-output (?:trimmed \d+ (?:more )?lines|cut this section to fit)"
+)
+DECISION_PREFIX = "fast-jev-output decision "
 ARCHIVE_FOOTER = re.compile(
     r"\[fast-jev-output (?:trimmed \d+ lines \(\d+ chars\); )?"
     r"full output: ([^\n]+) \(Read or grep it if needed\)\]"
@@ -60,6 +65,127 @@ def elapsed(timing: dict) -> float | None:
     ).total_seconds()
 
 
+def result_text(content: object) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(
+            block["text"]
+            for block in content
+            if isinstance(block, dict) and isinstance(block.get("text"), str)
+        )
+    return ""
+
+
+def utf16_chars(text: str) -> int:
+    return len(text.encode("utf-16-le", errors="surrogatepass")) // 2
+
+
+def summarize_decisions(events: list[dict], logs: list[str], bash: list[dict]) -> dict:
+    decisions = []
+    malformed = 0
+    for text in logs:
+        if not text.startswith(DECISION_PREFIX):
+            continue
+        try:
+            decision = json.loads(text[len(DECISION_PREFIX) :])
+            if (
+                not isinstance(decision, dict)
+                or decision.get("version") != 1
+                or not isinstance(decision.get("decision"), str)
+                or (
+                    decision.get("toolUseId") is not None
+                    and not isinstance(decision["toolUseId"], str)
+                )
+            ):
+                raise ValueError("Unsupported decision")
+            decisions.append(decision)
+        except (ValueError, TypeError):
+            malformed += 1
+    calls = {}
+    results = {}
+    for event in events:
+        message = event.get("message")
+        if not isinstance(message, dict) or not isinstance(
+            message.get("content"), list
+        ):
+            continue
+        for block in message["content"]:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "tool_use" and isinstance(block.get("id"), str):
+                calls[block["id"]] = block
+            if block.get("type") == "tool_result" and isinstance(
+                block.get("tool_use_id"), str
+            ):
+                results[block["tool_use_id"]] = result_text(block.get("content"))
+    archives = {
+        match[1] for text in results.values() for match in ARCHIVE_FOOTER.finditer(text)
+    }
+    for record in bash:
+        output = record.get("answer", {}).get("result")
+        if isinstance(output, dict) and isinstance(
+            output.get("persistedOutputPath"), str
+        ):
+            archives.add(output["persistedOutputPath"])
+    accesses = []
+    commands: Counter[str] = Counter()
+    for identifier, call in calls.items():
+        arguments = call.get("input") or {}
+        if not isinstance(arguments, dict):
+            continue
+        if call.get("name") == "Bash" and isinstance(arguments.get("command"), str):
+            commands[arguments["command"]] += 1
+        if call.get("name") not in {"Bash", "Read", "Grep"}:
+            continue
+        argument_text = json.dumps(arguments, ensure_ascii=False)
+        matched = sorted(path for path in archives if path in argument_text)
+        if matched:
+            accesses.append(
+                {"tool_use_id": identifier, "tool": call["name"], "paths": matched}
+            )
+    visible = []
+    for decision in decisions:
+        identifier = decision.get("toolUseId")
+        before = decision.get("modelVisibleCharsBefore")
+        after = utf16_chars(results[identifier]) if identifier in results else None
+        visible.append(
+            {
+                "tool_use_id": identifier,
+                "decision": decision.get("decision"),
+                "source_chars": decision.get("sourceChars"),
+                "model_visible_chars_before": before,
+                "model_visible_chars_after": after,
+                "delta_chars": after - before
+                if isinstance(before, int) and after is not None
+                else None,
+            }
+        )
+    deltas = [row["delta_chars"] for row in visible if row["delta_chars"] is not None]
+    return {
+        "pruning_diagnostics": decisions,
+        "pruning_decision_counts": dict(
+            Counter(row.get("decision", "unknown") for row in decisions)
+        ),
+        "malformed_pruning_diagnostics": malformed,
+        "visible_output_pairs": visible,
+        "visible_output_pairs_measured": len(deltas),
+        "model_visible_char_delta_on_measured_calls": sum(deltas) if deltas else None,
+        "model_visible_bash_chars": sum(
+            utf16_chars(text)
+            for identifier, text in results.items()
+            if calls.get(identifier, {}).get("name") == "Bash"
+        ),
+        "archive_accesses_observed": accesses,
+        "archive_access_count": len(accesses),
+        "repeated_bash_calls": sum(count - 1 for count in commands.values()),
+        "visible_output_note": (
+            "UTF-16 character counts, not billed tokens. Before is native text at the hook; "
+            "after is final transcript text. Archive accesses match explicit path arguments only."
+        ),
+    }
+
+
 def summarize_agent(agent: Path, arm: str, stream: str = "claude-code.txt") -> dict:
     events = read_events(agent / stream)
     final = next((e for e in reversed(events) if e.get("type") == "result"), {})
@@ -90,16 +216,21 @@ def summarize_agent(agent: Path, arm: str, stream: str = "claude-code.txt") -> d
         for block in event["message"].get("content", [])
         if isinstance(block, dict)
         and block.get("type") == "tool_result"
-        and isinstance(block.get("content"), str)
-        and TRIM_MARKER.search(block["content"])
+        and PRUNED_OUTPUT.search(result_text(block.get("content")))
     ]
     if len(results) != len(trims):
         issues.append("Pruning logs and transcript tool-result counts disagree")
     for result in results:
         archive = evidence / "archives" / f"bash-{result['tool_use_id']}.txt"
-        if not archive.exists() and not native_archive_exists(agent, result["content"]):
+        if not archive.exists() and not native_archive_exists(
+            agent, result_text(result.get("content"))
+        ):
             issues.append(f"Missing original output for {result['tool_use_id']}")
-    markers = [m for result in results for m in TRIM_MARKER.finditer(result["content"])]
+    markers = [
+        m
+        for result in results
+        for m in TRIM_MARKER.finditer(result_text(result.get("content")))
+    ]
     requests = [
         json.loads(path.read_text())
         for path in sorted(evidence.glob("request-*.json"))
@@ -125,10 +256,13 @@ def summarize_agent(agent: Path, arm: str, stream: str = "claude-code.txt") -> d
         )
     if arm == "control" and (started or trims):
         issues.append("Control unexpectedly invoked pruning")
-    bash_outputs = [
-        json.loads(path.read_text()).get("answer", {}).get("result")
-        for path in evidence.glob("bash-*.json")
+    bash_records = [
+        json.loads(path.read_text()) for path in evidence.glob("bash-*.json")
     ]
+    bash_outputs = [record.get("answer", {}).get("result") for record in bash_records]
+    decisions = summarize_decisions(events, logs, bash_records)
+    if decisions["malformed_pruning_diagnostics"]:
+        issues.append("Malformed pruning diagnostics")
     output_lengths = [
         len(
             output.get("stdout", "")
@@ -153,6 +287,7 @@ def summarize_agent(agent: Path, arm: str, stream: str = "claude-code.txt") -> d
         else None
     )
     return {
+        **decisions,
         "model": init.get("model"),
         "plugins": plugins,
         "observer_loaded": (evidence / "activated.json").exists(),
@@ -171,10 +306,12 @@ def summarize_agent(agent: Path, arm: str, stream: str = "claude-code.txt") -> d
             }
         ),
         "claude_duration_ms": final.get("duration_ms"),
+        "claude_turns": final.get("num_turns"),
         "bash_calls_observed": len(list(evidence.glob("bash-*.json"))),
         "bash_structured_outputs_observed": len(output_lengths),
         "bash_max_observed_chars": max(output_lengths, default=0),
         "bash_observed_outputs_above_min_chars": sum(n > 4000 for n in output_lengths),
+        "bash_character_threshold_note": "Legacy 4000-character statistic; not current pruning eligibility",
         "jev_requests_started": started,
         "jev_responses": len(responses),
         "jev_http_statuses": [response["status"] for response in responses],

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import shlex
 import subprocess
 import tempfile
 import unittest
@@ -108,6 +109,40 @@ class AuthTests(unittest.TestCase):
 
 
 class AdapterAuthTests(unittest.IsolatedAsyncioTestCase):
+    def test_plugin_options_reach_only_the_plugin_arm(self) -> None:
+        for arm in ("control", "plugin"):
+            with (
+                tempfile.TemporaryDirectory() as directory,
+                patch.dict(
+                    os.environ,
+                    {
+                        "JEV_EVAL_AUTH_MODE": "subscription",
+                        "JEV_EVAL_ARM": arm,
+                        "JEV_EVAL_DIAGNOSTICS": "1",
+                        "JEV_EVAL_CHUNK_CHARS": "4000",
+                    },
+                ),
+                patch.object(ClaudeCode, "build_cli_flags", return_value=""),
+            ):
+                agent = JevClaudeCode(
+                    logs_dir=Path(directory),
+                    model_name="anthropic/claude-sonnet-5",
+                )
+                flags = shlex.split(agent.build_cli_flags())
+                settings = json.loads(flags[flags.index("--settings") + 1])
+                self.assertEqual(settings["forceLoginMethod"], "claudeai")
+                if arm == "control":
+                    self.assertNotIn("pluginConfigs", settings)
+                else:
+                    self.assertEqual(
+                        settings["pluginConfigs"],
+                        {
+                            "fast-jev-output@inline": {
+                                "options": {"diagnostics": True, "chunkChars": 4000}
+                            },
+                        },
+                    )
+
     async def test_subscription_ignores_api_resolver_and_container_overrides(
         self,
     ) -> None:

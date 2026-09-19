@@ -7,12 +7,47 @@ from evals.full import (
     access_blocker,
     aggregate,
     failure_category,
+    next_pending,
     trial_blocker,
     validate_manifest,
 )
 
 
 class FullTests(unittest.TestCase):
+    def test_repetitions_are_explicit_paired_and_never_overwritten(self) -> None:
+        rows = [
+            {
+                "task": "same",
+                "repetition": repetition,
+                "arm": arm,
+                "job_name": f"same-{repetition}-{arm}",
+                "state": "pending",
+            }
+            for repetition in (1, 2)
+            for arm in ("control", "plugin")
+        ]
+        validate_manifest(rows, task_count=1, repetitions=2)
+        with self.assertRaises(ValueError):
+            validate_manifest(rows, task_count=1)
+        with self.assertRaises(ValueError):
+            validate_manifest([*rows[:3], {**rows[3], "repetition": 1}], 1, 2)
+        rows[0]["state"] = "running"
+        self.assertEqual(next_pending(rows), 2)
+        rows[0].update(state="finished", reward=1, claude_cost_usd_reported=2)
+        rows[1].update(state="finished", reward=0, claude_cost_usd_reported=3)
+        rows[2].update(state="finished", reward=0, claude_cost_usd_reported=4)
+        rows[3].update(state="finished", reward=1, claude_cost_usd_reported=5)
+        summary = aggregate(rows)
+        self.assertEqual(len(summary["pairs"]), 2)
+        self.assertEqual([row["control_reward"] for row in summary["pairs"]], [1, 0])
+        self.assertEqual([row["plugin_reward"] for row in summary["pairs"]], [0, 1])
+        self.assertEqual(
+            summary["aggregate"]["control"]["claude_estimated_usd_known"], 6
+        )
+        self.assertEqual(
+            summary["aggregate"]["plugin"]["claude_estimated_usd_known"], 8
+        )
+
     def test_subset_requires_explicit_size_and_complete_unique_pairs(self) -> None:
         manifest = [
             {"task": task, "arm": arm, "job_name": f"{task}-{arm}"}

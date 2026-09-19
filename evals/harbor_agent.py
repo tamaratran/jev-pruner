@@ -18,7 +18,7 @@ from evals.auth import (
     prepare_subscription,
     subscription_mounts,
 )
-from evals.sources import PRODUCTION, production_root
+from evals.sources import PRODUCTION, plugin_options, production_root
 
 CLAUDE_VERSION = "2.1.274"
 REPO = Path(__file__).resolve().parents[1]
@@ -159,6 +159,10 @@ class JevClaudeCode(ClaudeCode):
         settings: dict = {"enabledPlugins": {"plugin-authoring@builtin": False}}
         if auth_mode() == "subscription":
             settings["forceLoginMethod"] = "claudeai"
+        if arm() == "plugin" and plugin_options():
+            settings["pluginConfigs"] = {
+                "fast-jev-output@inline": {"options": plugin_options()}
+            }
         flags += f" --settings {shlex.quote(json.dumps(settings))}"
         if arm() == "plugin":
             flags += f" --plugin-dir {REMOTE}/production"
