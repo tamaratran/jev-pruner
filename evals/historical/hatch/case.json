@@ -1,0 +1,352 @@
+{
+  "name": "hatch",
+  "repository": "https://github.com/pypa/hatch",
+  "base_commit": "8e0db522be51f47e189b9357c5d11b03787ca6a7",
+  "fix_commit": "80b4a06bb5852e3d4ed6314ac7916a5b81aa2368",
+  "issue_url": "https://github.com/pypa/hatch/pull/1365",
+  "description": "Real upstream Hatchling bug fixed on 2024-04-04: reading PKG-INFO from a source distribution drops unresolved dynamic fields, preventing metadata hooks from supplying entry points. The upstream fix adds TestSourceDistributionMetadata.test_metadata_hooks and updates the existing persistence regression as test_basic_persistence. Both fail on the immediate parent. The complete test-file diff is preserved without duplicating or modifying upstream tests.",
+  "question": "Hatchling loses dynamically declared entry points when loading a project from a source distribution. Restore the expected metadata behavior so custom hooks can supply these fields while persisted core metadata and explicitly configured dependencies remain correct.",
+  "editable": [
+    "backend/src/hatchling/metadata/core.py"
+  ],
+  "evidence": [
+    "FAILED tests/backend/metadata/test_core.py::TestSourceDistributionMetadata::test_basic_persistence",
+    "FAILED tests/backend/metadata/test_core.py::TestSourceDistributionMetadata::test_metadata_hooks",
+    "E             Right contains 2 more items:",
+    "E             {'dynamic': ['scripts'], 'scripts': {'foo': 'bar'}}",
+    "2 failed, 331 passed in 0.92s"
+  ],
+  "diagnostic_args": [
+    "-m",
+    "pytest",
+    "-vv",
+    "tests/backend/metadata"
+  ],
+  "verify_args": [
+    "-m",
+    "pytest",
+    "-q",
+    "tests/backend/metadata"
+  ],
+  "environment": {
+    "PYTHONPATH": "{workspace}/src:{workspace}/backend/src",
+    "PYTHONDONTWRITEBYTECODE": "1"
+  },
+  "license": "MIT; upstream repository and backend notices are retained in LICENSE.txt.",
+  "validation": {
+    "platform": "Linux x86_64 (Ubuntu 22.04), CPython 3.12.13",
+    "suite_selection": "Entire tests/backend/metadata directory: 333 tests across test_build.py, test_core.py, test_custom_hook.py, test_hatch.py, and test_spec.py. This is the related backend metadata suite, selected for semantic relevance. No test exclusions, skips, xfails, deselections, configuration overrides, added fixtures, or output padding. The independent upstream regression class was also run separately; verify_args includes it once via the directory.",
+    "upstream_documentation": {
+      "commit_title": "Fix reading metadata from source distributions (#1365)",
+      "changelog_path": "docs/history/hatchling.md",
+      "changelog_entry": "Fix reading metadata from source distributions when fields are dynamic but not part of core metadata like entry points",
+      "base_is_immediate_parent": true,
+      "shallow_repository": false
+    },
+    "patch_generation_commands": [
+      "git diff 80b4a06b^ 80b4a06b -- tests/backend/metadata/test_core.py > /home/ubuntu/repos/jev-pruner/evals/historical/hatch/regression.patch",
+      "git diff 80b4a06b^ 80b4a06b -- backend/src/hatchling/metadata/core.py > /home/ubuntu/repos/jev-pruner/evals/historical/hatch/repair.patch"
+    ],
+    "patch_sha256": {
+      "regression.patch": "079ddbca8a52d02a964820c2a0c21e2136ffa78f0452bf3476237195a78e5a36",
+      "repair.patch": "97743d5222750c77d26b1b0ffb1dbe7d32ed0bc8aea3a1827ac7b02661428176"
+    },
+    "archive_commands": [
+      "git archive 8e0db522be51f47e189b9357c5d11b03787ca6a7 | tar -x -C /home/ubuntu/hatch-validation/base",
+      "git archive 8e0db522be51f47e189b9357c5d11b03787ca6a7 | tar -x -C /home/ubuntu/hatch-validation/fixed",
+      "git archive 8e0db522be51f47e189b9357c5d11b03787ca6a7 | tar -x -C /home/ubuntu/hatch-validation/oracle"
+    ],
+    "preparation": {
+      "archive_command_cwd": "/home/ubuntu/repos/hatch",
+      "initial_directories": "base, fixed, oracle were created empty; venv did not exist.",
+      "regression_commands_in_each_workspace": [
+        "git apply --check /home/ubuntu/repos/jev-pruner/evals/historical/hatch/regression.patch",
+        "git apply /home/ubuntu/repos/jev-pruner/evals/historical/hatch/regression.patch"
+      ],
+      "fixed_commands_after_setup": [
+        "git apply --check /home/ubuntu/repos/jev-pruner/evals/historical/hatch/repair.patch",
+        "git apply /home/ubuntu/repos/jev-pruner/evals/historical/hatch/repair.patch"
+      ],
+      "oracle_operation_after_setup": "shutil.copyfile('/home/ubuntu/hatch-validation/fixed/backend/src/hatchling/metadata/core.py', '/home/ubuntu/hatch-validation/oracle/backend/src/hatchling/metadata/core.py'); no repair patch was copied into or applied in the oracle workspace.",
+      "environment_for_all_recorded_commands": "PYTHONPATH=<cwd>/src:<cwd>/backend/src and PYTHONDONTWRITEBYTECODE=1, where cwd is each command record's workspace. Run args from the workspace root."
+    },
+    "setup_contract": "setup.sh accepts WORKSPACE and VENV. It creates a Python 3.12 venv if absent and installs the complete pinned dependency closure with --no-deps; pip check succeeds. No project installation, editable installation, wheel build, generated metadata, or VCS metadata is needed for this suite. Reuse checks installed versions and performs no pip install when already provisioned. The same venv was reused for fixed and oracle workspaces with network disabled; all 2255 venv file hashes and pip freeze --all remained unchanged.",
+    "source_import_integrity": "setup.sh asserts hatch.config.user.__file__ is WORKSPACE/src/hatch/config/user.py and hatchling.metadata.core.__file__ is WORKSPACE/backend/src/hatchling/metadata/core.py. Neither hatch nor hatchling is installed as a pip distribution. All three workspaces passed these assertions, ruling out a dependency copy or stale editable installation.",
+    "immutable_files": "SHA-256 hashes of all 462 original files were frozen after applying regression.patch and setup. They matched across all three fresh workspaces. After tests, no original base file changed; fixed and oracle differed only in the one allowed source file. Pytest wrote only its normal extra cache files; no archived test or configuration file was changed.",
+    "offline_validation": "Every diagnostic, regression, and verification command ran under unshare -Urn, a fresh Linux user/network namespace without external networking. This wrapper is a validation check, not a harness dependency; diagnostic_args and verify_args are ordinary pytest argv.",
+    "output_measurement": "Unmodified subprocess stdout and stderr captured as text, counted with len(), without truncation or concatenated setup logs. Wall time uses time.perf_counter around each subprocess; pytest_seconds is pytest's own summary. Output size varies with workspace paths, timing, and pytest rendering; these are the exact observed counts, not a log-size target.",
+    "dependency_release_check": {
+      "source": "https://pypi.org/pypi/{distribution}/{version}/json",
+      "all_release_files_uploaded_before": "2026-09-12T00:00:00Z",
+      "latest_upload_per_pin": {
+        "pip==25.0.1": "2025-02-09T17:14:04.423315Z",
+        "click==8.1.7": "2023-08-17T17:29:11.868644Z",
+        "filelock==3.13.3": "2024-03-25T17:08:26.786292Z",
+        "iniconfig==2.0.0": "2023-01-07T11:08:11.254770Z",
+        "markdown-it-py==3.0.0": "2023-06-03T06:41:14.443886Z",
+        "mdurl==0.1.2": "2022-08-14T12:40:10.846281Z",
+        "packaging==24.2": "2024-11-08T09:47:47.202367Z",
+        "pathspec==0.12.1": "2023-12-10T22:30:45.000082Z",
+        "platformdirs==4.2.0": "2024-01-31T01:00:36.020784Z",
+        "pluggy==1.5.0": "2024-04-20T21:34:42.531463Z",
+        "Pygments==2.17.2": "2023-11-21T20:43:53.875629Z",
+        "pytest==8.3.5": "2025-03-02T12:54:54.503643Z",
+        "pytest-mock==3.14.0": "2024-03-21T22:14:04.964480Z",
+        "rich==13.7.1": "2024-02-28T14:51:19.472261Z",
+        "tomli-w==1.0.0": "2021-12-01T23:55:11.890246Z",
+        "tomlkit==0.12.4": "2024-02-27T04:05:35.870997Z",
+        "trove-classifiers==2024.3.25": "2024-03-25T14:58:31.445813Z"
+      },
+      "build_requirements": "None: selected tests import source directly and no distribution is built."
+    },
+    "runs": {
+      "base_regression": {
+        "command": "unshare -Urn /home/ubuntu/hatch-validation/venv/bin/python -m pytest -q tests/backend/metadata/test_core.py::TestSourceDistributionMetadata",
+        "cwd": "/home/ubuntu/hatch-validation/base",
+        "exit_code": 1,
+        "wall_seconds": 0.386935,
+        "stdout_characters": 4763,
+        "stderr_characters": 0,
+        "output_characters": 4763,
+        "summary": "2 failed in 0.19s",
+        "pytest_seconds": 0.19,
+        "counts": {
+          "passed": 0,
+          "failed": 2,
+          "errors": 0,
+          "skipped": 0,
+          "deselected": 0,
+          "xfailed": 0,
+          "xpassed": 0
+        },
+        "failed_tests": [
+          "tests/backend/metadata/test_core.py::TestSourceDistributionMetadata::test_basic_persistence",
+          "tests/backend/metadata/test_core.py::TestSourceDistributionMetadata::test_metadata_hooks"
+        ],
+        "status": "failed"
+      },
+      "base_diagnostic": {
+        "command": "unshare -Urn /home/ubuntu/hatch-validation/venv/bin/python -m pytest -vv tests/backend/metadata",
+        "cwd": "/home/ubuntu/hatch-validation/base",
+        "exit_code": 1,
+        "wall_seconds": 1.139124,
+        "stdout_characters": 41096,
+        "stderr_characters": 0,
+        "output_characters": 41096,
+        "summary": "2 failed, 331 passed in 0.92s",
+        "pytest_seconds": 0.92,
+        "counts": {
+          "passed": 331,
+          "failed": 2,
+          "errors": 0,
+          "skipped": 0,
+          "deselected": 0,
+          "xfailed": 0,
+          "xpassed": 0
+        },
+        "failed_tests": [
+          "tests/backend/metadata/test_core.py::TestSourceDistributionMetadata::test_basic_persistence",
+          "tests/backend/metadata/test_core.py::TestSourceDistributionMetadata::test_metadata_hooks"
+        ],
+        "status": "failed"
+      },
+      "base_verify": {
+        "command": "unshare -Urn /home/ubuntu/hatch-validation/venv/bin/python -m pytest -q tests/backend/metadata",
+        "cwd": "/home/ubuntu/hatch-validation/base",
+        "exit_code": 1,
+        "wall_seconds": 1.129866,
+        "stdout_characters": 5095,
+        "stderr_characters": 0,
+        "output_characters": 5095,
+        "summary": "2 failed, 331 passed in 0.90s",
+        "pytest_seconds": 0.9,
+        "counts": {
+          "passed": 331,
+          "failed": 2,
+          "errors": 0,
+          "skipped": 0,
+          "deselected": 0,
+          "xfailed": 0,
+          "xpassed": 0
+        },
+        "failed_tests": [
+          "tests/backend/metadata/test_core.py::TestSourceDistributionMetadata::test_basic_persistence",
+          "tests/backend/metadata/test_core.py::TestSourceDistributionMetadata::test_metadata_hooks"
+        ],
+        "status": "failed"
+      },
+      "fixed_regression": {
+        "command": "unshare -Urn /home/ubuntu/hatch-validation/venv/bin/python -m pytest -q tests/backend/metadata/test_core.py::TestSourceDistributionMetadata",
+        "cwd": "/home/ubuntu/hatch-validation/fixed",
+        "exit_code": 0,
+        "wall_seconds": 0.338753,
+        "stdout_characters": 98,
+        "stderr_characters": 0,
+        "output_characters": 98,
+        "summary": "2 passed in 0.14s",
+        "pytest_seconds": 0.14,
+        "counts": {
+          "passed": 2,
+          "failed": 0,
+          "errors": 0,
+          "skipped": 0,
+          "deselected": 0,
+          "xfailed": 0,
+          "xpassed": 0
+        },
+        "failed_tests": [],
+        "status": "passed"
+      },
+      "fixed_diagnostic": {
+        "command": "unshare -Urn /home/ubuntu/hatch-validation/venv/bin/python -m pytest -vv tests/backend/metadata",
+        "cwd": "/home/ubuntu/hatch-validation/fixed",
+        "exit_code": 0,
+        "wall_seconds": 1.145665,
+        "stdout_characters": 32927,
+        "stderr_characters": 0,
+        "output_characters": 32927,
+        "summary": "333 passed in 0.92s",
+        "pytest_seconds": 0.92,
+        "counts": {
+          "passed": 333,
+          "failed": 0,
+          "errors": 0,
+          "skipped": 0,
+          "deselected": 0,
+          "xfailed": 0,
+          "xpassed": 0
+        },
+        "failed_tests": [],
+        "status": "passed"
+      },
+      "fixed_verify": {
+        "command": "unshare -Urn /home/ubuntu/hatch-validation/venv/bin/python -m pytest -q tests/backend/metadata",
+        "cwd": "/home/ubuntu/hatch-validation/fixed",
+        "exit_code": 0,
+        "wall_seconds": 1.096498,
+        "stdout_characters": 420,
+        "stderr_characters": 0,
+        "output_characters": 420,
+        "summary": "333 passed in 0.87s",
+        "pytest_seconds": 0.87,
+        "counts": {
+          "passed": 333,
+          "failed": 0,
+          "errors": 0,
+          "skipped": 0,
+          "deselected": 0,
+          "xfailed": 0,
+          "xpassed": 0
+        },
+        "failed_tests": [],
+        "status": "passed"
+      },
+      "oracle_verify": {
+        "command": "unshare -Urn /home/ubuntu/hatch-validation/venv/bin/python -m pytest -q tests/backend/metadata",
+        "cwd": "/home/ubuntu/hatch-validation/oracle",
+        "exit_code": 0,
+        "wall_seconds": 1.07479,
+        "stdout_characters": 420,
+        "stderr_characters": 0,
+        "output_characters": 420,
+        "summary": "333 passed in 0.85s",
+        "pytest_seconds": 0.85,
+        "counts": {
+          "passed": 333,
+          "failed": 0,
+          "errors": 0,
+          "skipped": 0,
+          "deselected": 0,
+          "xfailed": 0,
+          "xpassed": 0
+        },
+        "failed_tests": [],
+        "status": "passed"
+      }
+    },
+    "setup": {
+      "base": {
+        "command": "bash /home/ubuntu/repos/jev-pruner/evals/historical/hatch/setup.sh /home/ubuntu/hatch-validation/base /home/ubuntu/hatch-validation/venv",
+        "cwd": "/home/ubuntu/hatch-validation/base",
+        "exit_code": 0,
+        "wall_seconds": 4.171078,
+        "stdout_characters": 3134,
+        "stderr_characters": 0,
+        "output_characters": 3134,
+        "status": "passed"
+      },
+      "fixed": {
+        "command": "unshare -Urn bash /home/ubuntu/repos/jev-pruner/evals/historical/hatch/setup.sh /home/ubuntu/hatch-validation/fixed /home/ubuntu/hatch-validation/venv",
+        "cwd": "/home/ubuntu/hatch-validation/fixed",
+        "exit_code": 0,
+        "wall_seconds": 0.375426,
+        "stdout_characters": 91,
+        "stderr_characters": 0,
+        "output_characters": 91,
+        "status": "passed"
+      },
+      "oracle": {
+        "command": "unshare -Urn bash /home/ubuntu/repos/jev-pruner/evals/historical/hatch/setup.sh /home/ubuntu/hatch-validation/oracle /home/ubuntu/hatch-validation/venv",
+        "cwd": "/home/ubuntu/hatch-validation/oracle",
+        "exit_code": 0,
+        "wall_seconds": 0.342379,
+        "stdout_characters": 92,
+        "stderr_characters": 0,
+        "output_characters": 92,
+        "status": "passed"
+      }
+    },
+    "integrity": {
+      "base": {
+        "no_git_directory": true,
+        "frozen_file_count": 462,
+        "changed_original_files": [],
+        "source_imports_checked_by_setup": true
+      },
+      "fixed": {
+        "no_git_directory": true,
+        "frozen_file_count": 462,
+        "changed_original_files": [
+          "backend/src/hatchling/metadata/core.py"
+        ],
+        "source_imports_checked_by_setup": true,
+        "venv_hashes_unchanged_on_reuse": true
+      },
+      "oracle": {
+        "no_git_directory": true,
+        "frozen_file_count": 462,
+        "changed_original_files": [
+          "backend/src/hatchling/metadata/core.py"
+        ],
+        "source_imports_checked_by_setup": true,
+        "venv_hashes_unchanged_on_reuse": true
+      }
+    },
+    "dependencies": [
+      "click==8.1.7",
+      "filelock==3.13.3",
+      "iniconfig==2.0.0",
+      "markdown-it-py==3.0.0",
+      "mdurl==0.1.2",
+      "packaging==24.2",
+      "pathspec==0.12.1",
+      "pip==25.0.1",
+      "platformdirs==4.2.0",
+      "pluggy==1.5.0",
+      "Pygments==2.17.2",
+      "pytest==8.3.5",
+      "pytest-mock==3.14.0",
+      "rich==13.7.1",
+      "tomli_w==1.0.0",
+      "tomlkit==0.12.4",
+      "trove-classifiers==2024.3.25"
+    ],
+    "python": "Python 3.12.13",
+    "venv_file_count": 2255,
+    "known_gaps": [
+      "Only the relevant backend metadata suite was validated, not Hatch's full CLI/environment integration suite.",
+      "Validation covers Linux x86_64 and Python 3.12.13; other operating systems and Python versions were not tested.",
+      "First setup needs package-index access and an installed python3.12; provisioned-venv setup and all test commands were verified offline."
+    ]
+  }
+}
