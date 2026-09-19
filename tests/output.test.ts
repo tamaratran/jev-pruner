@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { trimOutput } from '../src/output.js';
 import { estimateTokens, type JevAsker } from '../src/jev.js';
 
@@ -317,13 +317,17 @@ describe('budget for engine-saved output', () => {
   const withNeedle = (n: number, at: number) =>
     Array.from({ length: n }, (_, i) => (i === at ? 'ERROR worker-4 KeyError discount order=ORD-77341' : `INFO request ${i} ok`)).join('\n');
 
-  it('keeps the output within the budget', async () => {
+  it('preserves the output when Jev keeps content beyond the budget', async () => {
+    const output = withNeedle(3000, 1700);
+    const onDecision = vi.fn();
     const r = await trimOutput(
-      { command: 'tail -n +1 big.log', goal: 'g', output: withNeedle(3000, 1700) },
+      { command: 'tail -n +1 big.log', goal: 'g', output },
       asker(0.9),
-      { maxChars: 4_000 },
+      { maxChars: 4_000, onDecision },
     );
-    expect(r.charsAfter).toBeLessThanOrEqual(4_000);
+    expect(r.output).toBe(output);
+    expect(r.trimmed).toBe(false);
+    expect(onDecision).toHaveBeenCalledWith('budget_unfit');
   });
 
   it('never drops an error line to meet the budget', async () => {
@@ -389,21 +393,29 @@ describe('line-level second pass', () => {
     expect(r.output).toContain('ORD-77341');
   });
 
-  it('falls back to the pattern shrink when the second pass fails', async () => {
-    // Fails only the line-group pass (ids g1, g2, …), not the chunk pass.
+  it('preserves output when failed refinement prevents a safe fit', async () => {
+    let refinements = 0;
     const flaky = {
       ask: async (_s: unknown, q: Record<string, unknown>) => {
-        if (Object.keys(q).some((id) => id.startsWith('g'))) throw new Error('jev down');
+        if (Object.keys(q).some((id) => id.startsWith('g'))) {
+          refinements += 1;
+          throw new Error('jev down');
+        }
         return { answers: Object.fromEntries(Object.keys(q).map((id) => [id, { type: 'noul' as const, noul: 0.01 }])) };
       },
     };
+    const output = withNeedle(40_000, 22_800);
+    const onDecision = vi.fn();
     const r = await trimOutput(
-      { command: 'tail -n +1 big.log', goal: 'g', output: withNeedle(40_000, 22_800) },
+      { command: 'tail -n +1 big.log', goal: 'g', output },
       flaky,
-      { maxChars: 8_000 },
+      { maxChars: 8_000, onDecision },
     );
+    expect(refinements).toBeGreaterThan(0);
     expect(r.output).toContain('ORD-77341');
-    expect(r.output).toMatch(/trimmed \d+ more lines from this section/);
+    expect(r.output).toBe(output);
+    expect(r.trimmed).toBe(false);
+    expect(onDecision).toHaveBeenCalledWith('budget_unfit');
   });
 });
 
@@ -444,7 +456,7 @@ describe('error floor is narrow', () => {
     expect(r.charsAfter).toBeLessThanOrEqual(4_000);
   });
 
-  it('still protects a reported failure', async () => {
+  it.each([2_000, 4_000])('protects a reported failure and its context with budget %i', async maxChars => {
     const noise = Array.from({ length: 400 }, (_, i) => `[${i}] compiled module ${i} ${'cache '.repeat(30)}`);
     for (const line of [
       'ERROR worker-3 failed to link checkout_v2',
@@ -456,31 +468,48 @@ describe('error floor is narrow', () => {
       const rows = [...noise];
       rows[200] = line;
       expect(estimateTokens(rows.join('\n'))).toBeGreaterThan(10_000);
-      const r = await trimOutput({ command: 'build', goal: 'fix the build', output: rows.join('\n') }, asker, { maxChars: 2_000 });
-      expect(r.trimmed).toBe(true);
+      const onDecision = vi.fn();
+      const r = await trimOutput({ command: 'build', goal: 'fix the build', output: rows.join('\n') }, asker, { maxChars, onDecision });
       expect(r.output).toContain(line);
+      expect(r.output).toContain(rows[199]);
+      expect(r.output).toContain(rows[201]);
+      expect(r.trimmed).toBe(maxChars === 4_000);
+      if (maxChars === 4_000) {
+        expect(r.charsAfter).toBeLessThanOrEqual(maxChars);
+        expect(onDecision).toHaveBeenCalledWith('pruned');
+      } else {
+        expect(r.output).toBe(rows.join('\n'));
+        expect(onDecision).toHaveBeenCalledWith('budget_unfit');
+      }
     }
   });
 });
 
-describe('the budget is a hard cap', () => {
-  const wantEverything = {
-    ask: async (_s: unknown, q: Record<string, unknown>) => ({
-      answers: Object.fromEntries(Object.keys(q).map((id) => [id, { type: 'noul' as const, noul: 0.99 }])),
-    }),
-  };
-
-  it('fits the budget even when Jev wants every chunk', async () => {
+describe('reference retention takes precedence over the budget', () => {
+  it('preserves all source excerpts without scoring', async () => {
     const output = Array.from({ length: 2_000 }, (_, i) => `src/module_${i}/index.ts:${i}:export const thing${i} = ${i};`).join('\n');
-    const r = await trimOutput({ command: 'grep -rn export src/', goal: 'list the exports', output }, wantEverything, { maxChars: 6_000 });
-    expect(r.charsAfter).toBeLessThanOrEqual(6_200);
+    const calls = { count: 0 };
+    const onDecision = vi.fn();
+    expect(estimateTokens(output)).toBeGreaterThan(10_000);
+    const r = await trimOutput({ command: 'grep -rn export src/', goal: 'list the exports', output }, askerFor(() => 0, calls), { maxChars: 6_000, onDecision });
+    expect(r.output).toBe(output);
+    expect(r.trimmed).toBe(false);
+    expect(calls.count).toBe(0);
+    expect(onDecision).toHaveBeenCalledWith('document');
   });
 
-  it('spends the budget on the failure first', async () => {
+  it('preserves both source excerpts and a failure within them', async () => {
     const rows = Array.from({ length: 2_000 }, (_, i) => `src/module_${i}/index.ts:${i}:export const thing${i} = ${i};`);
     rows[1_500] = 'src/checkout/parser.ts:88: error: Cannot read properties of undefined (reading discount)';
-    const r = await trimOutput({ command: 'grep -rn export src/', goal: 'list the exports', output: rows.join('\n') }, wantEverything, { maxChars: 6_000 });
+    const output = rows.join('\n');
+    const calls = { count: 0 };
+    const onDecision = vi.fn();
+    expect(estimateTokens(output)).toBeGreaterThan(10_000);
+    const r = await trimOutput({ command: 'grep -rn export src/', goal: 'list the exports', output }, askerFor(() => 0, calls), { maxChars: 6_000, onDecision });
     expect(r.output).toContain('reading discount');
-    expect(r.charsAfter).toBeLessThanOrEqual(6_200);
+    expect(r.output).toBe(output);
+    expect(r.trimmed).toBe(false);
+    expect(calls.count).toBe(0);
+    expect(onDecision).toHaveBeenCalledWith('document');
   });
 });
