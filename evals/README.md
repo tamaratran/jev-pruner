@@ -627,6 +627,48 @@ and uncached tokens separately and reprice all input as uncached as a sensitivit
 check. Dollar values are API-equivalent reference estimates, not subscription
 charges. Review and sanitize the evidence before sharing.
 
+### Historical repository cohort
+
+Five pinned upstream defects and their original regression tests are under
+`historical/`: Click prompt suffixes, Flask redirect sessions, pytest custom
+warnings, pip wheel requirements, and Hatch source-distribution metadata. The
+tasks were selected and reproduced independently of pruning activation.
+The full Click and Flask runtime suites and the relevant warning, requirement,
+and metadata suites run at normal verbose pytest settings. No output is padded.
+The three pip network tests are excluded; upstream platform skips remain.
+
+```sh
+npm run build
+export JEV_HISTORICAL_CACHE=/path/to/new-fixture-cache
+node evals/codex-historical-workloads.mjs
+export JEV_EVAL_SUITE=historical
+node evals/codex-repair-cohort.mjs /path/to/new-evidence-directory preflight
+node evals/codex-repair-cohort.mjs /path/to/new-evidence-directory run
+```
+
+Preparation needs Python 3.12 and network access for pinned upstream revisions
+and pinned Python dependencies. Trials and repair oracles use offline commands.
+The setup validates the broken parent, the upstream source fix, source imports,
+and expected test counts. Every trial copies an identical baseline without git
+history or the known source fix. The grader restores pristine tests and config
+in a separate workspace and copies only allowed source edits before verification.
+It requires the original successful test/skip counts, not just exit status zero.
+
+Five excluded preflight repairs check instrumentation, then three repetitions
+per arm produce **30 comparison trials**. Unlike the constructed cohort,
+preflight does not require every task to activate: short and unchanged outputs
+remain activation/overhead diagnostics. No task is replaced based on activation
+or success. The policy is frozen from PR #66; the 100,000-token tool-output
+budget is identical across both arms and prevents host truncation of natural
+verbose suites. Model settings, source hashes, complete fixture hashes,
+dependency versions, task order, reference prices, and inclusion rules are
+recorded before inference.
+
+These are five Python repair tasks with visible upstream regression tests,
+not a broad language/build/install benchmark. Historical bugs may have been
+seen during model training. The diagnostic collector and uncontrolled shared
+prompt caching limitations above still apply.
+
 ## Checks
 
 ```sh

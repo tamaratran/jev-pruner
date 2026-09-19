@@ -14,7 +14,7 @@
     "FAILED tests/unit/test_req.py::TestInstallRequirement::test_install_req_drop_extras[simple-0.1-py2.py3-none-any.whl [ext]-simple==0.1]",
     "E       AssertionError: assert 'simple-0.1-py2.py3-none-any.whl' == 'simple==0.1'",
     "tests/unit/test_req.py:781: AssertionError",
-    "1 failed, 80 passed, 3 skipped, 3 deselected, 3 warnings in 1.32s"
+    "1 failed, 80 passed, 3 skipped, 3 deselected"
   ],
   "diagnostic_args": [
     "-m",

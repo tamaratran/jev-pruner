@@ -1,12 +1,17 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, readlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { contextPath } from '../dist/codex/context.js';
 import { estimateTokens } from '../dist/jev.js';
 import { commandOutput } from '../tests/fixtures/codex-transcript.mjs';
-import { cases, execute, grade, prepare, quote, repo } from './codex-repair-workloads.mjs';
+import { execute, quote, repo } from './codex-repair-workloads.mjs';
+
+const historical = process.env.JEV_EVAL_SUITE === 'historical';
+const { cases, grade, prepare } = await import(historical
+  ? './codex-historical-workloads.mjs' : './codex-repair-workloads.mjs');
+const outputBudget = historical ? 100_000 : 30_000;
 
 assert(process.argv[2], 'Usage: node evals/codex-repair-cohort.mjs <new-evidence-directory> [preflight|run]');
 assert(process.env.TYPESAFE_API_KEY, 'Set TYPESAFE_API_KEY.');
@@ -29,6 +34,11 @@ const frozenFiles = [
   'evals/codex-repair-cohort.mjs', 'evals/codex-repair-workloads.mjs',
   'evals/observer/codex-diagnostic.mjs', 'tests/fixtures/codex-observer.mjs',
   'tests/fixtures/codex-transcript.mjs', 'codex/skills/jev-pruner/SKILL.md',
+  ...(historical ? [
+    'evals/codex-historical-workloads.mjs',
+    ...(await readdir(join(repo, 'evals/historical'), { recursive: true }))
+      .filter(path => /\.(json|sh|patch)$/.test(path)).map(path => `evals/historical/${path}`),
+  ] : []),
   ...(await readdir(join(repo, 'dist'), { recursive: true }))
     .filter(path => path.endsWith('.js')).map(path => `dist/${path}`),
 ];
@@ -37,6 +47,7 @@ for (const file of frozenFiles) {
   hashes[file] = hash(await readFile(join(repo, file)));
   if (file.startsWith('dist/')) assert.equal(hash(await readFile(join(plugin, file))), hashes[file]);
 }
+assert.equal(hash(await readFile(join(skill, 'SKILL.md'))), hashes['codex/skills/jev-pruner/SKILL.md']);
 assert.equal((await execute('codex --version', repo)).stdout.trim(), 'codex-cli 0.152.1');
 const login = await execute('codex login status', repo);
 assert.match(login.stdout + login.stderr, /Logged in using ChatGPT/);
@@ -51,12 +62,24 @@ if (phase === 'preflight') {
     created: new Date().toISOString(), revision: (await execute('git rev-parse HEAD', repo)).stdout.trim(),
     hashes, model, version: 'codex-cli 0.152.1', pairs,
     tool_versions: (await execute('node --version && npm --version && python3 --version && python3 -m pytest --version && node node_modules/typescript/bin/tsc --version', repo)).stdout.trim(),
-    scope: 'Three constructed repair projects using real tsc, pytest, and offline npm. Not a real-project benchmark.',
-    controls: 'Fresh sessions/workspaces, identical prompts within pairs, balanced arm order, low reasoning, 30000-token tool budget. Same plugin/skill loaded once in both arms. Shared subscription caching uncontrolled.',
+    scope: historical ? 'Five historical Python repository bugs: Click, Flask, pytest, pip, Hatch. Upstream parent + original regression tests; no generated log amplification.'
+      : 'Three constructed repair projects using real tsc, pytest, and offline npm. Not a real-project benchmark.',
+    controls: `Fresh sessions/workspaces, identical prompts within pairs, balanced arm order, low reasoning, ${outputBudget}-token tool budget. Same plugin/skill loaded once in both arms. Shared subscription caching uncontrolled.`,
     diagnostic_adapter: 'The collector merges command stderr into stdout, appends the true exit code, and exits zero to make failing diagnostics eligible for the unchanged production wrapper. Not automatic pruning of native failed commands.',
     inclusion: 'Both audited arms with complete usage, and actual pruning in plugin arm. No filtering on task success, answer correctness, or required-fact retention.',
-    task_grading: 'Independent verifier plus hidden semantic oracle and source integrity; final factual outcome and strict JSON format scored separately.',
-    preflight: 'One excluded pruned repair per workflow must activate before the 18 trials. No retries or tuning after freeze.',
+    task_grading: historical ? 'Restore pristine files, copy only permitted source edits into a separate oracle workspace, run upstream regression and related suite, require unchanged expected pass/skip counts. Regression tests are visible; oracle workspace and known repair are not. Reported outcome and strict JSON scored separately.'
+      : 'Independent verifier plus hidden semantic oracle and source integrity; final factual outcome and strict JSON format scored separately.',
+    preflight: historical ? 'Five excluded pruned repairs audit instrumentation. Tasks remain fixed regardless of activation, length, or accuracy. No policy tuning or retries after freeze.'
+      : 'One excluded pruned repair per workflow must activate before the 18 trials. No retries or tuning after freeze.',
+    ...(historical ? {
+      cases,
+      validations: Object.fromEntries(await Promise.all(Object.keys(cases).map(async name => [
+        name, await read(join(process.env.JEV_HISTORICAL_CACHE, name, 'validation.json')),
+      ]))),
+      baseline_hashes: Object.fromEntries(await Promise.all(Object.keys(cases).map(async name => [
+        name, await tree(join(process.env.JEV_HISTORICAL_CACHE, name, 'baseline')),
+      ]))),
+    } : {}),
     prices: { input: 5, cached_input: 0.5, output: 30, jev_input: 0.042, unit: 'USD per million tokens',
       sources: ['https://developers.openai.com/api/docs/models/gpt-5.5', 'https://openrouter.ai/typesafe/jev-1.13'],
       caveat: 'Reference estimates, not ChatGPT subscription charges or TypeSafe invoices.' },
@@ -66,8 +89,8 @@ if (phase === 'preflight') {
   protocol = await read(join(root, 'protocol.json'));
   assert.deepEqual(hashes, protocol.hashes, 'Protocol source changed');
   const preflight = await read(join(root, 'preflight.json'));
-  assert.equal(preflight.length, 3);
-  assert(preflight.every(row => row.audit_pass && row.pruned), 'Activation preflight failed');
+  assert.equal(preflight.length, Object.keys(cases).length);
+  assert(preflight.every(row => row.audit_pass && (historical || row.pruned)), 'Preflight failed');
   assert.equal((await list(join(root, 'trials'))).length, 0, 'Trials already started');
 }
 await mkdir(join(root, phase === 'preflight' ? 'preflight' : 'trials'));
@@ -77,9 +100,13 @@ async function tree(directory) {
   const result = {};
   const walk = async (path, prefix = '') => {
     for (const entry of await readdir(path, { withFileTypes: true })) {
-      if (['node_modules', 'dist', 'captures', '.eval-raw', '.jev-pruner', '.npm-cache', '__pycache__', '.pytest_cache'].includes(entry.name)) continue;
+      if ((historical
+        ? ['captures', '.eval-raw', '.jev-pruner', '__pycache__', '.pytest_cache']
+        : ['node_modules', 'dist', 'captures', '.eval-raw', '.jev-pruner', '.npm-cache', '__pycache__', '.pytest_cache'])
+        .includes(entry.name)) continue;
       const relative = prefix + entry.name;
       if (entry.isDirectory()) await walk(join(path, entry.name), relative + '/');
+      else if (entry.isSymbolicLink()) result[relative] = `symlink:${await readlink(join(path, entry.name))}`;
       else if (entry.isFile() && relative !== 'installation-ok.json') {
         result[relative] = hash(await readFile(join(path, entry.name)));
       }
@@ -98,13 +125,14 @@ async function trial(pair, arm) {
   const cwd = join(evidence, 'workspace');
   await prepare(pair.name, cwd);
   const initial = await tree(cwd);
+  if (historical) assert.deepEqual(initial, protocol.baseline_hashes[pair.name], 'Baseline changed');
   await save(join(evidence, 'fixture-hashes.json'), initial);
   const command = `node ${quote(diagnostic)} ${pair.name}`;
   const prompt = `${cases[pair.name].question}
-First read ${quote(join(skill, 'SKILL.md'))} exactly once. The evaluation adapter already applies the assigned output treatment; do not add wrappers.
-Next run exactly this diagnostic command with yield_time_ms=1000 and max_output_tokens=30000:
+${historical ? `Only edit ${cases[pair.name].editable.join(', ')}. Do not modify tests, configuration, or dependencies.\n` : ''}First read ${quote(join(skill, 'SKILL.md'))} exactly once. The evaluation adapter already applies the assigned output treatment; do not add wrappers.
+Next run exactly this diagnostic command with yield_time_ms=1000 and max_output_tokens=${outputBudget}:
 ${command}
-Poll it to completion with max_output_tokens=30000. Then inspect project files, repair the defect, and rerun that same diagnostic command to verify. Use it for all verbose build/test/install runs.
+Poll it to completion with max_output_tokens=${outputBudget}. Then inspect project files, repair the defect, and rerun that same diagnostic command to verify. Use it for all verbose build/test/install runs.
 The collector merges stdout/stderr and prints the real exit status, while its own exit status is zero. Judge success from the printed Exit status.
 Do not inspect or modify the collector, harness, captures, environment variables, source templates, hidden oracle, or any files outside the workspace except the skill. Archive reads from .jev-pruner are allowed if needed.
 Return only a JSON object with outcome ("fixed" or "not_fixed"), cause, and change. Do not delegate or use network resources.`;
@@ -112,7 +140,7 @@ Return only a JSON object with outcome ("fixed" or "not_fixed"), cause, and chan
   const args = [
     'exec', '--model', model, '--sandbox', 'workspace-write',
     '-c', 'forced_login_method="chatgpt"', '-c', 'sandbox_workspace_write.network_access=true',
-    '-c', 'model_reasoning_effort="low"', '-c', 'tool_output_token_limit=30000',
+    '-c', 'model_reasoning_effort="low"', '-c', `tool_output_token_limit=${outputBudget}`,
     '--dangerously-bypass-hook-trust', '--skip-git-repo-check', '--json', prompt,
   ];
   const result = await execute(`codex ${args.map(quote).join(' ')}`, cwd, {
@@ -122,6 +150,7 @@ Return only a JSON object with outcome ("fixed" or "not_fixed"), cause, and chan
   await save(join(evidence, 'execution.json'), result);
   const row = { pair: pair.id, workload: pair.name, arm, seconds: result.seconds };
   const after = await tree(cwd);
+  await save(join(evidence, 'final-file-hashes.json'), after);
   row.unexpected_changes = [...new Set([...Object.keys(initial), ...Object.keys(after)])]
     .filter(file => !cases[pair.name].editable.includes(file) && initial[file] !== after[file]);
   const oracle = await grade(pair.name, cwd);
@@ -197,7 +226,7 @@ Return only a JSON object with outcome ("fixed" or "not_fixed"), cause, and chan
       });
       await writeFile(join(evidence, `visible-${index}.txt`), text);
     }
-    assert(row.diagnostics[0].original_estimated_tokens > 10_000, 'Below activation threshold');
+    if (!historical) assert(row.diagnostics[0].original_estimated_tokens > 10_000, 'Below activation threshold');
     assert.notEqual(row.diagnostics[0].exit_code, 0, 'Fixture did not fail');
     row.pruned = row.diagnostics.some(output => output.pruned);
     row.required_facts_visible = row.diagnostics[0].required_facts_visible;
@@ -249,7 +278,7 @@ Return only a JSON object with outcome ("fixed" or "not_fixed"), cause, and chan
 
 if (phase === 'preflight') {
   for (const name of Object.keys(cases)) await trial({ id: name, name }, 'pruned');
-  assert(rows.every(row => row.audit_pass && row.pruned), 'Preflight did not qualify all workflows');
+  assert(rows.every(row => row.audit_pass && (historical || row.pruned)), 'Preflight did not qualify all workflows');
 } else {
   for (const pair of pairs) for (const arm of pair.arms) await trial(pair, arm);
   const qualifying = pairs.filter(pair => {

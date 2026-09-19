@@ -15,7 +15,7 @@
     "TypeError: test_multiple_arg_custom_warning.<locals>.CustomWarning.__init__() missing 1 required positional argument: 'b'",
     "testing/test_recwarn.py:595: TypeError",
     "FAILED testing/test_recwarn.py::test_multiple_arg_custom_warning",
-    "1 failed, 116 passed, 3 skipped in 14.15s"
+    "1 failed, 116 passed, 3 skipped"
   ],
   "diagnostic_args": [
     "-m",

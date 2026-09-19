@@ -13,7 +13,7 @@
     "tests/test_utils.py::test_echo_writing_to_standard_error FAILED",
     "E       AssertionError: assert 'Prompt to stdin with no suffix ' == 'Prompt to stdin with no suffix'",
     "tests/test_utils.py:487: AssertionError",
-    "1 failed, 1301 passed, 21 skipped, 1 xfailed in 2.31s"
+    "1 failed, 1301 passed, 21 skipped, 1 xfailed"
   ],
   "diagnostic_args": [
     "-m",

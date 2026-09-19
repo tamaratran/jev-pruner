@@ -15,7 +15,7 @@
     "self = <SecureCookieSession {'redirect': True}>, key = 'target'",
     "E       KeyError: 'target'",
     "FAILED tests/test_testing.py::test_redirect_session - KeyError: 'target'",
-    "1 failed, 488 passed in 2.26s"
+    "1 failed, 488 passed"
   ],
   "diagnostic_args": [
     "-m",

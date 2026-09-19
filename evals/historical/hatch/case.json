@@ -14,7 +14,7 @@
     "FAILED tests/backend/metadata/test_core.py::TestSourceDistributionMetadata::test_metadata_hooks",
     "E             Right contains 2 more items:",
     "E             {'dynamic': ['scripts'], 'scripts': {'foo': 'bar'}}",
-    "2 failed, 331 passed in 0.92s"
+    "2 failed, 331 passed"
   ],
   "diagnostic_args": [
     "-m",
