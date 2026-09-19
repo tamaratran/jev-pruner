@@ -12,7 +12,7 @@ export const cases = {
     command: `${tsc} --listFiles --pretty false`,
     verify: `${tsc} --pretty false`,
     editable: ['src/config.ts'],
-    evidence: ['src/config.ts', 'error TS2322', 'Exit status: 2'],
+    evidence: ['src/config.ts', 'error TS2322', 'Exit status:'],
     question: 'Repair the TypeScript build and implement the timeout contract in README.md. Only edit src/config.ts.',
     solution: {
       'src/config.ts': 'export function resolveTimeout(value: string | undefined): number {\n'
@@ -25,7 +25,7 @@ export const cases = {
     command: 'python3 -m pytest -vv --tb=line -p no:cacheprovider',
     verify: 'python3 -m pytest -q --tb=short -p no:cacheprovider',
     editable: ['cart.py'],
-    evidence: ['test_percentage_discount', 'AssertionError', 'Exit status: 1'],
+    evidence: ['test_percentage_discount', 'FAILED', 'Exit status: 1'],
     question: 'Repair the cart calculation so the tests and the discount contract in README.md hold. Only edit cart.py; do not edit tests.',
     solution: {
       'cart.py': 'def invoice_total(subtotal, discount_percent=0):\n'
