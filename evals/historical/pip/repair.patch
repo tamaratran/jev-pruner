@@ -1,0 +1,13 @@
+diff --git a/src/pip/_internal/req/constructors.py b/src/pip/_internal/req/constructors.py
+index 056e7e3a7..76c8c3849 100644
+--- a/src/pip/_internal/req/constructors.py
++++ b/src/pip/_internal/req/constructors.py
+@@ -47,7 +47,7 @@ def _strip_extras(path: str) -> tuple[str, str | None]:
+     m = re.match(r"^(.+)(\[[^\]]+\])$", path)
+     extras = None
+     if m:
+-        path_no_extras = m.group(1)
++        path_no_extras = m.group(1).rstrip()
+         extras = m.group(2)
+     else:
+         path_no_extras = path
