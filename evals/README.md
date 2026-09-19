@@ -35,6 +35,34 @@ planned rows and failures, success and total model-price estimates together,
 with each repetition separate from historical trials. Subsets selected using
 prior outputs are exploratory and do not estimate full-benchmark performance.
 
+## Retention activation preflight
+
+Run the current preservation policy against six synthetic outputs above the
+10,000-token gate using live Jev:
+
+```sh
+npx tsx evals/manual/retention.mts --run "$HOME/retention-preflight-new"
+```
+
+Requires `TYPESAFE_API_KEY` and a new absolute evidence directory whose parent
+already exists. The runner records its fixed protocol before any request: three
+repetitions of build, install, test, documentation, assembly, and source output
+at 1,900- and 8,000-character budgets. The smaller budget approximates the space
+remaining inside an observed Claude native preview after the archive footer;
+the larger budget diagnoses the effect of the cap. These are direct function
+tests, not changes to production settings or measurements of Claude usage.
+Every result includes the decision, required-fact checks, exact output, Jev
+responses, and latency. Reference cases must remain completely unchanged.
+Inspect all declared cases, including cases that do not prune. A subsequent
+Claude integration run still needs matching pruned transcript evidence before
+an active-pruning comparison can be claimed.
+
+Generate a fixture without making network requests:
+
+```sh
+npx tsx evals/manual/retention.mts --emit documentation
+```
+
 ## Historical plugin evals
 
 The plugin and manual sweeps below predate the 10,000-token minimum. Their
