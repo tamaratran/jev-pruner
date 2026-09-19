@@ -159,7 +159,7 @@ Return only a JSON object with outcome ("fixed" or "not_fixed"), cause, and chan
       event.item.type === 'command_execution').map(event => event.item.command);
     row.skill_reads = row.commands.filter(cmd => cmd.includes(join(skill, 'SKILL.md'))).length;
     assert.equal(row.skill_reads, 1, 'Unequal skill loading');
-    row.recovery_commands = row.commands.filter(cmd => cmd.includes('.jev-pruner')).length;
+    row.archive_path_commands = row.commands.filter(cmd => cmd.includes('.jev-pruner'));
     const raw = [];
     for (const file of await list(join(cwd, '.eval-raw'))) raw.push(await read(join(cwd, '.eval-raw', file)));
     const outputs = responses.filter(entry => /^(function_call_output|custom_tool_call_output)$/.test(entry.type))

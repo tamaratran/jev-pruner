@@ -618,6 +618,10 @@ diagnostics, task success, factual outcome reporting, and strict JSON format are
 separate measurements. Pair inclusion depends on complete audits and actual
 pruning, never task success. Failed activation remains in diagnostic records.
 
+`archive_path_commands` preserves commands mentioning `.jev-pruner` for review.
+Inspect the command transcripts before counting recovery reads: an exclusion
+such as `rg --glob '!.jev-pruner/**'` mentions the archive without reading it.
+
 Shared subscription prompt caching cannot be controlled here. Compare cached
 and uncached tokens separately and reprice all input as uncached as a sensitivity
 check. Dollar values are API-equivalent reference estimates, not subscription
