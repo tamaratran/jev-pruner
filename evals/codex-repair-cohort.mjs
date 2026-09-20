@@ -8,7 +8,7 @@ import { contextPath } from '../dist/codex/context.js';
 import { estimateTokens } from '../dist/jev.js';
 import { commandOutput } from '../tests/fixtures/codex-transcript.mjs';
 import { execute, quote, repo } from './codex-repair-workloads.mjs';
-import { assertNoEvidenceLeak, evidenceMarker, externalEvidenceDirectory } from './observer/evidence-isolation.mjs';
+import { assertNoEvidenceLeak, assertNoEvidenceStateLeak, evidenceMarker, externalEvidenceDirectory } from './observer/evidence-isolation.mjs';
 
 const historicalSource = process.env.JEV_HISTORICAL_SOURCE_ROOT;
 const { cases, grade, prepare } = await import(historicalSource
@@ -267,7 +267,7 @@ Return only a JSON object with outcome ("fixed" or "not_fixed"), cause, and chan
     const capture = await read(join(captureDirectory, file));
     try {
       assert.equal(capture.evidenceMarker, evidenceMarker);
-      assertNoEvidenceLeak(JSON.stringify(capture.request.state), [observerDirectory]);
+      assertNoEvidenceStateLeak(capture.request.state, [observerDirectory]);
     } catch (error) {
       row.audit_pass = false;
       row.evidence_isolation_pass = false;

@@ -638,7 +638,9 @@ recovery archives remain in `.jev-pruner` inside the workspace.
 The collector requires absolute external `JEV_EVAL_CAPTURE_DIR` and
 `JEV_OBSERVER_CAPTURE_DIR` paths, rejecting paths and symlinks into the workspace.
 Captures carry an evidence marker that must never appear in model-visible tool
-results or later Jev state; marker/path leakage invalidates the trial's audit.
+results or later Jev state. Marker leakage anywhere, or observer paths in tool
+results/calls or scored chunks, invalidates the trial's audit. Directory paths
+in Codex's initial sandbox metadata are expected and are not debug content.
 These checks detect accidental contamination, not every possible deliberate
 read outside the workspace. The standalone observer's legacy default remains
 available to other test fixtures; the repair collector never uses it.

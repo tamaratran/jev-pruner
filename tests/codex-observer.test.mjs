@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { assertNoEvidenceLeak, evidenceMarker, externalEvidenceDirectory } from '../evals/observer/evidence-isolation.mjs';
+import { assertNoEvidenceLeak, assertNoEvidenceStateLeak, evidenceMarker, externalEvidenceDirectory } from '../evals/observer/evidence-isolation.mjs';
 
 const execute = promisify(execFile);
 const directories = [];
@@ -94,5 +94,22 @@ describe('Codex evaluation evidence isolation', () => {
     expect(() => assertNoEvidenceLeak(JSON.stringify({ history: [{ text: capture }] }), [directory])).toThrow('leaked');
     expect(() => assertNoEvidenceLeak(`${directory}/raw/file.json`, [directory])).toThrow('leaked');
     expect(() => assertNoEvidenceLeak('Normal diagnostic\nExit status: 1', [directory])).not.toThrow();
+  });
+
+  it('allows sandbox root metadata but rejects evidence in Jev tool history', () => {
+    const directory = resolve('outside-evidence');
+    const state = { history: [{ text: `<workspace_roots><root>${directory}</root></workspace_roots>` }], chunks: [] };
+    expect(() => assertNoEvidenceStateLeak(state, [directory])).not.toThrow();
+    expect(() => assertNoEvidenceStateLeak({
+      ...state, history: [{ text: evidenceMarker }],
+    }, [directory])).toThrow('leaked');
+    for (const key of ['tool_results', 'tool_calls']) {
+      expect(() => assertNoEvidenceStateLeak({
+        ...state, history: [{ text: '', [key]: [{ result: `${directory}/file.json` }] }],
+      }, [directory])).toThrow('leaked');
+    }
+    expect(() => assertNoEvidenceStateLeak({
+      ...state, chunks: [{ text: `${directory}/file.json` }],
+    }, [directory])).toThrow('leaked');
   });
 });

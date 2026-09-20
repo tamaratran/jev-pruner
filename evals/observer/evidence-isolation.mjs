@@ -22,3 +22,11 @@ export function assertNoEvidenceLeak(text, directories) {
   assert(!text.includes(evidenceMarker) && !directories.some(directory => text.includes(directory)),
     'Evaluation evidence leaked into model-visible context');
 }
+
+export function assertNoEvidenceStateLeak(state, directories) {
+  assertNoEvidenceLeak(JSON.stringify(state), []);
+  for (const entry of state.history) {
+    assertNoEvidenceLeak(JSON.stringify([entry.tool_calls ?? [], entry.tool_results ?? []]), directories);
+  }
+  assertNoEvidenceLeak(JSON.stringify(state.chunks), directories);
+}
