@@ -45,6 +45,7 @@ export interface TrimOutputOptions {
 
 export interface TrimOutputInput {
   command: string;
+  exitCode?: number;
   goal: string;
   output: string;
   fullOutputPath?: string;
@@ -197,6 +198,7 @@ function stateFor(
     task: input.goal,
     history,
     command: input.command,
+    ...(input.exitCode !== undefined ? { exitCode: input.exitCode } : {}),
     diagnosticsAndResults,
     chunks: chunks.map(({ id, text }) => ({ id, text })),
   };

@@ -13,6 +13,7 @@ export async function pruneCodexOutput(
   command: string,
   options: {
     cwd: string;
+    exitCode?: number;
     sessionId?: string;
     apiKey?: string;
     home?: string;
@@ -39,7 +40,7 @@ export async function pruneCodexOutput(
       await writeFile(path, output, { mode: 0o600, flag: 'wx' });
     };
     const result = await trimOutput(
-      { command, goal, messages, output: text, fullOutputPath: path },
+      { command, goal, messages, output: text, fullOutputPath: path, exitCode: options.exitCode },
       {
         async ask(state, questions) {
           if (options.signal?.aborted) throw new Error('Command interrupted');

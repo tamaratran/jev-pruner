@@ -23,13 +23,15 @@ Use the ordinary shell directly for interactive/TTY commands, servers, commands
 whose live progress is required, whole-file reads, diffs, structured data, and
 commands involving secrets. Do not wrap nested calls that require machine-readable
 output. This wrapper buffers stdout until completion (up to 8 MiB), forwards stderr
-unchanged, and preserves the exit code. It does not intercept other shell calls.
+unchanged, and preserves the exit code, including failures. The actual exit code
+is supplied to Jev without adding it to stdout. It does not intercept other shell calls.
 
 Only stdout over 10,000 estimated tokens is eligible. The trusted `PreToolUse`
 hook records the current transcript path; the wrapper uses `CODEX_THREAD_ID` to
 load that session's user/assistant messages and complete recorded tool results.
-Missing history, missing `TYPESAFE_API_KEY`, blocked Jev network access, failed
-commands, archive failures, and scoring failures return the original stdout.
+Successful and failed commands are eligible under the same retention rules.
+Missing history, missing `TYPESAFE_API_KEY`, blocked Jev network access,
+signals, archive failures, and scoring failures return the original stdout.
 Never claim pruning occurred without seeing an omission marker.
 
 Read or search the archive path in the final footer whenever omitted output is
