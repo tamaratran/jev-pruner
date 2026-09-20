@@ -3,11 +3,14 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { cases, execute, repo } from '../codex-repair-workloads.mjs';
 
-const historical = process.env.JEV_EVAL_SUITE === 'historical'
-  ? await import('../codex-historical-workloads.mjs') : undefined;
+const historicalSource = process.env.JEV_HISTORICAL_SOURCE_ROOT ??
+  (process.env.JEV_EVAL_SUITE === 'historical' ? repo : undefined);
+const historical = historicalSource
+  ? await import(pathToFileURL(join(historicalSource, 'evals/codex-historical-workloads.mjs')).href)
+  : undefined;
 const collect = process.argv[2] === '--collect';
 const name = process.argv[collect ? 3 : 2];
 assert(Object.hasOwn(historical?.cases ?? cases, name));
@@ -22,7 +25,8 @@ if (collect) {
     JSON.stringify({ name, command: historical ? result.command : cases[name].command, ...result, output }, null, 2),
     { mode: 0o600 });
   process.stdout.write(output);
-  process.exitCode = result.timedOut ? 124 : 0;
+  process.exitCode = result.timedOut ? 124
+    : process.env.JEV_EVAL_PRESERVE_EXIT === 'true' ? result.code ?? 1 : 0;
 } else {
   const pruned = process.env.JEV_EVAL_ARM === 'pruned';
   assert(['pruned', 'native'].includes(process.env.JEV_EVAL_ARM));
