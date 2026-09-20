@@ -138,6 +138,29 @@ describe('Codex output pruning', () => {
     expect(discard).not.toHaveBeenCalled();
   });
 
+  it('prunes progress around a failed test source excerpt and archives exact stdout', async () => {
+    const options = await fixture();
+    const section = [
+      '=== FAILURES ===',
+      '    def test_capture():',
+      ...Array.from({ length: 50 }, (_, index) => `        value_${index} = capture(${index})`),
+      '>       assert captured == "expected"',
+      "E       AssertionError: assert 'actual' == 'expected'",
+      'tests/test_capture.py:54: AssertionError',
+      '=== 1 failed, 399 passed in 1.0s ===',
+    ].join('\n');
+    const original = Buffer.from(`${output.toString()}\n${section}\n${output.toString()}`);
+    const pruned = await pruneCodexOutput(original, 'node diagnostic-collector.mjs', { ...options, exitCode: 1 });
+    expect(discard).toHaveBeenCalled();
+    expect(discard.mock.calls.every(([state]) => (state as { exitCode: number }).exitCode === 1)).toBe(true);
+    expect(pruned.length).toBeLessThan(original.length);
+    expect(pruned.toString()).toContain(section);
+    const archives = (await readdir(join(options.cwd, '.jev-pruner'))).filter(file => file.endsWith('.txt'));
+    expect(archives).toHaveLength(1);
+    expect(await readFile(join(options.cwd, '.jev-pruner', archives[0]!))).toEqual(original);
+    expect(pruned.toString()).toContain(`[fast-jev-output full output: ${join(options.cwd, '.jev-pruner', archives[0]!)}`);
+  });
+
   it('fails open for missing state, absent keys, structured output and secret-like content', async () => {
     const options = await fixture();
     for (const extra of [{ sessionId: undefined }, { apiKey: undefined }, { home: '/unavailable' }]) {

@@ -2,7 +2,7 @@ import { estimateStateTokens, estimateTokens, noulAnswer } from './jev.js';
 import type { JevAsker, JevQuestions } from './jev.js';
 import { splitHistory } from './history.js';
 import type { ConversationMessage, HistoryEntry } from './history.js';
-import { classifyInformation, isProtectedLine, keepScore } from './retention.js';
+import { classifyInformation, diagnosticSectionLines, isProtectedLine, keepScore } from './retention.js';
 
 export const MIN_OUTPUT_TOKENS = 10_000;
 const DEFAULT_CHUNK_LINES = 20;
@@ -68,6 +68,7 @@ type OutputChunk = {
   text: string;
   lines: number;
   chars: number;
+  sectionLines?: Set<number>;
 };
 
 type RefinedChunk = {
@@ -125,7 +126,10 @@ function simpleCommand(command: string): string {
 }
 
 export function classifyOutput(command: string, output: string): OutputCategory {
-  if (looksStructured(command, output) || classifyInformation(output) === 'reference') return 'document';
+  const lines = output.split('\n');
+  const sections = diagnosticSectionLines(lines);
+  const outsideSections = lines.map((line, index) => sections.has(index) ? '' : line).join('\n');
+  if (looksStructured(command, outsideSections) || classifyInformation(outsideSections) === 'reference') return 'document';
   const simple = simpleCommand(command);
   if (/^(rg|grep|egrep|fgrep|find|fd|head|tail|sed|git\s+grep)(?:\s|$)/.test(simple)) return 'search';
   if (/^(make|gmake|ninja|pytest|jest|vitest|ctest|mvn|gradle|gradlew)(?:\s|$)/.test(simple) ||
@@ -138,15 +142,18 @@ export function classifyOutput(command: string, output: string): OutputCategory 
 }
 
 /** Splits over-long lines so one line cannot become an untrimmable chunk. */
-function splitLongLines(output: string): string[] {
-  const out: string[] = [];
-  for (const line of output.split('\n')) {
+function splitLongLines(output: string): { text: string; inSection: boolean }[] {
+  const out: { text: string; inSection: boolean }[] = [];
+  const lines = output.split('\n');
+  const sections = diagnosticSectionLines(lines);
+  for (const [index, line] of lines.entries()) {
+    const inSection = sections.has(index);
     if (line.length <= MAX_LINE_CHARS) {
-      out.push(line);
+      out.push({ text: line, inSection });
       continue;
     }
     for (let at = 0; at < line.length; at += MAX_LINE_CHARS) {
-      out.push(line.slice(at, at + MAX_LINE_CHARS));
+      out.push({ text: line.slice(at, at + MAX_LINE_CHARS), inSection });
     }
   }
   return out;
@@ -158,7 +165,7 @@ function chunkOutput(output: string, chunkLines: number, chunkChars: number): Ou
   const groups: string[][] = [];
   let current: string[] = [];
   let chars = 0;
-  for (const line of lines) {
+  for (const { text: line } of lines) {
     if (current.length > 0 && (target > 0 ? chars + 1 + line.length > target : current.length >= chunkLines)) {
       groups.push(current);
       current = [];
@@ -170,6 +177,7 @@ function chunkOutput(output: string, chunkLines: number, chunkChars: number): Ou
   if (current.length > 0) groups.push(current);
   const merge = Math.max(1, Math.ceil(groups.length / MAX_CHUNKS));
   const chunks: OutputChunk[] = [];
+  let lineOffset = 0;
   for (let start = 0; start < groups.length; start += merge) {
     const group = groups.slice(start, start + merge).flat();
     const text = group.join('\n');
@@ -178,7 +186,9 @@ function chunkOutput(output: string, chunkLines: number, chunkChars: number): Ou
       text,
       lines: group.length,
       chars: text.length,
+      sectionLines: new Set(group.flatMap((_, index) => lines[lineOffset + index]!.inSection ? [index] : [])),
     });
+    lineOffset += group.length;
   }
   return chunks;
 }
@@ -267,12 +277,13 @@ export function recoveryFooter(path?: string): string {
 function protectedLines(
   lines: readonly string[],
   boundary: { first: boolean; last: boolean },
+  sectionLines: ReadonlySet<number> = new Set(),
 ): Set<number> {
   const keep = new Set<number>();
   if (boundary.first) keep.add(0);
   if (boundary.last) keep.add(lines.length - 1);
   lines.forEach((line, index) => {
-    if (isProtectedLine(line)) {
+    if (sectionLines.has(index) || isProtectedLine(line)) {
       for (let at = Math.max(0, index - 1); at <= Math.min(lines.length - 1, index + 1); at += 1) keep.add(at);
     }
   });
@@ -280,9 +291,13 @@ function protectedLines(
 }
 
 function chunkBoundary(chunks: readonly OutputChunk[], index: number) {
+  const previous = chunks[index - 1];
+  const next = chunks[index + 1];
   return {
-    first: index === 0 || isProtectedLine(chunks[index - 1]?.text.split('\n').at(-1) ?? ''),
-    last: index === chunks.length - 1 || isProtectedLine(chunks[index + 1]?.text.split('\n')[0] ?? ''),
+    first: index === 0 || previous?.sectionLines?.has(previous.lines - 1) === true ||
+      isProtectedLine(previous?.text.split('\n').at(-1) ?? ''),
+    last: index === chunks.length - 1 || next?.sectionLines?.has(0) === true ||
+      isProtectedLine(next?.text.split('\n')[0] ?? ''),
   };
 }
 
@@ -296,7 +311,7 @@ function minimumRetainedChars(
   let count = 0;
   chunks.forEach((chunk, index) => {
     const lines = chunk.text.split('\n');
-    const keep = fixed.get(index) ?? protectedLines(lines, chunkBoundary(chunks, index));
+    const keep = fixed.get(index) ?? protectedLines(lines, chunkBoundary(chunks, index), chunk.sectionLines);
     for (const at of keep) {
       chars += lines[at]!.length;
       count += 1;
@@ -477,13 +492,12 @@ async function assemble(
   const { keepThreshold, maxChars, histories, asker, maxStateTokens } = opts;
   const keptIndexes = new Set<number>();
   for (let index = 0; index < chunks.length; index += 1) {
+    const boundary = chunkBoundary(chunks, index);
     if (
       omitted.has(index) ||
-      index === 0 ||
-      index === chunks.length - 1 ||
+      boundary.first || boundary.last ||
+      chunks[index]!.sectionLines?.size ||
       isProtectedLine(chunks[index]!.text) ||
-      isProtectedLine(chunks[index - 1]?.text.split('\n').at(-1) ?? '') ||
-      isProtectedLine(chunks[index + 1]?.text.split('\n')[0] ?? '') ||
       keepScore(scores[index]!, keepThreshold)
     ) {
       keptIndexes.add(index);
@@ -642,7 +656,7 @@ async function shrinkChunkWithJev(
   } catch {
     return undefined;
   }
-  const keep = protectedLines(lines, boundary);
+  const keep = protectedLines(lines, boundary, chunk.sectionLines);
   groups.forEach((group, index) => {
     if (keepScore(scores[index]!, keepThreshold)) {
       for (let at = index * groupLines; at < (index + 1) * groupLines && at < lines.length; at += 1) keep.add(at);
