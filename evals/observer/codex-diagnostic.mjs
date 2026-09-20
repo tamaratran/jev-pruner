@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { cases, execute, repo } from '../codex-repair-workloads.mjs';
+import { evidenceMarker, externalEvidenceDirectory } from './evidence-isolation.mjs';
 
 const collect = process.argv[2] === '--collect';
 const name = process.argv[collect ? 3 : 2];
@@ -13,14 +14,15 @@ const historical = process.env.JEV_HISTORICAL_SOURCE_ROOT
   : undefined;
 assert(Object.hasOwn(historical?.cases ?? cases, name));
 assert(process.env.JEV_EVAL_CAPTURE_DIR);
+const rawDirectory = await externalEvidenceDirectory(process.env.JEV_EVAL_CAPTURE_DIR);
+await externalEvidenceDirectory(process.env.JEV_OBSERVER_CAPTURE_DIR);
 
 if (collect) {
   const result = historical ? await historical.diagnostic(name, process.cwd())
     : await execute(`${cases[name].command} 2>&1`, process.cwd());
   const output = `${result.stdout}${result.stderr}\nExit status: ${result.code}\n`;
-  await mkdir(process.env.JEV_EVAL_CAPTURE_DIR, { recursive: true });
-  await writeFile(join(process.env.JEV_EVAL_CAPTURE_DIR, `${randomUUID()}.json`),
-    JSON.stringify({ name, command: historical ? result.command : cases[name].command, ...result, output }, null, 2),
+  await writeFile(join(rawDirectory, `${randomUUID()}.json`),
+    JSON.stringify({ evidenceMarker, name, command: historical ? result.command : cases[name].command, ...result, output }, null, 2),
     { mode: 0o600 });
   process.stdout.write(output);
   process.exitCode = result.timedOut ? 124

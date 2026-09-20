@@ -628,6 +628,28 @@ and uncached tokens separately and reprice all input as uncached as a sensitivit
 check. Dollar values are API-equivalent reference estimates, not subscription
 charges. Review and sanitize the evidence before sharing.
 
+### Evidence isolation
+
+The repair cohort stores raw diagnostic records and Jev request/response captures
+under each trial's `observer/raw` and `observer/jev`, outside `workspace`. Only
+that observer directory is added to the sandbox's writable roots. Production
+recovery archives remain in `.jev-pruner` inside the workspace.
+
+The collector requires absolute external `JEV_EVAL_CAPTURE_DIR` and
+`JEV_OBSERVER_CAPTURE_DIR` paths, rejecting paths and symlinks into the workspace.
+Captures carry an evidence marker that must never appear in model-visible tool
+results or later Jev state. Marker leakage anywhere, or observer paths in tool
+results/calls or scored chunks, invalidates the trial's audit. Directory paths
+in Codex's initial sandbox metadata are expected and are not debug content.
+These checks detect accidental contamination, not every possible deliberate
+read outside the workspace. The standalone observer's legacy default remains
+available to other test fixtures; the repair collector never uses it.
+
+Older repair comparisons stored debug JSON under `workspace/captures`. Broad
+source searches could include those records and inflate model and Jev context.
+Keep those results as historical accounting; rerun with this isolated layout
+before attributing a cost difference to pruning.
+
 ### Targeted mixed-log evaluation
 
 `mixed-log-preflight.mjs` reuses sanitized historical outputs and their saved
