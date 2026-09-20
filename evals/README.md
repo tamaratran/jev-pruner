@@ -581,6 +581,114 @@ task output or debug logs could contain credentials. Never commit transcripts,
 settings caches, or bulky reports. Keep the dependency lock, task locks/image
 digests, exact commands, and separate infra errors with the delivered artifacts.
 
+## Codex repair comparison
+
+`codex-repair-cohort.mjs` compares three repetitions of native and pruned output
+on constructed TypeScript, pytest, and offline npm repair projects. They use real
+tools, but are not sampled from production repositories or Terminal-Bench.
+The fixtures contain an independently checked defect and semantic repair oracle.
+
+```sh
+npm run build
+node evals/codex-repair-workloads.mjs /path/to/new-validation-directory
+node evals/codex-repair-cohort.mjs /path/to/new-evidence-directory preflight
+node evals/codex-repair-cohort.mjs /path/to/new-evidence-directory run
+```
+
+Requires Codex 0.152.1 authenticated through ChatGPT, pytest on `python3`, an
+installed plugin matching the local build, and `TYPESAFE_API_KEY` in the
+environment. `JEV_CODEX_PLUGIN_ROOT` overrides the installed plugin location.
+The first command validates broken and known-repaired fixtures without inference.
+Preflight runs one excluded pruned repair per workflow; all three must activate
+before the 18 comparison trials. Do not edit frozen sources between phases.
+
+The diagnostic collector merges stderr into stdout, appends the underlying exit
+status, and by default returns zero after successful collection for compatibility
+with earlier evaluations. Set `JEV_EVAL_PRESERVE_EXIT=true` to preserve the real
+exit code and exercise failed-command pruning. This evaluates an **explicit
+diagnostic integration**, not interception of all native shell commands. Native and pruned
+arms use the same collector and identical prompts; both read the same skill once.
+Installation is offline with local fixture dependencies and permits lifecycle
+scripts. No registry packages are downloaded.
+
+The protocol freezes source hashes, model, tool versions, order, prices, and
+inclusion rules before inference. Each fresh workspace records fixture hashes.
+Trials preserve transcripts, raw and visible output, Jev requests and usage,
+archive integrity, edits, independent verification, and model usage. Required
+diagnostics, task success, factual outcome reporting, and strict JSON format are
+separate measurements. Pair inclusion depends on complete audits and actual
+pruning, never task success. Failed activation remains in diagnostic records.
+
+`archive_path_commands` preserves commands mentioning `.jev-pruner` for review.
+Inspect the command transcripts before counting recovery reads: an exclusion
+such as `rg --glob '!.jev-pruner/**'` mentions the archive without reading it.
+
+Shared subscription prompt caching cannot be controlled here. Compare cached
+and uncached tokens separately and reprice all input as uncached as a sensitivity
+check. Dollar values are API-equivalent reference estimates, not subscription
+charges. Review and sanitize the evidence before sharing.
+
+### Evidence isolation
+
+The repair cohort stores raw diagnostic records and Jev request/response captures
+under each trial's `observer/raw` and `observer/jev`, outside `workspace`. Only
+that observer directory is added to the sandbox's writable roots. Production
+recovery archives remain in `.jev-pruner` inside the workspace.
+
+The collector requires absolute external `JEV_EVAL_CAPTURE_DIR` and
+`JEV_OBSERVER_CAPTURE_DIR` paths, rejecting paths and symlinks into the workspace.
+Captures carry an evidence marker that must never appear in model-visible tool
+results or later Jev state. Marker leakage anywhere, or observer paths in tool
+results/calls or scored chunks, invalidates the trial's audit. Directory paths
+in Codex's initial sandbox metadata are expected and are not debug content.
+These checks detect accidental contamination, not every possible deliberate
+read outside the workspace. The standalone observer's legacy default remains
+available to other test fixtures; the repair collector never uses it.
+
+Older repair comparisons stored debug JSON under `workspace/captures`. Broad
+source searches could include those records and inflate model and Jev context.
+Keep those results as historical accounting; rerun with this isolated layout
+before attributing a cost difference to pruning.
+
+### Targeted mixed-log evaluation
+
+`mixed-log-preflight.mjs` reuses sanitized historical outputs and their saved
+pre-output conversation histories. It selects the first document-gated Click,
+Flask, and Hatch failure in the investigation, scores them live, and requires
+the entire diagnostic suffix to remain intact. Additional controls check that
+explicit document reads bypass scoring and that an explicitly requested passing
+test status remains visible. It uses the production chunk size and request
+budget, without a size cap or line-refinement override.
+
+```sh
+node evals/mixed-log-preflight.mjs \
+  /path/to/sanitized-evidence /path/to/diagnosis.json /path/to/new-live-results
+```
+
+For a small Codex follow-up, reuse the historical fixture module and prepared
+cache from PR #67 without changing their checkout. The fixture checkout used
+for this evaluation was `b63db3bca700a72234d66020d5fb6398030d3ec3`.
+The harness hashes its module dependencies and selected fixture definitions;
+all policy code comes from the current build.
+
+```sh
+export JEV_HISTORICAL_SOURCE_ROOT=/path/to/historical-fixture-checkout
+export JEV_HISTORICAL_CACHE=/path/to/prepared-historical-cache
+export JEV_CODEX_PLUGIN_ROOT="$PWD"
+export JEV_EVAL_CASES=click,flask,hatch
+export JEV_EVAL_REPETITIONS=2
+export JEV_EVAL_PRESERVE_EXIT=true
+npm run build
+node evals/codex-repair-cohort.mjs /path/to/new-evidence-directory preflight
+node evals/codex-repair-cohort.mjs /path/to/new-evidence-directory run
+```
+
+This runs three excluded integration preflights and twelve measured trials.
+Historical output uses a 100,000-token tool budget to avoid host truncation.
+The selected tasks have been seen before; this is a targeted regression
+comparison, not evidence of general savings or performance on unseen tasks.
+No-pruning pairs remain separate activation and overhead diagnostics.
+
 ## Checks
 
 ```sh

@@ -20,6 +20,8 @@ Claude requests a Bash command → Command runs → Jev prunes stdout → Claude
    whole-document commands (`cat`, `jq`, `git diff`, `git show`, `base64`, and
    `openssl`) are left untouched. Recognized documentation, source code, and
    disassembly are also preserved, regardless of which command printed them.
+   In pytest logs, recognized diagnostic sections are protected in full without
+   preventing unrelated progress from reaching scoring.
 3. Output is split into chunks of `chunkLines` lines, capped at 200 chunks;
    lines longer than 2,000 characters are split first.
    The opt-in `chunkChars` setting groups these lines toward a character target
@@ -29,7 +31,7 @@ Claude requests a Bash command → Command runs → Jev prunes stdout → Claude
 4. Jev receives `{ context, task, history, command, chunks }`, plus `category` and
    `categoryGuidance` for recognized build/test/install or search/excerpt commands,
    and one noul question
-   per chunk: “does any line in this chunk need to remain available?”. A single
+   per chunk: “does any line need to remain to complete, diagnose, or verify the task?”. A single
    needed line protects the chunk, including values required by earlier
    instructions even when the next reply must not repeat them. `history` includes
    user/assistant text, complete tool inputs, and tool-result text and structured
@@ -118,7 +120,8 @@ can print source code.
 
 | Information | Retention rule |
 | --- | --- |
-| Recognized documentation, source code, or assembly | Preserve the entire output without calling Jev, including mixed output with an initial log banner. |
+| Recognized documentation, source code, or assembly | Preserve the entire output without calling Jev, including mixed output with an initial log banner. References inside recognized pytest diagnostic sections protect that section instead. |
+| Pytest diagnostic sections | Preserve every line from a `FAILURES`, `ERRORS`, `warnings summary`, or `short test summary info` section header through the final pytest counts, or to the end of truncated output. Includes source excerpts, diffs, captured output, and diagnostic context across chunk boundaries and refinement. |
 | Diagnostics and results | Keep matching lines and adjacent context even if Jev considers them disposable. Includes warnings, failures, test totals, exit status, and explicit artifact/report paths. |
 | Task-dependent facts | Ask Jev against every history segment. A keep vote from any segment protects the content. Refinement uses the same rule for smaller groups. |
 | Uncertain meaning | Preserve: removal requires a keep probability at most `0.1` and below `keepThreshold` in every history segment. |
@@ -130,6 +133,16 @@ language or document format. Unrecognized content still goes to Jev with the
 instruction to retain information whose meaning or relevance is uncertain.
 The probability cutoff is a retention policy, not a measured error guarantee.
 All rules apply above the existing token floor; none lowers that floor.
+Reference or structured content outside recognized diagnostic sections still
+protects the whole output. Other diagnostic formats retain the existing
+conservative behavior; section detection does not depend on the command name.
+
+Scoring distinguishes intermediate progress from final results: individual
+successful test entries, input filename listings, and routine package operations
+can be unnecessary for a repair. Explicit requests for individual results,
+complete inventories, or package details still protect those facts. Filename
+listings are evaluated as listings rather than source code; the source-content
+protection and the `0.1` confidence ceiling remain unchanged.
 
 Refinement scores individual lines when a retained chunk exceeds its share of
 the character budget; otherwise it scores five-line groups. Each line still
@@ -272,7 +285,7 @@ Read the full-output archive referenced in the last result and show the exact
 line containing "cache entry 20 ". Do not rerun the command.
 ```
 
-Short output, failed commands, protected formats, and output Jev considers
+Short output, interrupted commands, protected formats, and output Jev considers
 necessary may remain unchanged. Only an omission marker confirms pruning;
 the absence of an error does not.
 
@@ -301,7 +314,7 @@ in the projects where the commands ran.
 | `codex: command not found`, or no `plugin` subcommand | Check that npm's global executables are on `PATH` and `codex --version` reports the tested CLI version above. |
 | The skill is unavailable | Check `codex plugin list --json`, then start a new session after installation. |
 | `dist/codex/run.js` cannot be found | Run `npm ci` and `npm run build` in the checkout, then remove and reinstall the cached plugin as above. |
-| Large output is unchanged | Confirm Codex used the wrapper, the hook is trusted, the command succeeded, and the output is eligible. Check API-key availability, Jev network access, and TypeSafe credits; missing access or scoring failures preserve stdout. |
+| Large output is unchanged | Confirm Codex used the wrapper, the hook is trusted, and the output is eligible. Both successful and failed commands can prune stdout. Check API-key availability, Jev network access, and TypeSafe credits; missing access or scoring failures preserve stdout. |
 | Jev returns HTTP 402 | Add TypeSafe API credits. Your Codex subscription does not fund Jev requests. |
 | Codex reports output truncation | Use the larger `tool_output_token_limit` shown above and read the original archive when available. This limit is separate from the pruning threshold. |
 
@@ -325,8 +338,14 @@ environment, stdin, stderr, and exit status. Explicitly select a shell for a
 shell program (`-- bash -c 'command1 && command2'`). Interactive commands, live
 progress streams, servers, and machine-readable nested tool calls should use
 the ordinary shell. Stdout is buffered until command completion; above 8 MiB,
-the wrapper switches to unchanged streaming to bound memory use. Nonzero exits,
+the wrapper switches to unchanged streaming to bound memory use. Signals,
 invalid UTF-8, and credential-like commands/output pass through without scoring.
+
+Successful and failed commands use the same retention rules. The actual child
+exit code is included as `exitCode` in Jev's scoring context; the wrapper returns
+that code to Codex even if pruning or scoring fails. It does not append a synthetic
+status line to stdout or change the archived bytes. Diagnostics, warnings, result
+counts, artifact paths, reference material, and uncertain content stay protected.
 
 The strict over-10,000-token gate, categories, complete-history partitioning,
 verbatim retention, and incomplete-scoring safeguards reuse the same pruning
