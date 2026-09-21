@@ -1,0 +1,263 @@
+{
+  "name": "requests",
+  "repository": "https://github.com/psf/requests",
+  "base_commit": "7a13c041dbef42f9f3feb14110f02626f6892e9a",
+  "fix_commit": "60389df6d69ce833164696dcf36cbb43336d3426",
+  "issue_url": "https://github.com/psf/requests/issues/6643",
+  "description": "Upstream non-security HTTP adapter URL-formatting bug fixed by PR #6644 in February 2024. A valid path with excess leading separators and a colon is passed to urllib3 in a form that it interprets as an invalid authority. The regression and repair are the complete upstream test-only and source-only changes, respectively, from the fix commit against its immediate parent.",
+  "question": "Fix HTTPAdapter.request_url so direct HTTP requests with excess leading path separators and a colon in the path produce the expected path-only request target. Preserve the remaining path and existing proxy URL behavior.",
+  "editable": [
+    "src/requests/adapters.py"
+  ],
+  "evidence": [
+    "tests/test_adapters.py::test_request_url_trims_leading_path_separators FAILED",
+    "E       AssertionError: assert '/v:h' == '//v:h'",
+    "tests/test_adapters.py:8: AssertionError",
+    "1 failed, 18 warnings"
+  ],
+  "diagnostic_args": [
+    "-m",
+    "pytest",
+    "-vv",
+    "tests/test_adapters.py"
+  ],
+  "verify_args": [
+    "-m",
+    "pytest",
+    "-vv",
+    "tests/test_adapters.py"
+  ],
+  "environment": {
+    "PYTHONPATH": "{workspace}/src",
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "LC_ALL": "C.UTF-8"
+  },
+  "license": "Apache-2.0",
+  "validation": {
+    "status": "validated",
+    "validated_at": "2026-09-21",
+    "upstream_pr": "https://github.com/psf/requests/pull/6644",
+    "upstream_fix_url": "https://github.com/psf/requests/commit/60389df6d69ce833164696dcf36cbb43336d3426",
+    "platform": "Ubuntu 22.04.5 LTS, Linux x86_64",
+    "python": "3.12.13",
+    "dependencies": {
+      "pip": "25.0.1",
+      "pytest": "6.2.5",
+      "attrs": "23.2.0",
+      "iniconfig": "2.0.0",
+      "packaging": "23.2",
+      "pluggy": "1.3.0",
+      "py": "1.11.0",
+      "toml": "0.10.2",
+      "certifi": "2024.2.2",
+      "charset-normalizer": "3.3.2",
+      "idna": "3.6",
+      "urllib3": "2.2.1"
+    },
+    "dependency_release_dates": {
+      "pip==25.0.1": "2025-02-09",
+      "pytest==6.2.5": "2021-08-30",
+      "attrs==23.2.0": "2023-12-31",
+      "iniconfig==2.0.0": "2023-01-07",
+      "packaging==23.2": "2023-10-01",
+      "pluggy==1.3.0": "2023-08-26",
+      "py==1.11.0": "2021-11-04",
+      "toml==0.10.2": "2020-11-01",
+      "certifi==2024.2.2": "2024-02-02",
+      "charset-normalizer==3.3.2": "2023-11-01",
+      "idna==3.6": "2023-11-25",
+      "urllib3==2.2.1": "2024-02-18"
+    },
+    "dependency_release_date_source": "https://pypi.org/pypi/{package}/{version}/json, checked 2026-09-21. All files for every pinned release are older than 2026-09-14 and none are yanked.",
+    "dependency_policy": "pytest 6.2.5 satisfies the historical requirements-dev.txt upper bound. urllib3 2.2.1, idna 3.6, and charset-normalizer 3.3.2 match the issue's reported dependency versions. All direct and transitive dependencies needed by the selected module are pinned and installed from wheels with --no-deps. Optional HTTP-server/coverage/SOCKS extras are unnecessary for this module. pip check passes.",
+    "build_requirements": {},
+    "workspace_metadata": "No distribution metadata or build backend is needed. Requests is imported from workspace/src and is never installed into the venv. The setup checks the complete installed distribution inventory and rejects any mismatch on reuse without installing or changing dependencies.",
+    "system_dependencies": [
+      "Python 3.12 with venv",
+      "bash",
+      "GNU realpath",
+      "C.UTF-8 locale",
+      "git and tar for archive preparation",
+      "Linux unshare for validation network isolation",
+      "Node.js for directly exercising the existing harness functions"
+    ],
+    "suite_selection": "The entire upstream adapter test module tests/test_adapters.py, introduced by this upstream fix. This is the standard module directly owning HTTPAdapter.request_url. It contains one genuine upstream regression test. Requests is a large HTTP client with separate integration, utility, and other test modules; those are outside this adapter-module contract. No tests were added, duplicated, or filtered to alter diagnostic length or expected pruning/model success.",
+    "predeclared_exclusions": {
+      "platform": [],
+      "network": [],
+      "rationale": "No exclusions within the selected module. It prepares a Request and calls request_url without sending a request, starting a server, or looking up a hostname. Diagnostics and verification run in a Linux network namespace with no external network. Existing upstream doctest options and warnings are unchanged."
+    },
+    "candidate_selection": {
+      "selection_basis": "Documented non-security defect, exact single-file source fix and real regression in the upstream owning test module, deterministic Linux/Python 3.12 execution without network or external services.",
+      "previous_use_check": "Fetched all origin branches in jev-pruner. git log --all -- evals/historical/requests and git log --all -G 'psf/requests|60389df6|6643|6644' -- evals returned no matches. Existing historical cases are click, flask, pytest, pip, and hatch.",
+      "seriously_attempted_candidates": 1,
+      "failed_candidates": [],
+      "selected": "60389df6d69ce833164696dcf36cbb43336d3426 (issue #6643, PR #6644)",
+      "preflight_only": [
+        {
+          "commit": "3ff3ff21dd45957c9e143cd500291959bb15f690",
+          "reason": "JSONDecodeError pickle round-trip fix examined, but its owning test_requests module also requires local HTTP/TLS servers. Not runtime-attempted; chose a directly scoped, network-free module instead."
+        },
+        {
+          "commit": "b8be93a721792deeadd2f498b8f77cf610e7765f",
+          "reason": "String Content-Length encoding fix examined, but contract varies with urllib3 major version and its tests use the HTTP fixture module. Not runtime-attempted."
+        },
+        {
+          "commit": "555b870eb19d497ddb67042645420083ec8efb02",
+          "reason": "Optional character detector support examined; no regression test diff in this commit. Not runtime-attempted."
+        },
+        {
+          "commit": "5d31ddbf7b3f512dd3c61952d2c16e980a2b7dc1",
+          "reason": "Documentation-only change, no runtime repair or regression. Not runtime-attempted."
+        }
+      ],
+      "shallow_checks": "jev-pruner and requests-upstream each reported false before any history search; no unshallow step was needed. History searches were scoped to evals, source, or tests paths.",
+      "stop_rule": "Stop after two seriously attempted candidates fail; the first runtime-attempted candidate validated, with no failed candidates."
+    },
+    "patch_provenance": {
+      "regression_command": "git diff 7a13c041dbef42f9f3feb14110f02626f6892e9a 60389df6d69ce833164696dcf36cbb43336d3426 -- tests/test_adapters.py",
+      "repair_command": "git diff 7a13c041dbef42f9f3feb14110f02626f6892e9a 60389df6d69ce833164696dcf36cbb43336d3426 -- src/requests/adapters.py",
+      "regression_sha256": "255e96e0099157854a4b86b4c7983b88aea2ec14d56ad63ab8b01d3ca0fbaaea",
+      "repair_sha256": "c22f679e1a9b72e0d66542d6451f58443bcd0ed107e4884bd343980a19900198",
+      "checks": "Patches compare byte-for-byte with upstream git diff. The fix is a single-parent upstream commit and its parent resolves exactly to base_commit. The entire fix changes only these two files: 8 inserted test lines and 3 inserted source lines. Applied regression and repaired source compare byte-for-byte with upstream fix blobs. LICENSE and NOTICE are unmodified upstream files."
+    },
+    "commands": {
+      "context": "Actual paths from this validation. Each pytest process uses cwd equal to its workspace and the case environment, with PYTEST_ADDOPTS='', NO_COLOR=1, and PYTHONDONTWRITEBYTECODE=1 supplied by the unchanged harness. Replace root paths when reproducing.",
+      "archive_base": "git -C /home/ubuntu/repos/requests-upstream archive 7a13c041dbef42f9f3feb14110f02626f6892e9a | tar -xf - -C /home/ubuntu/requests-validation/cache/requests/baseline",
+      "archive_fixed": "git -C /home/ubuntu/repos/requests-upstream archive 7a13c041dbef42f9f3feb14110f02626f6892e9a | tar -xf - -C /home/ubuntu/requests-validation/cache/requests/fixed-check",
+      "regression_in_each_archive": "git apply /home/ubuntu/repos/jev-pruner/evals/historical/requests/regression.patch",
+      "repair_in_fixed_archive_only": "git apply /home/ubuntu/repos/jev-pruner/evals/historical/requests/repair.patch",
+      "initial_setup": "bash /home/ubuntu/repos/jev-pruner/evals/historical/requests/setup.sh /home/ubuntu/requests-validation/cache/requests/baseline /home/ubuntu/requests-validation/cache/requests/venv",
+      "fixed_reuse_setup": "PIP_NO_INDEX=1 PYTHONDONTWRITEBYTECODE=1 bash /home/ubuntu/repos/jev-pruner/evals/historical/requests/setup.sh /home/ubuntu/requests-validation/cache/requests/fixed-check /home/ubuntu/requests-validation/cache/requests/venv",
+      "oracle_reuse_setup": "PIP_NO_INDEX=1 PYTHONDONTWRITEBYTECODE=1 bash /home/ubuntu/repos/jev-pruner/evals/historical/requests/setup.sh /home/ubuntu/requests-validation/cache/requests/oracle /home/ubuntu/requests-validation/cache/requests/venv",
+      "diagnostic_and_verify": "/home/ubuntu/requests-validation/cache/requests/venv/bin/python -m pytest -vv tests/test_adapters.py",
+      "network_isolation_wrapper": "unshare --user --map-current-user --net node /home/ubuntu/requests-validation/validate.mjs",
+      "direct_harness_calls": "Imported cases, diagnostic, testCounts, and grade from the unchanged evals/codex-historical-workloads.mjs. Set cases.requests to this case.json only in validation process memory and JEV_HISTORICAL_CACHE=/home/ubuntu/requests-validation/cache. Called diagnostic('requests', baseline), diagnostic('requests', fixed, false), diagnostic('requests', fixed, true), then wrote fixed_counts to the private cache's validation.json and called grade('requests', fixed). Called diagnostic('requests', baseline, true) again after venv reuse. The external validation script only asserts invariants and records measurements; it is not required by setup or diagnostic_args.",
+      "oracle_contract": "The actual grade function calls prepare to copy the untouched broken baseline into a fresh oracle directory and copies only src/requests/adapters.py from fixed before running verify_args. No model or comparison code is invoked.",
+      "dependency_check": "/home/ubuntu/requests-validation/cache/requests/venv/bin/python -m pip check",
+      "dependency_inventory_before_and_after": "/home/ubuntu/requests-validation/cache/requests/venv/bin/python -m pip freeze --all",
+      "shell_syntax": "bash -n evals/historical/requests/setup.sh",
+      "shell_lint": "/home/ubuntu/requests-tools-venv/bin/shellcheck evals/historical/requests/setup.sh (ShellCheck 0.10.0)",
+      "whitespace_check": "git diff --cached --check -- evals/historical/requests/case.json evals/historical/requests/setup.sh evals/historical/requests/LICENSE evals/historical/requests/NOTICE",
+      "json_syntax": "python3.12 -m json.tool evals/historical/requests/case.json"
+    },
+    "results": {
+      "base_diagnostic": {
+        "exit_code": 1,
+        "passed": 0,
+        "failed": 1,
+        "errors": 0,
+        "skipped": 0,
+        "xfailed": 0,
+        "deselected": 0,
+        "warnings": 18,
+        "output_characters": 4888,
+        "output_bytes": 4888,
+        "wall_seconds": 0.248,
+        "pytest_seconds": 0.02
+      },
+      "fixed_diagnostic": {
+        "exit_code": 0,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "xfailed": 0,
+        "deselected": 0,
+        "warnings": 18,
+        "output_characters": 4125,
+        "output_bytes": 4125,
+        "wall_seconds": 0.232,
+        "pytest_seconds": 0.01
+      },
+      "fixed_verify": {
+        "exit_code": 0,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "xfailed": 0,
+        "deselected": 0,
+        "warnings": 18,
+        "output_characters": 4125,
+        "output_bytes": 4125,
+        "wall_seconds": 0.227,
+        "pytest_seconds": 0.01
+      },
+      "oracle_verify": {
+        "exit_code": 0,
+        "passed": 1,
+        "failed": 0,
+        "errors": 0,
+        "skipped": 0,
+        "xfailed": 0,
+        "deselected": 0,
+        "warnings": 18,
+        "output_characters": 4120,
+        "output_bytes": 4120,
+        "wall_seconds": 0.237,
+        "pytest_seconds": 0.01
+      },
+      "base_after_venv_reuse": {
+        "exit_code": 1,
+        "passed": 0,
+        "failed": 1,
+        "errors": 0,
+        "skipped": 0,
+        "xfailed": 0,
+        "deselected": 0,
+        "warnings": 18,
+        "output_characters": 4888,
+        "output_bytes": 4888,
+        "wall_seconds": 0.246,
+        "pytest_seconds": 0.02
+      }
+    },
+    "measurement": "Counts come from the actual harness testCounts parser. Output length is the unpadded combined stdout/stderr decoded as UTF-8, returned by diagnostic; stderr outside that stream was empty. Wall seconds come from the harness execute function; pytest seconds come from its summary. All runs finished without timeout in under one second. Paths, timings, and warning locations may affect byte lengths on another machine.",
+    "archive_contract": {
+      "fresh_workspaces_without_git": [
+        "baseline",
+        "fixed-check",
+        "oracle"
+      ],
+      "base_and_fixed_separate_git_archives": true,
+      "venv_reused": true,
+      "reuse_setup_offline": true,
+      "fixed_reuse_setup_wall_seconds": 0.173,
+      "oracle_reuse_setup_wall_seconds": 0.176,
+      "site_packages_files_hashed": 770,
+      "site_packages_hashes_unchanged_after_reuse": true,
+      "pip_freeze_unchanged_after_reuse": true,
+      "source_import_checks": [
+        "requests.__file__ == <workspace>/src/requests/__init__.py",
+        "requests.adapters.__file__ == <workspace>/src/requests/adapters.py"
+      ],
+      "source_import_checks_in_all_three_workspaces": true,
+      "baseline_files_hashed": 104,
+      "oracle_immutable_files_hashed": 103,
+      "all_preexisting_file_hashes_unchanged_after_tests": true,
+      "only_editable_source_differs_in_fixed_and_oracle": true,
+      "oracle_copied_source": "src/requests/adapters.py",
+      "actual_harness_grade_passed": true,
+      "all_tests_network_isolated": true,
+      "network_isolation": "The entire validation Node process, all diagnostic and grading Python children, and reuse setups ran inside unshare --user --map-current-user --net. /proc/net/route contained only its header. No network service or DNS is needed.",
+      "repair_patch_present_in_workspaces": false,
+      "integrity_details": "SHA-256 manifests cover all source, tests, configuration, documentation, and packaged fixture files in each archive. Only newly generated __pycache__ and .pytest_cache directories are omitted. Baseline remains broken after the same venv is used by fixed and oracle, detecting accidental source binding."
+    },
+    "known_gaps": [
+      "This case validates the complete adapter test module at the fix commit: one upstream regression. It does not run Requests' separate HTTP/TLS integration suite or other modules and does not claim their coverage.",
+      "Historical pytest 6.2.5 emits 18 Python 3.12 AST deprecation warnings in both states. The historical pytest requirement and all warning behavior are preserved; no warning suppression, config override, or filters were added.",
+      "git diff --check flags the two single-space blank context lines in the embedded upstream repair.patch (lines 7 and 14). These are required unified-diff context, retained byte-for-byte. All non-patch fixture files pass whitespace checks.",
+      "Initial setup downloads pinned PyPI wheels. Repeated setup and all diagnostic/grading runs were validated offline.",
+      "Shared case registration was intentionally not changed; the parent evaluator must register requests before running its authorized trials."
+    ],
+    "restrictions": [
+      "No Codex, Jev, model comparison, or trial execution.",
+      "No security defect, artificial injection, credential handling, or exploit.",
+      "No changed tests except the exact upstream regression diff; no configuration or warning changes.",
+      "No repair patch or repaired source in the broken baseline.",
+      "No editable installation or installed Requests duplicate; all imports resolve to each workspace.",
+      "Only evals/historical/requests is committed; no shared registration or harness change."
+    ]
+  }
+}
