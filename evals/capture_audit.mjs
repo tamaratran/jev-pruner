@@ -152,7 +152,9 @@ export async function auditTrial(root, planned, protocol) {
     const contexts = native.filter(event => event.type === 'turn_context');
     assert(contexts.length && contexts.every(event => event.payload.model === 'gpt-5.5'));
     const payloads = native.filter(event => event.type === 'response_item').map(event => event.payload);
-    assertNoEvidenceLeak(JSON.stringify(payloads), ['/opt/jev-eval/evidence', '/opt/jev-eval/private']);
+    const visible = JSON.stringify(payloads);
+    assertNoEvidenceLeak(visible, ['/opt/jev-eval/evidence', '/opt/jev-eval/private']);
+    assert(!visible.includes('JEV_CAPTURE_ONLY_V1'), 'Capture metadata leaked into context');
     row.evidence_isolated = true;
     row.native = nativeOutputs(native);
     if (!files.length && row.native.shell.some(call => call.wrapped)) row.issues.push('Missing wrapper evidence');
