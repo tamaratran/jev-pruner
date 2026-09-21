@@ -27,6 +27,42 @@ Validation starts with the existing fixed three-task pilot: `build-cython-ext`,
 `chess-best-move`, and `configure-git-webserver`. Official oracle outcomes and
 integration failures are retained separately from measured model trials.
 
+Freeze and run the pilot from a clean, built checkout:
+
+```sh
+python -m evals.codex_bench plan "$HOME/tb-codex-pilot" \
+  --benchmark "$HOME/terminal-bench-2" --phase pilot --concurrency 3
+JEV_CODEX_AUTH_FILE="$HOME/.codex/auth.json" \
+  python -m evals.codex_bench run "$HOME/tb-codex-pilot" --harbor "$HARBOR_BIN"
+node evals/codex_bench_audit.mjs "$HOME/tb-codex-pilot"
+```
+
+After validation, use a fresh directory with `--phase comparison --concurrency 16`.
+This preselects 32 distinct upstream tasks by SHA256 of a fixed seed and task name,
+excluding the three pilot tasks and nine documented security-sensitive tasks.
+The protocol retains the full 89-task inventory and every selection/exclusion.
+There is one control/plugin pair per selected task: 64 measured trials. This is
+a Terminal-Bench subset, not a complete 89-task leaderboard result or a repetition
+study. Selection is independent of observed reward and pruning activity.
+
+Pairs run sequentially with alternating arm order; separate pairs run in parallel.
+Task limits and verifiers remain upstream defaults. Harbor retries are disabled.
+The launcher stops queued work on account/authentication errors and refuses to
+restart an already-started run. Preserve blocked rows; any supplemental run must
+have a separate protocol and directory.
+
+The audit reconciles CLI totals with the native transcript, checks the model and
+dataset revision, verifies observer isolation, and matches wrapped stdout against
+native tool outputs (including asynchronous polls). Host-truncated deliveries
+receive no pruning credit. The unpruned preview estimate omits stderr, making it
+a conservative lower bound, while delivered size counts stderr and earlier polls.
+Explicit archive-path tool calls are counted as recovery; indirect aliases cannot
+be reliably identified. Raw stdout reduction and model-visible reduction are
+separate metrics. Jev usage from invalid trials remains in accounting diagnostics.
+Primary cost prices every input token at $5/M, output at $30/M and Jev input at
+$0.042/M; observed cached input at $0.50/M is secondary. These are comparison
+estimates, not subscription charges or Modal infrastructure bills.
+
 ## Codex paired log-reading comparison
 
 With Codex CLI 0.152.1 authenticated through ChatGPT, the installed Codex plugin

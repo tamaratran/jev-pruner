@@ -177,6 +177,20 @@ def access_blocked(job: Path) -> bool:
     return False
 
 
+def blocking_failure(job: Path) -> str | None:
+    if access_blocked(job):
+        return "Codex account or authentication error"
+    results = list(job.glob("*/result.json"))
+    if len(results) != 1:
+        return "Missing or ambiguous Harbor trial result"
+    trial = json.loads(results[0].read_text())
+    if trial.get("exception_info") and not (trial.get("agent_execution") or {}).get(
+        "started_at"
+    ):
+        return "Environment or agent setup failed before inference"
+    return None
+
+
 def run(root: Path, harbor: str) -> None:
     protocol = json.loads((root / "protocol.json").read_text())
     rows = json.loads((root / "progress.json").read_text())
@@ -203,7 +217,7 @@ def run(root: Path, harbor: str) -> None:
         for row in [entry for entry in rows if entry["task"] == task]:
             with lock:
                 if stop.is_set():
-                    row["state"] = "access_blocked"
+                    row["state"] = "blocked"
                     save(root / "progress.json", rows)
                     continue
                 row["state"] = "running"
@@ -243,7 +257,9 @@ def run(root: Path, harbor: str) -> None:
                     )
                 row["returncode"] = result.returncode
                 row["state"] = "finished"
-                if access_blocked(root / "jobs" / row["job_name"]):
+                reason = blocking_failure(root / "jobs" / row["job_name"])
+                if reason:
+                    row["blocker"] = reason
                     stop.set()
             except OSError as error:
                 row["state"] = "launcher_error"

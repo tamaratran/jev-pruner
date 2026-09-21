@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from evals.codex_bench import access_blocked
 from evals.harbor_codex import INSTRUCTIONS, MODEL, VERSION, JevCodex
 
 
@@ -32,3 +33,19 @@ class CodexAdapterTests(unittest.TestCase):
                 )
                 with self.assertRaises(ValueError):
                     agent._resolve_auth_json_path()
+
+    def test_account_error_detection_ignores_tool_output(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            agent = root / "task__trial" / "agent"
+            agent.mkdir(parents=True)
+            stream = agent / "codex.txt"
+            stream.write_text(
+                json.dumps({"type": "item.completed", "text": "rate limit 429"}) + "\n"
+            )
+            self.assertFalse(access_blocked(root))
+            stream.write_text(
+                json.dumps({"type": "turn.failed", "error": {"message": "usage limit"}})
+                + "\n"
+            )
+            self.assertTrue(access_blocked(root))
