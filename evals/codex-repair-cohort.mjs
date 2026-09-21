@@ -8,6 +8,7 @@ import { contextPath } from '../dist/codex/context.js';
 import { estimateTokens } from '../dist/jev.js';
 import { commandOutput } from '../tests/fixtures/codex-transcript.mjs';
 import { execute, quote, repo } from './codex-repair-workloads.mjs';
+import { assertNoEvidenceLeak, assertNoEvidenceStateLeak, evidenceMarker, externalEvidenceDirectory } from './observer/evidence-isolation.mjs';
 
 const historical = process.env.JEV_EVAL_SUITE === 'historical';
 const historicalSource = process.env.JEV_HISTORICAL_SOURCE_ROOT ?? (historical ? repo : undefined);
@@ -41,6 +42,7 @@ const model = 'gpt-5.5';
 const frozenFiles = [
   'evals/codex-repair-cohort.mjs', 'evals/codex-repair-workloads.mjs',
   'evals/observer/codex-diagnostic.mjs', 'tests/fixtures/codex-observer.mjs',
+  'evals/observer/evidence-isolation.mjs',
   'tests/fixtures/codex-transcript.mjs', 'codex/skills/jev-pruner/SKILL.md',
   ...(historical && !process.env.JEV_HISTORICAL_SOURCE_ROOT ? [
     'evals/codex-historical-workloads.mjs',
@@ -75,6 +77,7 @@ if (phase === 'preflight') {
     created: new Date().toISOString(), revision: (await execute('git rev-parse HEAD', repo)).stdout.trim(),
     hashes, model, version: 'codex-cli 0.152.1', pairs,
     historicalSource, historicalHashes, historicalSuite: historical, outputBudget, preserveExit,
+    evidence_layout: 'observer/{raw,jev} outside workspace; marker/path leakage invalidates instrumentation',
     tool_versions: (await execute('node --version && npm --version && python3 --version && python3 -m pytest --version && node node_modules/typescript/bin/tsc --version', repo)).stdout.trim(),
     scope: historical ? `Historical Python repository bugs: ${names.join(', ')}. Upstream parent + original regression tests; no generated log amplification.`
       : historicalSource ? `Targeted repeat of historical ${names.join(', ')} defects; previously seen tasks, not unseen validation.`
@@ -123,8 +126,8 @@ async function tree(directory) {
   const walk = async (path, prefix = '') => {
     for (const entry of await readdir(path, { withFileTypes: true })) {
       if ((historicalSource
-        ? ['captures', '.eval-raw', '.jev-pruner', '__pycache__', '.pytest_cache']
-        : ['node_modules', 'dist', 'captures', '.eval-raw', '.jev-pruner', '.npm-cache', '__pycache__', '.pytest_cache'])
+        ? ['.jev-pruner', '__pycache__', '.pytest_cache']
+        : ['node_modules', 'dist', '.jev-pruner', '.npm-cache', '__pycache__', '.pytest_cache'])
         .includes(entry.name)) continue;
       const relative = prefix + entry.name;
       if (entry.isDirectory()) await walk(join(path, entry.name), relative + '/');
@@ -149,6 +152,9 @@ async function trial(pair, arm) {
   await mkdir(evidence, { mode: 0o700 });
   const cwd = join(evidence, 'workspace');
   await prepare(pair.name, cwd);
+  const observerDirectory = await externalEvidenceDirectory(join(evidence, 'observer'), cwd);
+  const rawDirectory = await externalEvidenceDirectory(join(observerDirectory, 'raw'), cwd);
+  const captureDirectory = await externalEvidenceDirectory(join(observerDirectory, 'jev'), cwd);
   const initial = await tree(cwd);
   if (historicalSource) assert.deepEqual(initial, protocol.baseline_hashes[pair.name], 'Baseline changed');
   await save(join(evidence, 'fixture-hashes.json'), initial);
@@ -164,17 +170,17 @@ Do not inspect or modify the collector, harness, captures, environment variables
 Return only a JSON object with outcome ("fixed" or "not_fixed"), cause, and change. Do not delegate or use network resources.`;
   await writeFile(join(evidence, 'prompt.txt'), prompt);
   const args = [
-    'exec', '--model', model, '--sandbox', 'workspace-write',
+    'exec', '--model', model, '--sandbox', 'workspace-write', '--add-dir', observerDirectory,
     '-c', 'forced_login_method="chatgpt"', '-c', 'sandbox_workspace_write.network_access=true',
     '-c', 'model_reasoning_effort="low"', '-c', `tool_output_token_limit=${outputBudget}`,
     '--dangerously-bypass-hook-trust', '--skip-git-repo-check', '--json', prompt,
   ];
   const result = await execute(`codex ${args.map(quote).join(' ')}`, cwd, {
     ...process.env, JEV_EVAL_ARM: arm, JEV_CODEX_PLUGIN_ROOT: plugin,
-    JEV_EVAL_CAPTURE_DIR: join(cwd, '.eval-raw'),
+    JEV_EVAL_CAPTURE_DIR: rawDirectory, JEV_OBSERVER_CAPTURE_DIR: captureDirectory,
   }, 600_000);
   await save(join(evidence, 'execution.json'), result);
-  const row = { pair: pair.id, workload: pair.name, arm, seconds: result.seconds };
+  const row = { pair: pair.id, workload: pair.name, arm, seconds: result.seconds, evidence_isolation_pass: false };
   const after = await tree(cwd);
   await save(join(evidence, 'final-file-hashes.json'), after);
   row.unexpected_changes = [...new Set([...Object.keys(initial), ...Object.keys(after)])]
@@ -215,10 +221,15 @@ Return only a JSON object with outcome ("fixed" or "not_fixed"), cause, and chan
     row.skill_reads = row.commands.filter(cmd => cmd.includes(join(skill, 'SKILL.md'))).length;
     assert.equal(row.skill_reads, 1, 'Unequal skill loading');
     row.archive_path_commands = row.commands.filter(cmd => cmd.includes('.jev-pruner'));
+    assert.equal((await list(join(cwd, 'captures'))).length, 0, 'Legacy captures inside workspace');
+    assert.equal((await list(join(cwd, '.eval-raw'))).length, 0, 'Raw diagnostics inside workspace');
     const raw = [];
-    for (const file of await list(join(cwd, '.eval-raw'))) raw.push(await read(join(cwd, '.eval-raw', file)));
+    for (const file of await list(rawDirectory)) raw.push(await read(join(rawDirectory, file)));
+    assert(raw.every(capture => capture.evidenceMarker === evidenceMarker), 'Missing evidence marker');
     const outputs = responses.filter(entry => /^(function_call_output|custom_tool_call_output)$/.test(entry.type))
       .map(commandOutput).filter(text => text !== undefined);
+    for (const text of outputs) assertNoEvidenceLeak(text, [observerDirectory]);
+    row.evidence_isolation_pass = true;
     const visible = outputs.filter(text => /(?:^|\n)Exit status: \d+\n/.test(text));
     assert(raw.length > 0, 'Diagnostic never ran');
     assert.equal(visible.length, raw.length, 'Missing or split diagnostic output');
@@ -272,14 +283,22 @@ Return only a JSON object with outcome ("fixed" or "not_fixed"), cause, and chan
     row.audit_pass = false;
     row.error = String(error);
   }
-  const captures = await list(join(cwd, 'captures'));
+  const captures = await list(captureDirectory);
   row.jev_requests = captures.length;
   row.jev_input_tokens = 0;
   row.jev_statuses = [];
   row.jev_usage_complete = true;
   row.jev_summed_seconds = 0;
   for (const file of captures) {
-    const capture = await read(join(cwd, 'captures', file));
+    const capture = await read(join(captureDirectory, file));
+    try {
+      assert.equal(capture.evidenceMarker, evidenceMarker);
+      assertNoEvidenceStateLeak(capture.request.state, [observerDirectory]);
+    } catch (error) {
+      row.audit_pass = false;
+      row.evidence_isolation_pass = false;
+      row.error = [row.error, String(error)].filter(Boolean).join('; ');
+    }
     row.jev_statuses.push(capture.response?.status ?? null);
     row.jev_summed_seconds += capture.durationMs / 1000;
     const usage = capture.response?.body ? JSON.parse(capture.response.body).usage : undefined;
