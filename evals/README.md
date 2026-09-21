@@ -1,5 +1,32 @@
 # Eval suite
 
+## Codex on Terminal-Bench
+
+`evals.harbor_codex:JevCodex` subclasses Harbor's Codex agent. Harbor retains the
+upstream task instruction, environment, timeout and verifier. Both arms receive
+the same developer instructions to use an instrumented command wrapper for
+verbose, noninteractive commands. This is an opt-in wrapper integration, not
+automatic interception of every shell tool call.
+
+The adapter pins Codex 0.152.1 and `openai/gpt-5.5`. Set `JEV_EVAL_ARM` to `control`
+or `plugin`, `JEV_CODEX_AUTH_FILE` to the existing private ChatGPT `auth.json`,
+and provide `TYPESAFE_API_KEY` through the environment. No API-key fallback is
+allowed. Only the private login file is copied; existing skills, settings and
+transcripts are not imported. Authentication files and the Jev key are kept
+outside downloaded evidence. Do not publish the login directory.
+
+The wrapper runs the unchanged built production code. Control omits the Jev key.
+An observer records raw stdout, delivery, exit status and Jev usage outside task
+workspaces; recovery archives retain the production location. Native Codex
+transcripts supply pruning context without installing a treatment-only skill.
+Host truncation must be audited separately before crediting visible reductions.
+Task failures and unchanged outputs remain in overall benchmark results. Only
+instrumented pairs with actual delivered reductions qualify for effectiveness.
+
+Validation starts with the existing fixed three-task pilot: `build-cython-ext`,
+`chess-best-move`, and `configure-git-webserver`. Official oracle outcomes and
+integration failures are retained separately from measured model trials.
+
 ## Codex paired log-reading comparison
 
 With Codex CLI 0.152.1 authenticated through ChatGPT, the installed Codex plugin
