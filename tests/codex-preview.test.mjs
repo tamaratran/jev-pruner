@@ -1,6 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { auditHostPreview, hostPreviews } from '../evals/codex-preview.mjs';
 
+it('audits the 1 MiB collection cap before the token preview', () => {
+  const raw = 'A'.repeat(600_000) + 'B'.repeat(1_200_000) + 'C'.repeat(600_000);
+  const visible = 'Warning: truncated output (original token count: 600000)\n' +
+    '... 1351424 bytes omitted ...\n\n' +
+    'A'.repeat(200_000) + '…162152 tokens truncated…' + 'C'.repeat(200_000);
+  expect(auditHostPreview(visible, raw, 100_000)).toBe(true);
+  expect(() => auditHostPreview(visible.replace('1351424', '1351423'), raw, 100_000)).toThrow();
+  const [largeBudget] = hostPreviews(raw, 400_000);
+  expect(largeBudget).toBe('A'.repeat(524_288) + '\n... 1351424 bytes omitted ...\n' +
+    'C'.repeat(524_288));
+});
+
 describe('Codex host preview accounting', () => {
   it('preserves small outputs and rejects unmatched output', () => {
     expect(auditHostPreview('ok\n', 'ok\n', 100)).toBe(false);
