@@ -893,7 +893,8 @@ protocol hashes task inputs and scorer files. Started attempts are never
 silently retried; blocked and incomplete rows remain in the audit. Do not
 interpret absent captures as small outputs or failed grader calls as wrong
 answers. Each grading call writes a started record first and is not repeated
-on rerun.
+on rerun. Use `--family dab` to score data tasks without an OpenAI API key;
+API failures leave PDF scores pending rather than counting them as wrong.
 
 ## Checks
 

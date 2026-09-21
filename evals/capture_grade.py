@@ -14,6 +14,7 @@ from openai import APIStatusError, OpenAI
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("root", type=Path)
+    parser.add_argument("--family", choices=("pdf", "dab"))
     args = parser.parse_args()
     root: Path = args.root.resolve()
     protocol = json.loads((root / "protocol.json").read_text())
@@ -34,10 +35,10 @@ def main() -> None:
     selection = json.loads((root / "selection.json").read_text())
     output = root / "grading"
     output.mkdir(exist_ok=True)
-    client = OpenAI(max_retries=0, timeout=60)
+    client = OpenAI(max_retries=0, timeout=60) if args.family != "dab" else None
     prompt = (root / "sources" / "prompt_for_answer_extraction.md").read_text()
     for row in audit["rows"]:
-        if row["family"] == "compile":
+        if row["family"] == "compile" or (args.family and row["family"] != args.family):
             continue
         destination = output / f"{row['task']}.json"
         if destination.exists() or not row["final_answer"]:
@@ -62,6 +63,7 @@ def main() -> None:
                 )
                 result["method"] = "DABstep official question_scorer"
             else:
+                assert client is not None
                 sample = next(
                     item
                     for item in selection["pdf"]
@@ -105,6 +107,8 @@ def main() -> None:
             result["error"] = type(error).__name__
             if isinstance(error, APIStatusError):
                 result["http_status"] = error.status_code
+                result["api_code"] = error.code
+                result["api_type"] = error.type
         destination.write_text(json.dumps(result, indent=2) + "\n")
         print(row["task"], result["status"], result["score"])
 
