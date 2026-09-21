@@ -1,0 +1,652 @@
+{
+  "name": "rich",
+  "repository": "https://github.com/Textualize/rich",
+  "base_commit": "4d6d631a3d2deddf8405522d4b8c976a6d35726c",
+  "fix_commit": "95fe8ff59249d9ac0534a82af7c746826a5999f4",
+  "issue_url": "https://github.com/Textualize/rich/issues/3881",
+  "description": "With Console(markup=False), invalid confirmation input displays the internal [prompt.invalid] style tag instead of a clean validation message. Upstream commit authored 2025-11-13 fixes this documented non-security defect and adds test_prompt_confirm_markup; PR #3882 was merged 2026-01-23. The base is the fix commit's immediate parent.",
+  "question": "When a confirmation prompt uses a console with markup disabled, invalid input must display its normal readable validation message without exposing internal style tags. Preserve the prompt, default choice, retry behavior, and accepted confirmation result.",
+  "editable": [
+    "rich/prompt.py"
+  ],
+  "evidence": [
+    "tests/test_prompt.py::test_prompt_confirm_markup FAILED",
+    "E         + continue [y/n] (y): [prompt.invalid]Please enter Y or N",
+    "tests/test_prompt.py:126: AssertionError",
+    "1 failed, 127 passed"
+  ],
+  "diagnostic_args": [
+    "-m",
+    "pytest",
+    "-vv",
+    "tests/test_prompt.py",
+    "tests/test_console.py",
+    "tests/test_markup.py"
+  ],
+  "verify_args": [
+    "-m",
+    "pytest",
+    "-vv",
+    "tests/test_prompt.py",
+    "tests/test_console.py",
+    "tests/test_markup.py"
+  ],
+  "environment": {
+    "PYTHONPATH": "{workspace}",
+    "PATH": "{workspace}/.historical-venv/bin:/usr/bin:/bin",
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "LC_ALL": "C.UTF-8"
+  },
+  "license": "MIT",
+  "validation": {
+    "status": "validated",
+    "upstream_pr": "https://github.com/Textualize/rich/pull/3882",
+    "suite_selection": "Selected before testing: complete upstream prompt, console, and markup test modules. Rich has 62 test modules; these three cover the prompt API and the console/markup rendering boundary directly involved in the defect. No node filtering, added repetition, output-based selection, or configuration changes.",
+    "platform_network_exclusions_declared_before_testing": [],
+    "restrictions": [
+      "Linux/Python 3.12; exactly one genuine non-security upstream bug.",
+      "No external network during diagnostics or grading; initial dependency provisioning alone used PyPI.",
+      "All original tests/configuration preserved except the genuine upstream regression diff.",
+      "Repair patch and fixed source excluded from model-visible broken baseline.",
+      "Only rich/prompt.py is editable and copied by the oracle.",
+      "No Codex, Jev, model comparison, production change, shared registration edit, or PR.",
+      "Only fixture package files under evals/historical/rich are committed; no logs, private data, environments, or source archives."
+    ],
+    "candidate_selection": {
+      "seriously_attempted_candidates": 1,
+      "attempts": [
+        {
+          "fix_commit": "95fe8ff59249d9ac0534a82af7c746826a5999f4",
+          "issue_url": "https://github.com/Textualize/rich/issues/3881",
+          "status": "validated",
+          "reason": "Documented platform-independent prompt rendering defect, one source file, genuine upstream regression, direct functional contract.",
+          "observed_broken": "tests/test_prompt.py::test_prompt_confirm_markup failed with literal [prompt.invalid] style tags; 127 other tests passed.",
+          "observed_fixed": "128 passed with source repair; stable across direct diagnostic, direct verify, direct editable-only oracle, exact harness diagnostic, exact harness verify, and exact harness grade.",
+          "fixture_setup_corrections_before_testing": [
+            "Initial dependency-version assertion mistakenly normalized version punctuation; corrected name-only normalization before any pytest run.",
+            "An initial direct python executable symlink lost venv discovery; replaced it with a symlink to the entire venv and verified both direct and PATH-resolved interpreters before any pytest run."
+          ]
+        }
+      ],
+      "screening_only": "Also inspected Segment.split_cells merge 0f2f51b872d14588de3a65968f5cdde6fb5694a3 without preparing or running it; selected the prompt defect for its simpler standalone documented contract.",
+      "unused_check": "After git fetch origin, git log --all -- evals/historical/rich returned no commits. Scoped git log --all -G searches under evals for Textualize/rich, rich-upstream, name rich, issue 3881/3882, and both chosen SHAs returned no prior task. Existing rich references in Hatch were dependency pins only.",
+      "shallow_status": "Both handoff and upstream clones returned false from git rev-parse --is-shallow-repository before history inspection.",
+      "failed_candidates": 0
+    },
+    "date": "2026-09-21",
+    "platform": "Linux-6.8.0-1061-aws-x86_64-with-glibc2.35",
+    "python": "3.12.13",
+    "python_runtime": "3.12.13 (main, Aug 12 2026, 22:53:02) [GCC 11.4.0]",
+    "dependencies": {
+      "iniconfig": "2.0.0",
+      "markdown-it-py": "3.0.0",
+      "mdurl": "0.1.2",
+      "packaging": "24.2",
+      "pip": "25.0.1",
+      "pluggy": "1.5.0",
+      "Pygments": "2.19.1",
+      "pytest": "7.4.4"
+    },
+    "dependency_release_dates": {
+      "pip==25.0.1": "2025-02-09T17:14:01.463742Z",
+      "pytest==7.4.4": "2023-12-31T12:00:13.963462Z",
+      "iniconfig==2.0.0": "2023-01-07T11:08:09.864484Z",
+      "packaging==24.2": "2024-11-08T09:47:44.722583Z",
+      "pluggy==1.5.0": "2024-04-20T21:34:40.434532Z",
+      "Pygments==2.19.1": "2025-01-06T17:26:25.553040Z",
+      "markdown-it-py==3.0.0": "2023-06-03T06:41:11.019475Z",
+      "mdurl==0.1.2": "2022-08-14T12:40:09.779676Z"
+    },
+    "dependency_release_date_source": "https://pypi.org/pypi/{package}/{version}/json; earliest upload_time_iso_8601 in urls, checked 2026-09-21; every pin predates 2026-09-14.",
+    "build_requirements": {},
+    "workspace_metadata": "No Rich distribution or package metadata is needed: imports resolve directly from PYTHONPATH={workspace}. No wheel, editable install, or build backend is installed. Setup creates .historical-venv, a symlink to the shared venv, so the upstream console test's literal `python -m rich` subprocess uses the same interpreter through the declared PATH. The link targets the venv, never a source workspace.",
+    "system_dependencies": [
+      "Linux; C.UTF-8 locale",
+      "Python 3.12 with venv",
+      "bash, git, tar, GNU coreutils (realpath, ln, head), which",
+      "util-linux unshare for validation-only network isolation"
+    ],
+    "regression_node": "tests/test_prompt.py::test_prompt_confirm_markup",
+    "collected_tests": 128,
+    "config": "Original pyproject.toml and tests/pytest.ini preserved byte-for-byte. Pytest reports rootdir=<workspace>/tests and configfile=pytest.ini, using its normal discovery rules for these module arguments. No warning overrides or test filters. Upstream autouse reset_color_envvars fixture naturally clears NO_COLOR/FORCE_COLOR without any fixture edits.",
+    "patch_provenance": {
+      "regression_command": "git diff 4d6d631a3d2deddf8405522d4b8c976a6d35726c 95fe8ff59249d9ac0534a82af7c746826a5999f4 -- tests/test_prompt.py",
+      "repair_command": "git diff 4d6d631a3d2deddf8405522d4b8c976a6d35726c 95fe8ff59249d9ac0534a82af7c746826a5999f4 -- rich/prompt.py",
+      "regression_sha256": "ecc9b3387685d99f71afe3c3f6394342220928a129409092858c83e82da406e1",
+      "repair_sha256": "6e0ec5ecedca97a064e12e1a6893cb3dd7bc13ef9ab9fa8ec4aff2264ed22a2f",
+      "license_command": "git show 4d6d631a3d2deddf8405522d4b8c976a6d35726c:LICENSE",
+      "license_sha256": "deed7c17a4318158190a3ea239cc879a5a50271cebb98ae7025f48fbe58dca15",
+      "checks": "Patch files compare byte-for-byte with the complete upstream test-only/source-only diffs. Both apply cleanly in regression-then-repair order. The fixed source and regression test files match the upstream fix blobs exactly. The commit changes only these two files.",
+      "immediate_parent_command": "git rev-parse 95fe8ff59249d9ac0534a82af7c746826a5999f4^",
+      "immediate_parent_observed": "4d6d631a3d2deddf8405522d4b8c976a6d35726c",
+      "fix_authored_at": "2025-11-13T09:06:57+02:00",
+      "pr_merged_at": "2026-01-23T11:48:30Z"
+    },
+    "commands": {
+      "base_archive": {
+        "cwd": "/home/ubuntu/rich-validation/final",
+        "argv": [
+          "bash",
+          "-o",
+          "pipefail",
+          "-c",
+          "git -C /home/ubuntu/repos/rich-upstream archive 4d6d631a3d2deddf8405522d4b8c976a6d35726c | tar -xf - -C /home/ubuntu/rich-validation/final/base"
+        ]
+      },
+      "base_regression_patch": {
+        "cwd": "/home/ubuntu/rich-validation/final/base",
+        "argv": [
+          "git",
+          "apply",
+          "/home/ubuntu/repos/jev-pruner/evals/historical/rich/regression.patch"
+        ]
+      },
+      "base_setup": {
+        "cwd": "/home/ubuntu/rich-validation/final",
+        "argv": [
+          "bash",
+          "/home/ubuntu/repos/jev-pruner/evals/historical/rich/setup.sh",
+          "/home/ubuntu/rich-validation/final/base",
+          "/home/ubuntu/rich-validation/final/venv"
+        ]
+      },
+      "fixed_archive": {
+        "cwd": "/home/ubuntu/rich-validation/final",
+        "argv": [
+          "bash",
+          "-o",
+          "pipefail",
+          "-c",
+          "git -C /home/ubuntu/repos/rich-upstream archive 4d6d631a3d2deddf8405522d4b8c976a6d35726c | tar -xf - -C /home/ubuntu/rich-validation/final/fixed"
+        ]
+      },
+      "fixed_regression_patch": {
+        "cwd": "/home/ubuntu/rich-validation/final/fixed",
+        "argv": [
+          "git",
+          "apply",
+          "/home/ubuntu/repos/jev-pruner/evals/historical/rich/regression.patch"
+        ]
+      },
+      "fixed_setup_same_venv": {
+        "cwd": "/home/ubuntu/rich-validation/final",
+        "argv": [
+          "unshare",
+          "--user",
+          "--map-current-user",
+          "--net",
+          "bash",
+          "/home/ubuntu/repos/jev-pruner/evals/historical/rich/setup.sh",
+          "/home/ubuntu/rich-validation/final/fixed",
+          "/home/ubuntu/rich-validation/final/venv"
+        ]
+      },
+      "fixed_repair_patch": {
+        "cwd": "/home/ubuntu/rich-validation/final/fixed",
+        "argv": [
+          "git",
+          "apply",
+          "/home/ubuntu/repos/jev-pruner/evals/historical/rich/repair.patch"
+        ]
+      },
+      "oracle_archive": {
+        "cwd": "/home/ubuntu/rich-validation/final",
+        "argv": [
+          "bash",
+          "-o",
+          "pipefail",
+          "-c",
+          "git -C /home/ubuntu/repos/rich-upstream archive 4d6d631a3d2deddf8405522d4b8c976a6d35726c | tar -xf - -C /home/ubuntu/rich-validation/final/oracle"
+        ]
+      },
+      "oracle_regression_patch": {
+        "cwd": "/home/ubuntu/rich-validation/final/oracle",
+        "argv": [
+          "git",
+          "apply",
+          "/home/ubuntu/repos/jev-pruner/evals/historical/rich/regression.patch"
+        ]
+      },
+      "oracle_setup_same_venv": {
+        "cwd": "/home/ubuntu/rich-validation/final",
+        "argv": [
+          "unshare",
+          "--user",
+          "--map-current-user",
+          "--net",
+          "bash",
+          "/home/ubuntu/repos/jev-pruner/evals/historical/rich/setup.sh",
+          "/home/ubuntu/rich-validation/final/oracle",
+          "/home/ubuntu/rich-validation/final/venv"
+        ]
+      },
+      "oracle_source_copy": {
+        "operation": "shutil.copyfile",
+        "paths": [
+          {
+            "source": "/home/ubuntu/rich-validation/final/fixed/rich/prompt.py",
+            "destination": "/home/ubuntu/rich-validation/final/oracle/rich/prompt.py"
+          }
+        ]
+      },
+      "base_diagnostic": {
+        "cwd": "/home/ubuntu/rich-validation/final/base",
+        "argv": [
+          "unshare",
+          "--user",
+          "--map-current-user",
+          "--net",
+          "/home/ubuntu/rich-validation/final/venv/bin/python",
+          "-m",
+          "pytest",
+          "-vv",
+          "tests/test_prompt.py",
+          "tests/test_console.py",
+          "tests/test_markup.py"
+        ]
+      },
+      "fixed_diagnostic": {
+        "cwd": "/home/ubuntu/rich-validation/final/fixed",
+        "argv": [
+          "unshare",
+          "--user",
+          "--map-current-user",
+          "--net",
+          "/home/ubuntu/rich-validation/final/venv/bin/python",
+          "-m",
+          "pytest",
+          "-vv",
+          "tests/test_prompt.py",
+          "tests/test_console.py",
+          "tests/test_markup.py"
+        ]
+      },
+      "fixed_verify": {
+        "cwd": "/home/ubuntu/rich-validation/final/fixed",
+        "argv": [
+          "unshare",
+          "--user",
+          "--map-current-user",
+          "--net",
+          "/home/ubuntu/rich-validation/final/venv/bin/python",
+          "-m",
+          "pytest",
+          "-vv",
+          "tests/test_prompt.py",
+          "tests/test_console.py",
+          "tests/test_markup.py"
+        ]
+      },
+      "oracle_verify": {
+        "cwd": "/home/ubuntu/rich-validation/final/oracle",
+        "argv": [
+          "unshare",
+          "--user",
+          "--map-current-user",
+          "--net",
+          "/home/ubuntu/rich-validation/final/venv/bin/python",
+          "-m",
+          "pytest",
+          "-vv",
+          "tests/test_prompt.py",
+          "tests/test_console.py",
+          "tests/test_markup.py"
+        ]
+      },
+      "pip_check": {
+        "cwd": "/home/ubuntu/rich-validation/final",
+        "argv": [
+          "unshare",
+          "--user",
+          "--map-current-user",
+          "--net",
+          "/home/ubuntu/rich-validation/final/venv/bin/python",
+          "-m",
+          "pip",
+          "check"
+        ]
+      },
+      "pip_freeze": {
+        "cwd": "/home/ubuntu/rich-validation/final",
+        "argv": [
+          "unshare",
+          "--user",
+          "--map-current-user",
+          "--net",
+          "/home/ubuntu/rich-validation/final/venv/bin/python",
+          "-m",
+          "pip",
+          "freeze",
+          "--all"
+        ]
+      },
+      "shell_syntax": {
+        "cwd": "/home/ubuntu/repos/jev-pruner",
+        "argv": [
+          "bash",
+          "-n",
+          "evals/historical/rich/setup.sh"
+        ]
+      },
+      "shell_lint": {
+        "cwd": "/home/ubuntu/repos/jev-pruner",
+        "argv": [
+          "/home/ubuntu/rich-tools-venv/bin/shellcheck",
+          "evals/historical/rich/setup.sh"
+        ]
+      },
+      "json_syntax": {
+        "cwd": "/home/ubuntu/repos/jev-pruner",
+        "argv": [
+          "python3.12",
+          "-m",
+          "json.tool",
+          "evals/historical/rich/case.json"
+        ]
+      }
+    },
+    "results": {
+      "base_setup": {
+        "exit_code": 0,
+        "wall_seconds": 3.72326,
+        "output_characters": 1613,
+        "output_bytes": 1613
+      },
+      "fixed_setup_same_venv": {
+        "exit_code": 0,
+        "wall_seconds": 0.202318,
+        "output_characters": 273,
+        "output_bytes": 273
+      },
+      "oracle_setup_same_venv": {
+        "exit_code": 0,
+        "wall_seconds": 0.198848,
+        "output_characters": 277,
+        "output_bytes": 277
+      },
+      "base_diagnostic": {
+        "exit_code": 1,
+        "wall_seconds": 1.246124,
+        "output_characters": 12827,
+        "output_bytes": 12827,
+        "passed": 127,
+        "failed": 1,
+        "skipped": 0,
+        "xfailed": 0,
+        "deselected": 0,
+        "errors": 0,
+        "summary": "======================== 1 failed, 127 passed in 1.07s =========================",
+        "pytest_seconds": 1.07
+      },
+      "fixed_diagnostic": {
+        "exit_code": 0,
+        "wall_seconds": 1.102971,
+        "output_characters": 11092,
+        "output_bytes": 11092,
+        "passed": 128,
+        "failed": 0,
+        "skipped": 0,
+        "xfailed": 0,
+        "deselected": 0,
+        "errors": 0,
+        "summary": "============================= 128 passed in 0.95s ==============================",
+        "pytest_seconds": 0.95
+      },
+      "fixed_verify": {
+        "exit_code": 0,
+        "wall_seconds": 1.105235,
+        "output_characters": 11092,
+        "output_bytes": 11092,
+        "passed": 128,
+        "failed": 0,
+        "skipped": 0,
+        "xfailed": 0,
+        "deselected": 0,
+        "errors": 0,
+        "summary": "============================= 128 passed in 0.95s ==============================",
+        "pytest_seconds": 0.95
+      },
+      "oracle_verify": {
+        "exit_code": 0,
+        "wall_seconds": 1.104685,
+        "output_characters": 11093,
+        "output_bytes": 11093,
+        "passed": 128,
+        "failed": 0,
+        "skipped": 0,
+        "xfailed": 0,
+        "deselected": 0,
+        "errors": 0,
+        "summary": "============================= 128 passed in 0.95s ==============================",
+        "pytest_seconds": 0.95
+      },
+      "pip_check": {
+        "exit_code": 0,
+        "wall_seconds": 0.206571,
+        "output_characters": 30,
+        "output_bytes": 30
+      },
+      "pip_freeze": {
+        "exit_code": 0,
+        "wall_seconds": 0.193245,
+        "output_characters": 125,
+        "output_bytes": 125
+      }
+    },
+    "source_import_checks": {
+      "base": {
+        "executable": "/home/ubuntu/rich-validation/final/venv/bin/python",
+        "python": "3.12.13 (main, Aug 12 2026, 22:53:02) [GCC 11.4.0]",
+        "sources": {
+          "rich": "/home/ubuntu/rich-validation/final/base/rich/__init__.py",
+          "rich.console": "/home/ubuntu/rich-validation/final/base/rich/console.py",
+          "rich.markup": "/home/ubuntu/rich-validation/final/base/rich/markup.py",
+          "rich.prompt": "/home/ubuntu/rich-validation/final/base/rich/prompt.py"
+        }
+      },
+      "base_path_python": {
+        "executable": "/home/ubuntu/rich-validation/final/base/.historical-venv/bin/python",
+        "python": "3.12.13 (main, Aug 12 2026, 22:53:02) [GCC 11.4.0]",
+        "sources": {
+          "rich": "/home/ubuntu/rich-validation/final/base/rich/__init__.py",
+          "rich.console": "/home/ubuntu/rich-validation/final/base/rich/console.py",
+          "rich.markup": "/home/ubuntu/rich-validation/final/base/rich/markup.py",
+          "rich.prompt": "/home/ubuntu/rich-validation/final/base/rich/prompt.py"
+        }
+      },
+      "fixed": {
+        "executable": "/home/ubuntu/rich-validation/final/venv/bin/python",
+        "python": "3.12.13 (main, Aug 12 2026, 22:53:02) [GCC 11.4.0]",
+        "sources": {
+          "rich": "/home/ubuntu/rich-validation/final/fixed/rich/__init__.py",
+          "rich.console": "/home/ubuntu/rich-validation/final/fixed/rich/console.py",
+          "rich.markup": "/home/ubuntu/rich-validation/final/fixed/rich/markup.py",
+          "rich.prompt": "/home/ubuntu/rich-validation/final/fixed/rich/prompt.py"
+        }
+      },
+      "fixed_path_python": {
+        "executable": "/home/ubuntu/rich-validation/final/fixed/.historical-venv/bin/python",
+        "python": "3.12.13 (main, Aug 12 2026, 22:53:02) [GCC 11.4.0]",
+        "sources": {
+          "rich": "/home/ubuntu/rich-validation/final/fixed/rich/__init__.py",
+          "rich.console": "/home/ubuntu/rich-validation/final/fixed/rich/console.py",
+          "rich.markup": "/home/ubuntu/rich-validation/final/fixed/rich/markup.py",
+          "rich.prompt": "/home/ubuntu/rich-validation/final/fixed/rich/prompt.py"
+        }
+      },
+      "oracle": {
+        "executable": "/home/ubuntu/rich-validation/final/venv/bin/python",
+        "python": "3.12.13 (main, Aug 12 2026, 22:53:02) [GCC 11.4.0]",
+        "sources": {
+          "rich": "/home/ubuntu/rich-validation/final/oracle/rich/__init__.py",
+          "rich.console": "/home/ubuntu/rich-validation/final/oracle/rich/console.py",
+          "rich.markup": "/home/ubuntu/rich-validation/final/oracle/rich/markup.py",
+          "rich.prompt": "/home/ubuntu/rich-validation/final/oracle/rich/prompt.py"
+        }
+      },
+      "oracle_path_python": {
+        "executable": "/home/ubuntu/rich-validation/final/oracle/.historical-venv/bin/python",
+        "python": "3.12.13 (main, Aug 12 2026, 22:53:02) [GCC 11.4.0]",
+        "sources": {
+          "rich": "/home/ubuntu/rich-validation/final/oracle/rich/__init__.py",
+          "rich.console": "/home/ubuntu/rich-validation/final/oracle/rich/console.py",
+          "rich.markup": "/home/ubuntu/rich-validation/final/oracle/rich/markup.py",
+          "rich.prompt": "/home/ubuntu/rich-validation/final/oracle/rich/prompt.py"
+        }
+      }
+    },
+    "archive_integrity": {
+      "baseline_file_count": 527,
+      "oracle_unchanged_file_count": 526,
+      "venv_file_count": 1938,
+      "venv_content_hashes_unchanged": true,
+      "fixed_oracle_only_changed_files": [
+        "rich/prompt.py"
+      ],
+      "all_archives_have_no_git": true,
+      "pristine_config_and_regression_tests_unchanged": true,
+      "patches_byte_identical_to_upstream_diffs": true,
+      "patched_files_byte_identical_to_upstream_fix": true,
+      "repair_patch_absent_from_workspaces": true
+    },
+    "network_isolation": "Every diagnostic, verification, oracle, and import check ran under unshare --user --map-current-user --net, retaining uid 1000. Same-venv setup reuse additionally used PIP_NO_INDEX=1. The exact Node harness driver ran wholly inside the same network isolation. No local test server or network exception was needed.",
+    "measurement": "Fresh archive runs: time.perf_counter around subprocess execution; stdout and stderr combined exactly once. Character counts use UTF-8 decoded output; byte counts use original bytes. Exact harness runs use its own seconds/stdout/timedOut fields and testCounts parser. No padding, repeated cases, or output-length selection; paths and timings may vary.",
+    "exact_harness": {
+      "entrypoint": "evals/codex-historical-workloads.mjs",
+      "execution": "unshare --user --map-current-user --net node /home/ubuntu/rich-validation/harness.mjs",
+      "method": "Imported existing cases, prepare, diagnostic, grade, execute, quote and testCounts. Added cases.rich in memory only; did not edit registration. Archived the same parent into a fresh no-.git baseline, applied regression.patch, ran setup.sh reusing the same initialized venv offline, called prepare for broken/fixed copies, applied repair.patch only to fixed, then called diagnostic on broken and fixed, diagnostic(..., true) on fixed, and grade on fixed. grade copied only rich/prompt.py into a pristine prepared oracle. Stored the verified expected counts in the cache validation.json just as initialize does.",
+      "commands": {
+        "archive": {
+          "command": "set -o pipefail; git -C '/home/ubuntu/repos/rich-upstream' archive 4d6d631a3d2deddf8405522d4b8c976a6d35726c | tar -xf - -C '/home/ubuntu/rich-validation/harness-cache/rich/baseline'",
+          "cwd": "/home/ubuntu/rich-validation/harness-cache"
+        },
+        "regression": {
+          "command": "git apply '/home/ubuntu/repos/jev-pruner/evals/historical/rich/regression.patch'",
+          "cwd": "/home/ubuntu/rich-validation/harness-cache/rich/baseline"
+        },
+        "setup": {
+          "command": "bash '/home/ubuntu/repos/jev-pruner/evals/historical/rich/setup.sh' '/home/ubuntu/rich-validation/harness-cache/rich/baseline' '/home/ubuntu/rich-validation/final/venv'",
+          "cwd": "/home/ubuntu/rich-validation/harness-cache"
+        },
+        "repair": {
+          "command": "git apply '/home/ubuntu/repos/jev-pruner/evals/historical/rich/repair.patch'",
+          "cwd": "/home/ubuntu/rich-validation/harness-cache/rich/fixed-check"
+        }
+      },
+      "results": {
+        "archive": {
+          "code": 0,
+          "timedOut": false,
+          "seconds": 0.106,
+          "output_characters": 0,
+          "output_bytes": 0,
+          "stderr_characters": 0
+        },
+        "regression": {
+          "code": 0,
+          "timedOut": false,
+          "seconds": 0.004,
+          "output_characters": 0,
+          "output_bytes": 0,
+          "stderr_characters": 0
+        },
+        "setup": {
+          "code": 0,
+          "timedOut": false,
+          "seconds": 0.21,
+          "output_characters": 337,
+          "output_bytes": 337,
+          "stderr_characters": 0
+        },
+        "repair": {
+          "code": 0,
+          "timedOut": false,
+          "seconds": 0.004,
+          "output_characters": 0,
+          "output_bytes": 0,
+          "stderr_characters": 0
+        },
+        "base": {
+          "code": 1,
+          "timedOut": false,
+          "seconds": 1.177,
+          "output_characters": 12861,
+          "output_bytes": 12861,
+          "stderr_characters": 0,
+          "command": "'/home/ubuntu/rich-validation/harness-cache/rich/venv/bin/python' '-m' 'pytest' '-vv' 'tests/test_prompt.py' 'tests/test_console.py' 'tests/test_markup.py'",
+          "counts": {
+            "passed": 127,
+            "failed": 1,
+            "error": 0,
+            "skipped": 0,
+            "xfailed": 0,
+            "deselected": 0
+          }
+        },
+        "diagnostic_fixed": {
+          "code": 0,
+          "timedOut": false,
+          "seconds": 1.249,
+          "output_characters": 11124,
+          "output_bytes": 11124,
+          "stderr_characters": 0,
+          "command": "'/home/ubuntu/rich-validation/harness-cache/rich/venv/bin/python' '-m' 'pytest' '-vv' 'tests/test_prompt.py' 'tests/test_console.py' 'tests/test_markup.py'",
+          "counts": {
+            "passed": 128,
+            "failed": 0,
+            "error": 0,
+            "skipped": 0,
+            "xfailed": 0,
+            "deselected": 0
+          }
+        },
+        "verified": {
+          "code": 0,
+          "timedOut": false,
+          "seconds": 1.198,
+          "output_characters": 11124,
+          "output_bytes": 11124,
+          "stderr_characters": 0,
+          "command": "'/home/ubuntu/rich-validation/harness-cache/rich/venv/bin/python' '-m' 'pytest' '-vv' 'tests/test_prompt.py' 'tests/test_console.py' 'tests/test_markup.py'",
+          "counts": {
+            "passed": 128,
+            "failed": 0,
+            "error": 0,
+            "skipped": 0,
+            "xfailed": 0,
+            "deselected": 0
+          }
+        },
+        "oracle": {
+          "code": 0,
+          "timedOut": false,
+          "seconds": 1.131,
+          "output_characters": 11119,
+          "output_bytes": 11119,
+          "stderr_characters": 0,
+          "command": "'/home/ubuntu/rich-validation/harness-cache/rich/venv/bin/python' '-m' 'pytest' '-vv' 'tests/test_prompt.py' 'tests/test_console.py' 'tests/test_markup.py'",
+          "counts": {
+            "passed": 128,
+            "failed": 0,
+            "error": 0,
+            "skipped": 0,
+            "xfailed": 0,
+            "deselected": 0
+          }
+        }
+      },
+      "grade_passed": true,
+      "shared_registration_changed": false,
+      "model_or_pruner_run": false
+    },
+    "known_gaps": [
+      "The selected source commit was authored in November 2025 and merged upstream in January 2026.",
+      "Validation covers all 128 tests in the three relevant prompt, console, and markup modules, not the other 59 modules, documentation builds, or upstream static typing checks.",
+      "Initial setup downloads pinned dependencies from PyPI. Compatible existing venvs are only verified and never modified; incompatible or incomplete existing venvs fail instead of silently reinstalling.",
+      "No explicit platform/network exclusions, skips, xfails, deselections, or warnings were observed.",
+      "Unused status was checked against all fetched handoff-repository refs and evals history; it is not a claim about private evaluations outside that repository.",
+      "Shared harness registration remains unchanged as requested; the parent integrator must register this case before its evaluation."
+    ],
+    "shellcheck_version": "version: 0.10.0"
+  }
+}
