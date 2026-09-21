@@ -1,0 +1,388 @@
+{
+  "name": "attrs",
+  "repository": "https://github.com/python-attrs/attrs",
+  "base_commit": "19943b775d40c018e844f2cb1728442f58112a3b",
+  "fix_commit": "3b0378dd66d33ebddb52be85b8c4aac6a914b1a2",
+  "issue_url": "https://github.com/python-attrs/attrs/pull/1417",
+  "description": "Generator-based field transformers lose the declared fields during class construction. This non-security regression, introduced after 25.1.0, was fixed upstream in PR #1417 on 2025-03-13. The base is the fix's immediate parent; the regression is the exact upstream test-only diff.",
+  "question": "Restore support for generator-based field_transformer callbacks. Fields yielded by the callback must remain available through attr.fields and participate in normal class construction. Preserve existing field-transformer and attribute-ordering behavior.",
+  "editable": [
+    "src/attr/_make.py"
+  ],
+  "evidence": [
+    "tests/test_hooks.py::TestTransformHook::test_hook_generator FAILED",
+    "E       AssertionError: assert ['x'] == []",
+    "tests/test_hooks.py:234: AssertionError",
+    "1 failed, 1423 passed, 7 skipped, 1 xfailed"
+  ],
+  "diagnostic_args": [
+    "-c",
+    "import os, runpy, sys; os.environ['PATH'] = os.path.dirname(sys.executable) + os.pathsep + os.environ.get('PATH', ''); sys.argv = ['pytest', *sys.argv[1:]]; runpy.run_module('pytest', run_name='__main__')",
+    "-vv",
+    "tests"
+  ],
+  "verify_args": [
+    "-c",
+    "import os, runpy, sys; os.environ['PATH'] = os.path.dirname(sys.executable) + os.pathsep + os.environ.get('PATH', ''); sys.argv = ['pytest', *sys.argv[1:]]; runpy.run_module('pytest', run_name='__main__')",
+    "-vv",
+    "tests"
+  ],
+  "environment": {
+    "PYTHONPATH": "{workspace}/src",
+    "MYPYPATH": "{workspace}/src",
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "LC_ALL": "C.UTF-8"
+  },
+  "license": "MIT",
+  "validation": {
+    "status": "validated",
+    "validated_at": "2026-09-21",
+    "platform": "Ubuntu 22.04 Linux x86_64, uid 1000, CPython 3.12.13",
+    "python": "3.12.13",
+    "upstream_fix_date": "2025-03-13",
+    "upstream_fix_url": "https://github.com/python-attrs/attrs/commit/3b0378dd66d33ebddb52be85b8c4aac6a914b1a2",
+    "upstream_documentation": "PR #1417 documents regression from PR #1401 after 25.1.0; follow-up news commit ba3bbfe7e13d96e592f0f4491affc5764ab27c49 says Restore support for generator-based field_transformers. Immediate parent is tagged 25.2.0.",
+    "runner": "The inline Python launcher prepends this interpreter's bin directory to PATH before running unmodified pytest. pytest-mypy-plugins locates the mypy executable through PATH; the harness invokes the venv Python without activating the venv.",
+    "suite_selection": "Complete upstream tests/ collection: 1432 items including 85 mypy plugin cases. The genuine new test is collected exactly once. Diagnostic and verification both use pytest -vv. No hand-picked subset, output padding, repeated tests inside a run, or changed pytest/Hypothesis configuration.",
+    "metadata": "setup.sh uses the pinned upstream Hatch build backend to prepare attrs-25.2.0.dist-info inside each workspace/src. SETUPTOOLS_SCM_PRETEND_VERSION=25.2.0 reproduces the base tag without .git. No attrs package or metadata is installed in the shared venv, no wheel source duplicate or editable binding exists, and no production source or test is changed by setup.",
+    "source_import_checks": [
+      "attr.__file__ == <workspace>/src/attr/__init__.py",
+      "attrs.__file__ == <workspace>/src/attrs/__init__.py",
+      "attr._make.__file__ == <workspace>/src/attr/_make.py"
+    ],
+    "measurement": "Combined stdout/stderr is captured without padding or repeated tests; lengths are UTF-8 decoded characters and raw bytes. Python validation uses time.perf_counter; direct harness runs use its own seconds field. All full-suite runs finish in under 40 seconds. Timings, absolute temporary paths, object addresses, and Hypothesis examples can vary.",
+    "commands": {
+      "context": "Run pytest with cwd set to the relevant workspace, substituting case.environment placeholders. The harness adds PYTHONDONTWRITEBYTECODE=1, PYTEST_ADDOPTS='', NO_COLOR=1; validation matches those settings. Every diagnostic and grade process runs inside unshare --user --map-current-user --net.",
+      "archive": "git -C /home/ubuntu/repos/attrs archive 19943b775d40c018e844f2cb1728442f58112a3b | tar -x -C <fresh-workspace>",
+      "regression": "git -C <fresh-workspace> apply /home/ubuntu/repos/jev-pruner/evals/historical/attrs/regression.patch",
+      "setup": "bash /home/ubuntu/repos/jev-pruner/evals/historical/attrs/setup.sh <fresh-workspace> /home/ubuntu/attrs-validation/venv",
+      "repair": "git -C <fixed-workspace> apply /home/ubuntu/repos/jev-pruner/evals/historical/attrs/repair.patch",
+      "offline_reuse": "PIP_NO_INDEX=1 unshare --user --map-current-user --net bash /home/ubuntu/repos/jev-pruner/evals/historical/attrs/setup.sh <fresh-workspace> /home/ubuntu/attrs-validation/venv",
+      "diagnostic": "unshare --user --map-current-user --net /home/ubuntu/attrs-validation/venv/bin/python <diagnostic_args>",
+      "verify": "unshare --user --map-current-user --net /home/ubuntu/attrs-validation/venv/bin/python <verify_args>",
+      "isolated_regression": "unshare --user --map-current-user --net /home/ubuntu/attrs-validation/venv/bin/python -m pytest -vv tests/test_hooks.py::TestTransformHook::test_hook_generator",
+      "actual_harness": "unshare --user --map-current-user --net node /home/ubuntu/attrs-validation/harness.mjs",
+      "harness_contract": "The external validation driver imports the unchanged codex-historical-workloads.mjs, adds cases.attrs only in memory, sets JEV_HISTORICAL_CACHE, and calls its actual prepare(), diagnostic(), grade(), and testCounts(). Broken grade is rejected. Fixed grade succeeds after copying only src/attr/_make.py into a pristine oracle. Shared registration is untouched.",
+      "dependency_check": "PYTHONPATH=<workspace>/src /home/ubuntu/attrs-validation/venv/bin/python -m pip check",
+      "dependency_versions": "PYTHONPATH=<workspace>/src /home/ubuntu/attrs-validation/venv/bin/python -m pip freeze --all",
+      "shell_syntax": "bash -n evals/historical/attrs/setup.sh",
+      "shell_lint": "/home/ubuntu/attrs-validation/tools/bin/shellcheck evals/historical/attrs/setup.sh (ShellCheck 0.10.0)",
+      "json_syntax": "python3.12 -m json.tool evals/historical/attrs/case.json",
+      "whitespace": "git diff --cached --check -- evals/historical/attrs/case.json evals/historical/attrs/setup.sh evals/historical/attrs/LICENSE",
+      "patch_whitespace": "Unfiltered git diff --cached --check flags the mandatory single-space blank context lines inside the two genuine patch files. They are intentionally preserved byte-for-byte; git apply and upstream diff comparisons pass."
+    },
+    "known_gaps": [
+      "Seven original skip markers remain: three Python 3.13+ copy.replace tests, one pre-3.10-only test, one PyPy-only slot test, and two optional Pyright tests. Pyright is a separate upstream tox environment and is not part of the tests extra.",
+      "tests/test_setattr.py::TestSetAttr::test_slotted_confused is an existing strict upstream xfail and remains xfailed.",
+      "No documentation build, separate standalone mypy/pyright tox environment, or model evaluation was run. The 85 existing pytest-mypy-plugins cases are included.",
+      "Initial setup needs PyPI access for pinned wheels. Reuse and all diagnostics/grading were validated without external network.",
+      "Unused status is based on the available handoff repository and all fetched refs, not inaccessible external evaluation history."
+    ],
+    "candidate_selection": {
+      "attempted_count": 1,
+      "candidates": [
+        {
+          "fix_commit": "3b0378dd66d33ebddb52be85b8c4aac6a914b1a2",
+          "upstream_pr": "https://github.com/python-attrs/attrs/pull/1417",
+          "reason": "Small documented functional regression with a genuine upstream test, minimal source scope, and standard self-contained pytest suite; not selected for log size, pruning behavior, or model success.",
+          "result": "validated: the real upstream regression is the sole failing full-suite test on the parent; upstream source fix passes both fresh-archive verification and the actual source-only oracle.",
+          "preliminary_setup_issue": "Initial -m pytest invocation lacked venv/bin in PATH, so 85 mypy cases failed with 'mypy executable is not found' on both states (broken: 86 failed/1338 passed; fixed: 85 failed/1339 passed; both 7 skipped/1 xfailed). The final argv launcher fixes executable discovery without changing tests, config, dependencies, or selection. Both full suites were rerun from new archives and the mismatch was resolved.",
+          "rejected_candidates": []
+        }
+      ],
+      "unused_check": "Fetched all handoff remote branches; git log --all -- evals/historical/attrs returned no history; scoped historical searches for python-attrs and a case named attrs returned no matches.",
+      "shallow_status": "Both repositories returned false before path-scoped history searches."
+    },
+    "restrictions_declared_before_testing": {
+      "suite": "Full tests/ suite with pytest -vv, matching the upstream CPython runtime test environment including its tests-mypy extra. No manual deselection, warning changes, test/config edits, or network-related exclusions.",
+      "platform": "Linux x86_64, CPython 3.12. Upstream version/platform skip decorators remain unchanged.",
+      "optional_pyright": "Pyright belongs to a separate upstream tox environment, not the tests extra. It is not installed; the two upstream Pyright tests may naturally skip via their existing Requires pyright marker. No custom skip/filter is introduced.",
+      "network": "All diagnostics and grading run in a Linux network namespace with no external interfaces via unshare --user --map-current-user --net. Initial dependency installation may use PyPI; reuse must be offline.",
+      "forbidden_work": "No Codex, Jev, model comparison, artificial bug injection, duplicate tests, padded output, production edits, or shared registration changes."
+    },
+    "dependencies": {
+      "pip": "25.0.1",
+      "cloudpickle": "3.1.1",
+      "decorator": "5.2.1",
+      "execnet": "2.1.1",
+      "hatch-fancy-pypi-readme": "24.1.0",
+      "hatch-vcs": "0.4.0",
+      "hatchling": "1.27.0",
+      "hypothesis": "6.129.4",
+      "iniconfig": "2.1.0",
+      "jinja2": "3.1.6",
+      "jsonschema": "4.23.0",
+      "jsonschema-specifications": "2024.10.1",
+      "markupsafe": "3.0.2",
+      "mypy": "1.11.2",
+      "mypy-extensions": "1.0.0",
+      "packaging": "24.2",
+      "pathspec": "0.12.1",
+      "pluggy": "1.5.0",
+      "psutil": "7.0.0",
+      "pympler": "1.1",
+      "pytest": "8.3.5",
+      "pytest-mypy-plugins": "3.2.0",
+      "pytest-xdist": "3.6.1",
+      "pyyaml": "6.0.2",
+      "referencing": "0.36.2",
+      "regex": "2024.11.6",
+      "rpds-py": "0.23.1",
+      "setuptools": "75.8.2",
+      "setuptools-scm": "8.2.0",
+      "sortedcontainers": "2.4.0",
+      "tomlkit": "0.13.2",
+      "trove-classifiers": "2025.3.13.13",
+      "typing-extensions": "4.12.2"
+    },
+    "dependency_release_dates": {
+      "pip==25.0.1": "2025-02-09T17:14:01.463742Z",
+      "cloudpickle==3.1.1": "2025-01-14T17:02:02.417233Z",
+      "decorator==5.2.1": "2025-02-24T04:41:32.565879Z",
+      "execnet==2.1.1": "2024-04-08T09:04:17.414012Z",
+      "hatch-fancy-pypi-readme==24.1.0": "2024-01-01T09:27:51.431414Z",
+      "hatch-vcs==0.4.0": "2023-11-06T06:24:55.389793Z",
+      "hatchling==1.27.0": "2024-12-15T17:08:10.364649Z",
+      "hypothesis==6.129.4": "2025-03-18T05:37:36.359619Z",
+      "iniconfig==2.1.0": "2025-03-19T20:09:59.721246Z",
+      "jinja2==3.1.6": "2025-03-05T20:05:00.369721Z",
+      "jsonschema==4.23.0": "2024-07-08T18:40:00.165365Z",
+      "jsonschema-specifications==2024.10.1": "2024-10-08T12:29:30.439446Z",
+      "markupsafe==3.0.2": "2024-10-18T15:20:51.440812Z",
+      "mypy==1.11.2": "2024-08-24T22:49:00.237518Z",
+      "mypy-extensions==1.0.0": "2023-02-04T12:11:25.002510Z",
+      "packaging==24.2": "2024-11-08T09:47:44.722583Z",
+      "pathspec==0.12.1": "2023-12-10T22:30:43.140207Z",
+      "pluggy==1.5.0": "2024-04-20T21:34:40.434532Z",
+      "psutil==7.0.0": "2025-02-13T21:54:07.946974Z",
+      "pympler==1.1": "2024-06-28T19:56:05.087294Z",
+      "pytest==8.3.5": "2025-03-02T12:54:52.069556Z",
+      "pytest-mypy-plugins==3.2.0": "2024-12-21T20:11:33.723931Z",
+      "pytest-xdist==3.6.1": "2024-04-28T19:29:52.813148Z",
+      "pyyaml==6.0.2": "2024-08-06T20:31:40.178426Z",
+      "referencing==0.36.2": "2025-01-25T08:48:14.241134Z",
+      "regex==2024.11.6": "2024-11-06T20:08:57.575371Z",
+      "rpds-py==0.23.1": "2025-02-21T15:01:14.816496Z",
+      "setuptools==75.8.2": "2025-02-26T20:45:17.259104Z",
+      "setuptools-scm==8.2.0": "2025-02-21T22:48:20.171598Z",
+      "sortedcontainers==2.4.0": "2021-05-16T22:03:41.177807Z",
+      "tomlkit==0.13.2": "2024-08-14T08:19:40.050886Z",
+      "trove-classifiers==2025.3.13.13": "2025-03-13T13:10:28.185225Z",
+      "typing-extensions==4.12.2": "2024-06-07T18:52:13.582461Z"
+    },
+    "dependency_release_date_source": "https://pypi.org/pypi/{package}/{version}/json; checked all 33 pins on 2026-09-21. Every uploaded distribution is older than 7 days and none is yanked.",
+    "build_requirements": {
+      "hatchling": "1.27.0",
+      "hatch-vcs": "0.4.0",
+      "hatch-fancy-pypi-readme": "24.1.0",
+      "setuptools": "75.8.2",
+      "setuptools-scm": "8.2.0",
+      "packaging": "24.2",
+      "pathspec": "0.12.1",
+      "pluggy": "1.5.0",
+      "trove-classifiers": "2025.3.13.13"
+    },
+    "results": {
+      "setup_base": {
+        "offline": false,
+        "exit_code": 0,
+        "counts": {
+          "passed": 0,
+          "failed": 0,
+          "error": 0,
+          "skipped": 0,
+          "xfailed": 0,
+          "deselected": 0
+        },
+        "output_characters": 242,
+        "output_bytes": 242,
+        "wall_seconds": 0.519595,
+        "summary": ""
+      },
+      "base_regression": {
+        "offline": true,
+        "exit_code": 1,
+        "counts": {
+          "passed": 0,
+          "failed": 1,
+          "error": 0,
+          "skipped": 0,
+          "xfailed": 0,
+          "deselected": 0
+        },
+        "output_characters": 1936,
+        "output_bytes": 1936,
+        "wall_seconds": 0.888063,
+        "summary": "============================== 1 failed in 0.05s ==============================="
+      },
+      "base_diagnostic": {
+        "offline": true,
+        "exit_code": 1,
+        "counts": {
+          "passed": 1423,
+          "failed": 1,
+          "error": 0,
+          "skipped": 7,
+          "xfailed": 1,
+          "deselected": 0
+        },
+        "output_characters": 134538,
+        "output_bytes": 134538,
+        "wall_seconds": 39.970212,
+        "summary": "============ 1 failed, 1423 passed, 7 skipped, 1 xfailed in 39.02s ============="
+      },
+      "setup_fixed": {
+        "offline": true,
+        "exit_code": 0,
+        "counts": {
+          "passed": 0,
+          "failed": 0,
+          "error": 0,
+          "skipped": 0,
+          "xfailed": 0,
+          "deselected": 0
+        },
+        "output_characters": 245,
+        "output_bytes": 245,
+        "wall_seconds": 0.520727,
+        "summary": ""
+      },
+      "fixed_diagnostic": {
+        "offline": true,
+        "exit_code": 0,
+        "counts": {
+          "passed": 1424,
+          "failed": 0,
+          "error": 0,
+          "skipped": 7,
+          "xfailed": 1,
+          "deselected": 0
+        },
+        "output_characters": 133453,
+        "output_bytes": 133453,
+        "wall_seconds": 38.341204,
+        "summary": "================= 1424 passed, 7 skipped, 1 xfailed in 37.45s =================="
+      },
+      "fixed_verify": {
+        "offline": true,
+        "exit_code": 0,
+        "counts": {
+          "passed": 1424,
+          "failed": 0,
+          "error": 0,
+          "skipped": 7,
+          "xfailed": 1,
+          "deselected": 0
+        },
+        "output_characters": 133453,
+        "output_bytes": 133453,
+        "wall_seconds": 37.09082,
+        "summary": "================= 1424 passed, 7 skipped, 1 xfailed in 36.17s =================="
+      },
+      "base_after_venv_reuse": {
+        "offline": true,
+        "exit_code": 1,
+        "counts": {
+          "passed": 1423,
+          "failed": 1,
+          "error": 0,
+          "skipped": 7,
+          "xfailed": 1,
+          "deselected": 0
+        },
+        "output_characters": 134538,
+        "output_bytes": 134538,
+        "wall_seconds": 38.003875,
+        "summary": "============ 1 failed, 1423 passed, 7 skipped, 1 xfailed in 37.09s ============="
+      },
+      "harness_base_diagnostic": {
+        "exit_code": 1,
+        "timed_out": false,
+        "wall_seconds": 38.64,
+        "output_characters": 134586,
+        "output_bytes": 134586,
+        "counts": {
+          "passed": 1423,
+          "failed": 1,
+          "error": 0,
+          "skipped": 7,
+          "xfailed": 1,
+          "deselected": 0
+        }
+      },
+      "harness_broken_grade": {
+        "exit_code": 1,
+        "timed_out": false,
+        "wall_seconds": 38.989,
+        "output_characters": 134580,
+        "output_bytes": 134580,
+        "counts": {
+          "passed": 1423,
+          "failed": 1,
+          "error": 0,
+          "skipped": 7,
+          "xfailed": 1,
+          "deselected": 0
+        }
+      },
+      "harness_fixed_grade": {
+        "exit_code": 0,
+        "timed_out": false,
+        "wall_seconds": 38.699,
+        "output_characters": 133493,
+        "output_bytes": 133493,
+        "counts": {
+          "passed": 1424,
+          "failed": 0,
+          "error": 0,
+          "skipped": 7,
+          "xfailed": 1,
+          "deselected": 0
+        }
+      }
+    },
+    "initial_setup": {
+      "exit_code": 0,
+      "wall_seconds": 8.082325
+    },
+    "archive_contract": {
+      "baseline_files": 124,
+      "immutable_oracle_files_checked": 123,
+      "dependency_files_checked": 3028,
+      "baseline_unchanged": true,
+      "venv_dependencies_unchanged": true,
+      "oracle_only_editable_source_copied": [
+        "src/attr/_make.py"
+      ],
+      "workspace_imports_verified": [
+        "/home/ubuntu/attrs-validation/negative/workspace",
+        "/home/ubuntu/attrs-validation/positive/workspace",
+        "/home/ubuntu/attrs-validation/positive/oracle"
+      ],
+      "source_archives_contain_git": false,
+      "fresh_archives": [
+        "base",
+        "fixed",
+        "harness-cache/attrs/baseline"
+      ],
+      "all_tests_network_isolated": true,
+      "network_isolation": "Linux unshare --user --map-current-user --net (no external network interfaces).",
+      "same_venv": true,
+      "reused_setup_offline": true,
+      "dependency_hash_check": "SHA-256 over 3028 venv files excluding bytecode caches; unchanged across real harness diagnostics and both oracle grades.",
+      "pyproject_sha256": "cbe9000eb26a0a710ff0eca0d070c727ea94a07b264164406b554746b4f324b0",
+      "repair_outside_broken_baseline": true,
+      "broken_rerun_after_fixed_setup": true,
+      "broken_grade_rejected": true,
+      "fixed_grade_accepted": true
+    },
+    "patch_provenance": {
+      "regression_command": "git -C /home/ubuntu/repos/attrs diff 19943b775d40c018e844f2cb1728442f58112a3b 3b0378dd66d33ebddb52be85b8c4aac6a914b1a2 -- tests/test_hooks.py",
+      "regression_sha256": "de2777c2ecbd048eea2a567122c1ca56f2c341ffb8ff47cd0c08c89341e98910",
+      "repair_command": "git -C /home/ubuntu/repos/attrs diff 19943b775d40c018e844f2cb1728442f58112a3b 3b0378dd66d33ebddb52be85b8c4aac6a914b1a2 -- src/attr/_make.py",
+      "repair_sha256": "7273f640dfe69be668c1891e040af6041cfbea07a4d07f6f3e35cfd299b99ebd",
+      "checks": "Byte-for-byte git diffs; immediate parent confirmed. All 123 tracked upstream files in each base/fixed/cache-baseline/positive-oracle/negative-oracle workspace match the parent archive (including normal git archive export-subst) except for the genuine regression and allowed repair, which match their upstream fix blobs. No .git or repair/regression patch is present in any workspace.",
+      "upstream_files_per_workspace": 123
+    }
+  }
+}
