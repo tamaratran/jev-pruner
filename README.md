@@ -599,8 +599,10 @@ can be installed together.
 
 ## Animated demo (macOS)
 
-`demo/JevPrunerDemo` matches the dark terminal, scanning beam and collapsing
-output of the fast-jev-compaction demo. An `npm install` is followed by a scan,
+`demo/JevPrunerDemo` uses a warm light terminal with cream surfaces, charcoal
+text, teal accents and subtle keep/drop highlights. It retains the scanning
+beam and collapsing output of the fast-jev-compaction demo.
+An `npm install` is followed by a scan,
 pruning, and a pause on the retained summary. The terminal's top bar
 shows estimated output tokens. There are no surrounding captions or sidebar.
 Retained text stays verbatim and a saved-log card shows where the original
