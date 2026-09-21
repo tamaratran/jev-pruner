@@ -641,6 +641,7 @@ The three pip network tests are excluded; upstream platform skips remain.
 ```sh
 npm run build
 export JEV_HISTORICAL_CACHE=/path/to/new-fixture-cache
+export JEV_EVAL_CASES=click,flask,pytest,pip,hatch
 node evals/codex-historical-workloads.mjs
 export JEV_EVAL_SUITE=historical
 node evals/codex-repair-cohort.mjs /path/to/new-evidence-directory preflight
@@ -669,6 +670,39 @@ These are five Python repair tasks with visible upstream regression tests,
 not a broad language/build/install benchmark. Historical bugs may have been
 seen during model training. The diagnostic collector and uncontrolled shared
 prompt caching limitations above still apply.
+
+### Bounded Codex execution and fixed-price comparisons
+
+Set `JEV_EVAL_CONCURRENCY` to a positive integer (default `1`) before preflight.
+The limit applies to independent pairs; each pair's arms remain sequential in
+their predeclared order. Each trial has a separate workspace and external observer
+directory. Checkpoints are serialized, and concurrency is frozen in the protocol.
+Choose a limit appropriate for the machine and subscription; this does not
+provision remote workers. A local run's latency includes shared-machine contention.
+
+`normalized_cost_usd` is the primary reference metric: all Codex input tokens,
+including cached tokens, at $5/M, output at $30/M, plus Jev input at $0.042/M.
+Observed-cache reference estimates remain secondary and apply the documented
+long-context price tier when a request exceeds 272K input tokens. Fixed-price repricing is
+not a cold-cache experiment or a subscription bill. Reasoning output is reported
+separately but is already included in output tokens and is not charged twice.
+
+Additional historical fixtures cover Requests adapters, HTTPX empty zstd bodies,
+Rich prompt markup, Packaging marker versions, and attrs field-transformer
+generators. Select fixtures with `JEV_EVAL_CASES` before initialization and preflight;
+the same inventory must be used during measurement. Requests checks its complete
+one-test adapter module, not its HTTP/TLS integration suites; HTTPX and Rich use
+complete relevant modules, while Packaging and attrs use their full suites.
+
+Packaging's verbose suite exceeds one million tokenizer tokens. The adapter
+captures exact pre-host delivery under `observer/delivered`, then audits the
+visible output against either that delivery or Codex's UTF-8 prefix/suffix
+truncation. Both arms retain the same output budget. Raw removal does not
+qualify as effective pruning unless the visible result is shorter than the
+minimum native preview. Unrecognized or split outputs remain audit failures.
+The byte-budget preview algorithm follows
+[Codex's truncation implementation](https://github.com/openai/codex/blob/main/codex-rs/core/src/truncate.rs);
+live preflight must verify the installed CLI's exact rendering.
 
 ### Evidence isolation
 

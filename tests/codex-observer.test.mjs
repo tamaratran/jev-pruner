@@ -87,6 +87,35 @@ describe('Codex evaluation evidence isolation', () => {
     expect(await readdir(captureDirectory)).toEqual([]);
   });
 
+  it('captures pre-host delivery without changing stdout or failure status', async () => {
+    const { root, workspace } = await fixture();
+    const rawDirectory = join(root, 'observer', 'raw');
+    const deliveredDirectory = join(root, 'observer', 'delivered');
+    await writeFile(join(workspace, 'tsconfig.json'), '{"files":["missing.ts"]}');
+    const result = await execute(process.execPath, [
+      resolve('evals/observer/codex-diagnostic.mjs'), 'build',
+    ], {
+      cwd: workspace,
+      env: {
+        ...process.env, JEV_HISTORICAL_SOURCE_ROOT: '',
+        JEV_EVAL_CAPTURE_DIR: rawDirectory,
+        JEV_OBSERVER_CAPTURE_DIR: join(root, 'observer', 'jev'),
+        JEV_EVAL_DELIVERED_DIR: deliveredDirectory,
+        JEV_EVAL_PRESERVE_EXIT: 'true', JEV_EVAL_ARM: 'native',
+      },
+    }).catch(error => error);
+    expect(result.code).toBe(2);
+    const files = await readdir(deliveredDirectory);
+    expect(files).toHaveLength(1);
+    const delivery = JSON.parse(await readFile(join(deliveredDirectory, files[0]), 'utf8'));
+    const raw = JSON.parse(await readFile(join(rawDirectory, (await readdir(rawDirectory))[0]), 'utf8'));
+    expect(delivery.output).toBe(result.stdout);
+    expect(delivery.output).toBe(raw.output);
+    expect(delivery.code).toBe(2);
+    expect(delivery.evidenceMarker).toBe(evidenceMarker);
+    expect(await readdir(workspace)).toEqual(['tsconfig.json']);
+  });
+
   it('detects captured JSON, nested history, and explicit evidence-path output', () => {
     const directory = resolve('outside-evidence');
     const capture = JSON.stringify({ evidenceMarker, request: { state: {} } });
