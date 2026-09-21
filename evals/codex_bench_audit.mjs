@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -17,6 +18,23 @@ const events = text => text.split('\n').flatMap(line => {
 });
 const payloads = transcript => transcript.filter(event => event.type === 'response_item').map(event => event.payload);
 const finalOutput = text => text.replace(/^[\s\S]*?\n(?:Final output|Output):\n/, '');
+
+export async function verifyTask(result, planned, protocol) {
+  if (!protocol.local_task_root) {
+    assert.equal(result.task_id.git_commit_id, protocol.benchmark_commit, 'Dataset revision mismatch');
+    return;
+  }
+  const task = resolve(protocol.local_task_root, planned.task);
+  assert.equal(result.task_id.path, task, 'Local task path mismatch');
+  const files = Object.entries(protocol.task_sha256)
+    .filter(([name]) => name.startsWith(`tasks/${planned.task}/`));
+  assert(files.length > 0, 'Missing local task hashes');
+  for (const [name, expected] of files) {
+    const content = await readFile(resolve(protocol.local_task_root, '..', name));
+    assert.equal(createHash('sha256').update(content).digest('hex'), expected,
+      `Task file changed: ${name}`);
+  }
+}
 
 export function toolGroups(transcript) {
   const calls = new Map();
@@ -123,7 +141,7 @@ export async function auditTrial(root, planned, protocol) {
       ? (Date.parse(result.agent_execution.finished_at) - Date.parse(result.agent_execution.started_at)) / 1000 : null;
     row.wall_seconds = result.finished_at
       ? (Date.parse(result.finished_at) - Date.parse(result.started_at)) / 1000 : null;
-    assert.equal(result.task_id.git_commit_id, protocol.benchmark_commit, 'Dataset revision mismatch');
+    await verifyTask(result, planned, protocol);
     const settings = await json(join(agent, 'eval-settings.json'));
     assert.equal(settings.arm, planned.arm);
     assert.equal(settings.instructions, protocol.instructions);
