@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { execute, quote, repo } from './codex-repair-workloads.mjs';
 
 export { execute, quote, repo };
-const names = ['click', 'flask', 'pytest', 'pip', 'hatch'];
+const names = ['click', 'flask', 'pytest', 'pip', 'hatch', 'requests', 'httpx', 'rich', 'packaging', 'attrs'];
 const definitions = join(repo, 'evals/historical');
 export const cases = Object.fromEntries(await Promise.all(names.map(async name =>
   [name, JSON.parse(await readFile(join(definitions, name, 'case.json'), 'utf8'))])));
@@ -68,7 +68,10 @@ export async function grade(name, workspace) {
 
 export async function initialize() {
   await mkdir(cacheRoot(), { recursive: true, mode: 0o700 });
-  for (const name of names) {
+  const selected = process.env.JEV_EVAL_CASES?.split(',') ?? names;
+  assert(selected.length > 0 && new Set(selected).size === selected.length &&
+    selected.every(name => Object.hasOwn(cases, name)), 'Invalid historical task inventory');
+  for (const name of selected) {
     const definition = cases[name];
     const root = join(cacheRoot(), name);
     assert(!(await exists(root)), `Fixture cache already exists: ${root}`);
