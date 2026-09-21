@@ -693,15 +693,19 @@ generators. Select fixtures with `JEV_EVAL_CASES` before initialization and pref
 the same inventory must be used during measurement. Requests checks its complete
 one-test adapter module, not its HTTP/TLS integration suites; HTTPX and Rich use
 complete relevant modules, while Packaging and attrs use their full suites.
+The attrs fixture places Hypothesis's generated cache under `.pytest_cache`;
+automatic Unicode-table writes therefore do not count as source edits.
 
 Packaging's verbose suite exceeds one million tokenizer tokens. The adapter
 captures exact pre-host delivery under `observer/delivered`, then audits the
 visible output against either that delivery or Codex's UTF-8 prefix/suffix
-truncation. Both arms retain the same output budget. Raw removal does not
+truncation, including its earlier 1 MiB output-collection cap and omission notice.
+Both arms retain the same output budget. Raw removal does not
 qualify as effective pruning unless the visible result is shorter than the
 minimum native preview. Unrecognized or split outputs remain audit failures.
 The byte-budget preview algorithm follows
-[Codex's truncation implementation](https://github.com/openai/codex/blob/main/codex-rs/core/src/truncate.rs);
+[Codex's output implementation](https://github.com/openai/codex/blob/rust-v0.152.1/codex-rs/core/src/tools/context.rs)
+and [collection buffer](https://github.com/openai/codex/blob/rust-v0.152.1/codex-rs/core/src/unified_exec/head_tail_buffer.rs);
 live preflight must verify the installed CLI's exact rendering.
 
 ### Evidence isolation
