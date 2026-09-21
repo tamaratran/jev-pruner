@@ -845,6 +845,56 @@ The selected tasks have been seen before; this is a targeted regression
 comparison, not evidence of general savings or performance on unseen tasks.
 No-pruning pairs remain separate activation and overhead diagnostics.
 
+## Cross-benchmark capture pilot
+
+`capture_pilot.py` freezes five tasks from each of CompileBench,
+MMLongBench-Doc, and DABstep's public development split. Selection uses seeded
+hash ranks within declared strata, never output size or observed success.
+Supply clean pinned upstream checkouts; the selection manifest records their
+revisions. MMLongBench-Doc data is CC BY-NC 4.0; use it for permitted research.
+
+```sh
+python -m evals.capture_pilot prepare /external/evidence \
+  --compile-repo /path/to/CompileBench --pdf-repo /path/to/mmlongbench-doc
+python -m evals.capture_pilot freeze /external/evidence --concurrency 3
+JEV_CODEX_AUTH_FILE=/private/auth.json \
+  python -m evals.capture_pilot run /external/evidence
+npm run build
+node evals/capture_audit.mjs /external/evidence
+python -m evals.capture_grade /external/evidence
+```
+
+The runner requires a clean committed checkout, Harbor 0.22.0, Modal access,
+and an existing Codex ChatGPT subscription login. It removes API-key overrides
+and the Jev key from worker environments. External PDF answer extraction uses
+the benchmark's GPT-4o prompt via `OPENAI_API_KEY`; its usage and fixed-price
+estimate are recorded separately. DABstep scoring is deterministic.
+CompileBench retains its upstream environment and verifier. PDF and DABstep
+use terminal adaptations with original questions/data and external graders;
+these are not full leaderboard evaluations.
+
+The capture wrapper streams stdout and stderr unchanged into separate files.
+Native Codex session records measure what reached the model, including stderr
+and host truncation. A command can produce several native polling responses,
+so command counts, captured stdout counts, and native response counts have
+different denominators. The streaming baseline also differs from the buffering
+needed for a future pruning arm. Image calls are counted separately; their
+content cannot be measured as Bash text.
+
+The audit uses the production token estimate, not the host's byte-based preview
+budget. Its `candidate` flag only screens size, document, binary, and sensitive
+content gates. It does not score relevance or establish that any text is safe
+to remove; inspect candidates before proposing paired trials. PDF passages and
+data values remain reference material even when a heuristic misses them.
+No output is pruned and no Jev request is made in this pilot.
+
+Evidence, answer keys, and scorers stay outside agent workspaces. The frozen
+protocol hashes task inputs and scorer files. Started attempts are never
+silently retried; blocked and incomplete rows remain in the audit. Do not
+interpret absent captures as small outputs or failed grader calls as wrong
+answers. Each grading call writes a started record first and is not repeated
+on rerun.
+
 ## Checks
 
 ```sh
