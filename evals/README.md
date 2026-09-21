@@ -75,6 +75,42 @@ Primary cost prices every input token at $5/M, output at $30/M and Jev input at
 $0.042/M; observed cached input at $0.50/M is secondary. These are comparison
 estimates, not subscription charges or Modal infrastructure bills.
 
+## Repeated CompileBench comparison
+
+First replay the four reviewed build-log candidates from the capture pilot.
+This uses the production Codex pruning adapter with pre-command native context,
+records Jev usage, and checks required lines and conservative native-preview
+reduction. Inspect the removed text before proceeding. The replay does not run
+Codex or establish task accuracy. Preserve interrupted replays separately.
+
+```sh
+node evals/compilebench_replay.mjs /external/capture-pilot /external/replay-new
+python -m evals.compilebench plan /external/comparison-new \
+  --benchmark /path/to/CompileBench --replay /external/replay-new --concurrency 4
+JEV_CODEX_AUTH_FILE="$HOME/.codex/auth.json" \
+  python -m evals.compilebench run /external/comparison-new --harbor "$HARBOR_BIN"
+node evals/codex_bench_audit.mjs /external/comparison-new
+```
+
+Commit the harness and build before planning. Keep `TYPESAFE_API_KEY` available
+through the environment. The source hashes must match the replay; task files
+are checked at launch and audit. Both arms use `JevCodex` and identical buffered
+output transport. No production threshold or scoring changes are made.
+
+The four tasks are cowsay, coreutils, jq, and curl-ssl at the capture pilot's
+CompileBench revision, each repeated three times per arm (24 attempts). Copies
+have `-r1`, `-r2`, and `-r3` aliases so the existing paired scheduler and auditor
+keep repetitions separate. `qualifying_tasks` therefore lists **pairs**, while
+`source_task` identifies the four distinct upstream tasks. Original instructions,
+environments, limits, and verifiers are unchanged. Windows remains outside this
+comparison because its recorded Wine verifier failure is unresolved.
+
+This subset follows an opportunity-finding pilot; it is not an unseen test set.
+Report all attempts and overall accuracy, then actual-pruning pairs separately.
+No-pruning attempts, invalid measurements, incomplete usage, and task failures
+remain recorded. Cache-normalized cost is primary; observed-cache pricing is
+secondary. Retries are disabled, and account errors stop queued work.
+
 ## Codex paired log-reading comparison
 
 With Codex CLI 0.152.1 authenticated through ChatGPT, the installed Codex plugin
