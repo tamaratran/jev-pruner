@@ -9,6 +9,7 @@ import { estimateTokens } from '../dist/jev.js';
 import { commandOutput } from '../tests/fixtures/codex-transcript.mjs';
 import { execute, quote, repo } from './codex-repair-workloads.mjs';
 import { runConcurrent } from './codex-parallel.mjs';
+import { thresholdArms } from './codex-thresholds.mjs';
 import { auditHostPreview, hostPreviews } from './codex-preview.mjs';
 import { assertNoEvidenceLeak, assertNoEvidenceStateLeak, evidenceMarker, externalEvidenceDirectory } from './observer/evidence-isolation.mjs';
 
@@ -25,6 +26,8 @@ const concurrency = Number(process.env.JEV_EVAL_CONCURRENCY ?? 1);
 assert(Number.isInteger(concurrency) && concurrency > 0);
 const outputBudget = historicalSource ? 100_000 : 30_000;
 const preserveExit = process.env.JEV_EVAL_PRESERVE_EXIT === 'true';
+const armThresholds = thresholdArms(process.env.JEV_EVAL_THRESHOLDS);
+const arms = Object.keys(armThresholds);
 
 assert(process.argv[2], 'Usage: node evals/codex-repair-cohort.mjs <new-evidence-directory> [preflight|run]');
 assert(process.env.TYPESAFE_API_KEY, 'Set TYPESAFE_API_KEY.');
@@ -45,7 +48,7 @@ const list = async path => readdir(path).catch(error => {
 const model = 'gpt-5.5';
 const frozenFiles = [
   'evals/codex-repair-cohort.mjs', 'evals/codex-repair-workloads.mjs',
-  'evals/codex-parallel.mjs', 'evals/codex-preview.mjs',
+  'evals/codex-parallel.mjs', 'evals/codex-preview.mjs', 'evals/codex-thresholds.mjs',
   'evals/observer/codex-diagnostic.mjs', 'tests/fixtures/codex-observer.mjs',
   'evals/observer/evidence-isolation.mjs',
   'tests/fixtures/codex-transcript.mjs', 'codex/skills/jev-pruner/SKILL.md',
@@ -68,7 +71,7 @@ const login = await execute('codex login status', repo);
 assert.match(login.stdout + login.stderr, /Logged in using ChatGPT/);
 const pairs = names.flatMap((name, index) => Array.from({ length: repetitions }, (_, i) => i + 1).map(repetition => ({
   id: `${name}-${repetition}`, name, repetition,
-  arms: (index + repetition) % 2 ? ['native', 'pruned'] : ['pruned', 'native'],
+  arms: (index + repetition) % 2 ? [...arms] : [...arms].reverse(),
 })));
 const historicalHashes = historicalSource ? Object.fromEntries(await Promise.all([
   'evals/codex-historical-workloads.mjs', 'evals/codex-repair-workloads.mjs',
@@ -80,7 +83,7 @@ if (phase === 'preflight') {
   await mkdir(root, { mode: 0o700 });
   protocol = {
     created: new Date().toISOString(), revision: (await execute('git rev-parse HEAD', repo)).stdout.trim(),
-    hashes, model, version: 'codex-cli 0.152.1', pairs, concurrency,
+    hashes, model, version: 'codex-cli 0.152.1', pairs, concurrency, armThresholds,
     historicalSource, historicalHashes, historicalSuite: historical, outputBudget, preserveExit,
     evidence_layout: 'observer/{raw,jev,delivered} outside workspace; marker/path leakage invalidates instrumentation',
     tool_versions: (await execute('node --version && npm --version && python3 --version && python3 -m pytest --version && node node_modules/typescript/bin/tsc --version', repo)).stdout.trim(),
@@ -93,9 +96,9 @@ if (phase === 'preflight') {
     secondary_cost_metric: 'Observed-cache reference estimate; sessions exceeding 272K input on any request use 2x input and 1.5x output pricing. Not a subscription charge or invoice. https://developers.openai.com/api/docs/models/gpt-5.5',
     host_preview_audit: 'Capture exact pre-host delivery externally. Accept only exact output or a verified UTF-8 prefix/suffix preview. Pruning qualifies only if the visible result is shorter than the minimum native host preview; raw removal alone is insufficient.',
     diagnostic_adapter: preserveExit
-      ? 'Collector merges stderr into stdout and preserves the real exit code. Only pruned arm invokes the production wrapper.'
+      ? 'Collector merges stderr into stdout and preserves the real exit code. Every non-native arm invokes the wrapper with its frozen token threshold.'
       : 'Collector merges stderr into stdout, prints the true exit code, and exits zero to make failing diagnostics eligible.',
-    inclusion: 'Both audited arms with complete usage, and actual pruning in plugin arm. No filtering on task success, answer correctness, or required-fact retention.',
+    inclusion: 'All trials remain in the overall comparison. Actual-pruning subset requires both audited arms with complete usage and actual pruning in at least one arm. No filtering on task success, answer correctness, or required-fact retention.',
     task_grading: historicalSource ? 'Restore pristine files, copy only permitted source edits into a separate oracle workspace, run upstream regression and related suite, require unchanged expected pass/skip counts. Regression tests are visible; oracle workspace and known repair are not. Reported outcome and strict JSON scored separately.'
       : 'Independent verifier plus hidden semantic oracle and source integrity; final factual outcome and strict JSON format scored separately.',
     preflight: historical ? `${names.length} excluded pruned repairs audit instrumentation. Tasks remain fixed regardless of activation, length, or accuracy. No policy tuning or retries after freeze.`
@@ -123,6 +126,7 @@ if (phase === 'preflight') {
   assert.equal(outputBudget, protocol.outputBudget);
   assert.equal(preserveExit, protocol.preserveExit);
   assert.equal(concurrency, protocol.concurrency, 'Concurrency changed');
+  assert.deepEqual(armThresholds, protocol.armThresholds, 'Threshold settings changed');
   const preflight = await read(join(root, 'preflight.json'));
   assert.equal(preflight.length, names.length);
   assert(preflight.every(row => row.audit_pass && (historical || row.pruned)), 'Preflight failed');
@@ -188,12 +192,14 @@ Return only a JSON object with outcome ("fixed" or "not_fixed"), cause, and chan
     '--dangerously-bypass-hook-trust', '--skip-git-repo-check', '--json', prompt,
   ];
   const result = await execute(`codex ${args.map(quote).join(' ')}`, cwd, {
-    ...process.env, JEV_EVAL_ARM: arm, JEV_CODEX_PLUGIN_ROOT: plugin,
+    ...process.env, JEV_EVAL_ARM: arm === 'native' ? 'native' : 'pruned', JEV_CODEX_PLUGIN_ROOT: plugin,
+    JEV_PRUNER_MIN_TOKENS: String(armThresholds[arm] ?? 10_000),
     JEV_EVAL_CAPTURE_DIR: rawDirectory, JEV_OBSERVER_CAPTURE_DIR: captureDirectory,
     JEV_EVAL_DELIVERED_DIR: deliveredDirectory,
   }, 600_000);
   await save(join(evidence, 'execution.json'), result);
-  const row = { pair: pair.id, workload: pair.name, arm, seconds: result.seconds, evidence_isolation_pass: false };
+  const row = { pair: pair.id, workload: pair.name, arm, min_tokens: armThresholds[arm],
+    seconds: result.seconds, evidence_isolation_pass: false };
   const after = await tree(cwd);
   await save(join(evidence, 'final-file-hashes.json'), after);
   row.unexpected_changes = [...new Set([...Object.keys(initial), ...Object.keys(after)])]
@@ -254,6 +260,7 @@ Return only a JSON object with outcome ("fixed" or "not_fixed"), cause, and chan
     const delivered = await Promise.all((await list(deliveredDirectory)).map(file => read(join(deliveredDirectory, file))));
     assert(raw.every(capture => capture.evidenceMarker === evidenceMarker), 'Missing evidence marker');
     assert(delivered.every(capture => capture.evidenceMarker === evidenceMarker), 'Missing delivery marker');
+    assert(delivered.every(capture => capture.minTokens === armThresholds[arm]), 'Wrong delivered-output threshold');
     const outputs = responses.filter(entry => /^(function_call_output|custom_tool_call_output)$/.test(entry.type))
       .map(commandOutput).filter(text => text !== undefined);
     for (const text of outputs) assertNoEvidenceLeak(text, [observerDirectory]);
@@ -274,7 +281,7 @@ Return only a JSON object with outcome ("fixed" or "not_fixed"), cause, and chan
       const wrapperPruned = delivery.output.includes('[fast-jev-output trimmed');
       let original;
       if (wrapperPruned) {
-        assert.equal(arm, 'pruned');
+        assert.notEqual(arm, 'native');
         const archive = delivery.output.match(/\[fast-jev-output full output: (.*?) \(Read or grep it if needed\)\]/)?.[1];
         assert(archive, 'Missing archive footer');
         original = await readFile(archive, 'utf8');
@@ -362,7 +369,7 @@ Return only a JSON object with outcome ("fixed" or "not_fixed"), cause, and chan
 }
 
 if (phase === 'preflight') {
-  await runConcurrent(names, concurrency, name => trial({ id: name, name }, 'pruned'));
+  await runConcurrent(names, concurrency, name => trial({ id: name, name }, arms.at(-1)));
   assert(rows.every(row => row.audit_pass && (historical || row.pruned)), 'Preflight did not qualify all workflows');
 } else {
   await runConcurrent(pairs, concurrency, async pair => {
@@ -371,7 +378,7 @@ if (phase === 'preflight') {
   const qualifying = pairs.filter(pair => {
     const matched = rows.filter(row => row.pair === pair.id);
     return matched.length === 2 && matched.every(row => row.audit_pass) &&
-      matched.some(row => row.arm === 'pruned' && row.pruned);
+      matched.some(row => row.pruned);
   }).map(pair => pair.id);
   await save(join(root, 'selection.json'), {
     qualifying_pairs: qualifying,

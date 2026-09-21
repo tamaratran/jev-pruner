@@ -347,7 +347,7 @@ that code to Codex even if pruning or scoring fails. It does not append a synthe
 status line to stdout or change the archived bytes. Diagnostics, warnings, result
 counts, artifact paths, reference material, and uncertain content stay protected.
 
-The strict over-10,000-token gate, categories, complete-history partitioning,
+The default over-10,000-token gate, categories, complete-history partitioning,
 verbatim retention, and incomplete-scoring safeguards reuse the same pruning
 engine as Claude. The host transcript pointer is stored under
 `~/.cache/jev-pruner/codex/<session-id>.json`. `CODEX_THREAD_ID` selects the
@@ -356,6 +356,14 @@ user/assistant messages and full tool inputs/results, including custom tools.
 It does not load reasoning items or system/developer prompts. Earlier originals
 that Codex already truncated or compacted are not reconstructed.
 Unavailable, malformed, or mismatched history disables pruning.
+
+For threshold experiments, set `JEV_PRUNER_MIN_TOKENS=5000` in the Codex
+environment. The wrapper then scores stdout strictly above 5,000 **estimated
+tokens**, subject to all other retention and scoring checks. Equality still skips
+pruning. Unset, non-positive, non-integer, or non-finite values use the 10,000-token
+default. Library callers can likewise pass a positive integer `minTokens` to
+`trimOutput` or `pruneCodexOutput`; Claude's hook configuration retains its
+10,000-token floor. Lower thresholds may add scoring cost without shortening output.
 
 Before scoring, original stdout is archived in the command workdir's
 `.jev-pruner/` directory with private file permissions and a local `.gitignore`.

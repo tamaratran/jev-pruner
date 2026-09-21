@@ -81,7 +81,9 @@ function finite(value: number | undefined, fallback: number): number {
 }
 
 export function exceedsOutputThreshold(output: string, minTokens?: number): boolean {
-  return estimateTokens(output) > Math.max(MIN_OUTPUT_TOKENS, finite(minTokens, MIN_OUTPUT_TOKENS));
+  const threshold = typeof minTokens === 'number' && Number.isInteger(minTokens) && minTokens > 0
+    ? minTokens : MIN_OUTPUT_TOKENS;
+  return estimateTokens(output) > threshold;
 }
 
 /** Output with NULs or a lot of control bytes is not text worth chunking. */

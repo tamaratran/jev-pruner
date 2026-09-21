@@ -51,6 +51,7 @@ if (args[0] !== '--' || args.length < 2) {
           sessionId: process.env.CODEX_THREAD_ID,
           apiKey: process.env.TYPESAFE_API_KEY,
           signal: controller.signal,
+          minTokens: Number(process.env.JEV_PRUNER_MIN_TOKENS),
         })
         : output;
       await new Promise<void>(resolve => process.stdout.write(displayed, () => resolve()));
