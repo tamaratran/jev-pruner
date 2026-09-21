@@ -30,11 +30,13 @@
   "environment": {
     "PYTHONPATH": "{workspace}/src",
     "MYPYPATH": "{workspace}/src",
+    "HYPOTHESIS_STORAGE_DIRECTORY": "{workspace}/.pytest_cache/hypothesis",
     "PYTHONDONTWRITEBYTECODE": "1",
     "LC_ALL": "C.UTF-8"
   },
   "license": "MIT",
   "validation": {
+    "cache_storage": "Evaluation redirects Hypothesis's generated cache into .pytest_cache/hypothesis so automatic Unicode-table writes do not count as source edits. Source-only grading and expected test counts are unchanged.",
     "status": "validated",
     "validated_at": "2026-09-21",
     "platform": "Ubuntu 22.04 Linux x86_64, uid 1000, CPython 3.12.13",
