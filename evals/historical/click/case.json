@@ -1,0 +1,211 @@
+{
+  "name": "click",
+  "repository": "https://github.com/pallets/click",
+  "base_commit": "5f86603a84e12bdec1584c15c9f982740e613c45",
+  "fix_commit": "8533c966b84783718e74286aa7b098f3ff1e9221",
+  "issue_url": "https://github.com/pallets/click/issues/3019",
+  "description": "Real upstream prompt rendering regression fixed by merged PR #3021 on 2025-10-02 (UTC). click.prompt and click.confirm append unwanted whitespace when prompt_suffix is empty. The base is the merge fix's first parent. The regression patch is the complete upstream test-only diff, adding four cases to the existing stream-routing test without adding or duplicating test functions.",
+  "question": "Fix click.prompt and click.confirm so an empty prompt_suffix is rendered exactly, without an extra trailing space. Preserve normal default prompts, input processing, and the expected stdout/stderr behavior when err=True.",
+  "editable": [
+    "src/click/termui.py"
+  ],
+  "evidence": [
+    "tests/test_utils.py::test_echo_writing_to_standard_error FAILED",
+    "E       AssertionError: assert 'Prompt to stdin with no suffix ' == 'Prompt to stdin with no suffix'",
+    "tests/test_utils.py:487: AssertionError",
+    "1 failed, 1301 passed, 21 skipped, 1 xfailed"
+  ],
+  "diagnostic_args": [
+    "-m",
+    "pytest",
+    "-vv",
+    "tests"
+  ],
+  "verify_args": [
+    "-m",
+    "pytest",
+    "-q",
+    "tests"
+  ],
+  "environment": {
+    "PYTHONPATH": "{workspace}/src",
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "LC_ALL": "C.UTF-8"
+  },
+  "license": "BSD-3-Clause",
+  "validation": {
+    "upstream_pr": "https://github.com/pallets/click/pull/3021",
+    "upstream_fix_url": "https://github.com/pallets/click/commit/8533c966b84783718e74286aa7b098f3ff1e9221",
+    "candidate_count": 1,
+    "platform": "Ubuntu 22.04 Linux x86_64, non-root uid 1000",
+    "python": "3.12.13",
+    "dependencies": {
+      "pip": "25.0.1",
+      "pytest": "8.3.5",
+      "iniconfig": "2.1.0",
+      "packaging": "24.2",
+      "pluggy": "1.5.0"
+    },
+    "dependency_release_dates": {
+      "pip==25.0.1": "2025-02-09",
+      "pytest==8.3.5": "2025-03-02",
+      "iniconfig==2.1.0": "2025-03-19",
+      "packaging==24.2": "2024-11-08",
+      "pluggy==1.5.0": "2024-04-20"
+    },
+    "dependency_release_date_source": "https://pypi.org/pypi/{package}/{version}/json (urls[0].upload_time_iso_8601); checked 2026-09-19",
+    "build_requirements": {},
+    "workspace_metadata": "None required for this suite. Click is imported directly from workspace/src; no Click distribution, wheel, editable installation, or build backend is installed.",
+    "system_dependencies": [
+      "bash",
+      "GNU coreutils (including realpath)",
+      "GNU sed 4.8",
+      "C.UTF-8 locale",
+      "Python 3.12 with venv"
+    ],
+    "suite_selection": "Entire upstream pytest suite: tests/, 1324 collected items, no explicit exclusions or collection filters. Existing upstream pytest configuration, including warnings-as-errors, is unchanged. The verification suite includes the upstream regression exactly once. It was also tested independently with its node ID.",
+    "regression_node": "tests/test_utils.py::test_echo_writing_to_standard_error",
+    "regression_args": [
+      "-m",
+      "pytest",
+      "-q",
+      "tests/test_utils.py::test_echo_writing_to_standard_error"
+    ],
+    "patch_provenance": {
+      "regression_command": "git diff 5f86603a84e12bdec1584c15c9f982740e613c45 8533c966b84783718e74286aa7b098f3ff1e9221 -- tests/test_utils.py",
+      "repair_command": "git diff 5f86603a84e12bdec1584c15c9f982740e613c45 8533c966b84783718e74286aa7b098f3ff1e9221 -- src/click/termui.py",
+      "regression_sha256": "4853b7527ea3d86208fec0770bbac50314881d01c5c4536db92a23abfb15fc67",
+      "repair_sha256": "3a9670efa5b80590f22effe7e860c98a62d5df672eda53425d13380ca082dca4",
+      "checks": "Both patch files compare byte-for-byte with these git diffs. Both apply cleanly to fresh base archives in regression-then-repair order. The resulting test file and repaired source file each match the upstream fix blob exactly. CHANGES.rst is intentionally outside both patches.",
+      "shallow_status": "Both repositories returned false from git rev-parse --is-shallow-repository before history inspection."
+    },
+    "commands": {
+      "context": "All pytest commands run with cwd equal to the relevant workspace. Paths below record the actual validation locations; replace those locations for another machine. Every test process inherits PYTHONPATH=<workspace>/src, PYTHONDONTWRITEBYTECODE=1, LC_ALL=C.UTF-8.",
+      "archive_base": "git -C /home/ubuntu/repos/click archive 5f86603a84e12bdec1584c15c9f982740e613c45 | tar -xf - -C /home/ubuntu/click-validation/base",
+      "archive_fixed": "git -C /home/ubuntu/repos/click archive 5f86603a84e12bdec1584c15c9f982740e613c45 | tar -xf - -C /home/ubuntu/click-validation/fixed",
+      "archive_oracle": "git -C /home/ubuntu/repos/click archive 5f86603a84e12bdec1584c15c9f982740e613c45 | tar -xf - -C /home/ubuntu/click-validation/oracle",
+      "apply_regression_in_each_workspace": "git apply /home/ubuntu/repos/jev-pruner/evals/historical/click/regression.patch",
+      "base_setup": "bash /home/ubuntu/repos/jev-pruner/evals/historical/click/setup.sh /home/ubuntu/click-validation/base /home/ubuntu/click-validation/venv",
+      "fixed_setup_reusing_venv": "PIP_NO_INDEX=1 unshare --user --map-current-user --net bash /home/ubuntu/repos/jev-pruner/evals/historical/click/setup.sh /home/ubuntu/click-validation/fixed /home/ubuntu/click-validation/venv",
+      "repair_in_fixed_workspace": "git apply /home/ubuntu/repos/jev-pruner/evals/historical/click/repair.patch",
+      "oracle_setup_reusing_venv": "PIP_NO_INDEX=1 unshare --user --map-current-user --net bash /home/ubuntu/repos/jev-pruner/evals/historical/click/setup.sh /home/ubuntu/click-validation/oracle /home/ubuntu/click-validation/venv",
+      "oracle_source_copy": "Python shutil.copyfile('/home/ubuntu/click-validation/fixed/src/click/termui.py', '/home/ubuntu/click-validation/oracle/src/click/termui.py')",
+      "regression_in_base_and_fixed": "unshare --user --map-current-user --net /home/ubuntu/click-validation/venv/bin/python -m pytest -q tests/test_utils.py::test_echo_writing_to_standard_error",
+      "diagnostic_in_base_and_fixed": "unshare --user --map-current-user --net /home/ubuntu/click-validation/venv/bin/python -m pytest -vv tests",
+      "verify_in_base_fixed_and_oracle": "unshare --user --map-current-user --net /home/ubuntu/click-validation/venv/bin/python -m pytest -q tests",
+      "dependency_check": "/home/ubuntu/click-validation/venv/bin/python -m pip check",
+      "shell_syntax": "bash -n evals/historical/click/setup.sh",
+      "shell_lint": "/home/ubuntu/click-tools-venv/bin/shellcheck evals/historical/click/setup.sh (ShellCheck 0.10.0)",
+      "json_syntax": "python3.12 -m json.tool evals/historical/click/case.json"
+    },
+    "results": {
+      "base_regression": {
+        "exit_code": 1,
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "xfailed": 0,
+        "errors": 0,
+        "output_characters": 1847,
+        "wall_seconds": 0.360135,
+        "pytest_seconds": 0.13
+      },
+      "fixed_regression": {
+        "exit_code": 0,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "xfailed": 0,
+        "errors": 0,
+        "output_characters": 98,
+        "wall_seconds": 0.334128,
+        "pytest_seconds": 0.10
+      },
+      "base_diagnostic": {
+        "exit_code": 1,
+        "passed": 1301,
+        "failed": 1,
+        "skipped": 21,
+        "xfailed": 1,
+        "errors": 0,
+        "output_characters": 125127,
+        "wall_seconds": 2.565525,
+        "pytest_seconds": 2.31
+      },
+      "fixed_diagnostic": {
+        "exit_code": 0,
+        "passed": 1302,
+        "failed": 0,
+        "skipped": 21,
+        "xfailed": 1,
+        "errors": 0,
+        "output_characters": 123186,
+        "wall_seconds": 2.534507,
+        "pytest_seconds": 2.27
+      },
+      "base_verify": {
+        "exit_code": 1,
+        "passed": 1301,
+        "failed": 1,
+        "skipped": 21,
+        "xfailed": 1,
+        "errors": 0,
+        "output_characters": 3323,
+        "wall_seconds": 2.483919,
+        "pytest_seconds": 2.22
+      },
+      "fixed_verify": {
+        "exit_code": 0,
+        "passed": 1302,
+        "failed": 0,
+        "skipped": 21,
+        "xfailed": 1,
+        "errors": 0,
+        "output_characters": 1564,
+        "wall_seconds": 2.444549,
+        "pytest_seconds": 2.19
+      },
+      "oracle_verify": {
+        "exit_code": 0,
+        "passed": 1302,
+        "failed": 0,
+        "skipped": 21,
+        "xfailed": 1,
+        "errors": 0,
+        "output_characters": 1564,
+        "wall_seconds": 2.554376,
+        "pytest_seconds": 2.29
+      }
+    },
+    "measurement": "Wall time uses time.perf_counter around subprocess execution. Output characters are the length of UTF-8 decoded combined stdout/stderr, without added progress, repeated cases, or padding. Output bytes equal characters in these runs. Runtime, temporary paths, and object addresses can vary on reruns.",
+    "archive_contract": {
+      "fresh_workspaces_without_git": [
+        "base",
+        "fixed",
+        "oracle"
+      ],
+      "venv_reused": true,
+      "dependency_hashes_unchanged_after_reuse": true,
+      "reuse_setup_offline": true,
+      "initial_setup_wall_seconds": 3.604202,
+      "fixed_reuse_setup_wall_seconds": 0.176218,
+      "source_imports_checked": [
+        "click.__file__ == <workspace>/src/click/__init__.py",
+        "click.termui.__file__ == <workspace>/src/click/termui.py"
+      ],
+      "oracle_only_copied_source": "src/click/termui.py",
+      "oracle_immutable_files_sha256_checked": 141,
+      "repair_patch_present_in_workspaces": false,
+      "all_tests_network_isolated": true,
+      "network_isolation_method": "Linux unshare --user --map-current-user --net, retaining uid 1000. This is a validation wrapper, not a required diagnostic or oracle dependency.",
+      "baseline_integrity": "Hashes frozen after setup; after runs, every preexisting file stays unchanged except the allowed source in repaired workspaces. Fresh base and fixed baseline file hashes match. Oracle uses a third archive with regression.patch and setup, then copies only the allowed source from fixed; all 141 other baseline files remain unchanged. The broken workspace is tested after fixed's setup to detect shared-venv source binding."
+    },
+    "known_gaps": [
+      "21 upstream Windows-only msvcrt cases skip naturally on Linux: test_getchar_windows (16), test_getchar_special_key_windows (3), test_getchar_windows_exceptions (2). No test selection or configuration was changed.",
+      "tests/test_chain.py::test_group_chaining is already marked xfail upstream and remains xfailed in both states.",
+      "The historical upstream contract routes the final prompt character to stdout even for err=True; this task preserves the upstream regression assertions rather than redefining that behavior.",
+      "Validation covers the entire runtime pytest suite on Linux/Python 3.12.13; it does not run documentation builds or the separate upstream static typing fixtures.",
+      "Fresh setup requires network access for pinned PyPI wheels; repeated setup with the same initialized venv and all test commands were verified offline."
+    ]
+  }
+}

@@ -1,0 +1,260 @@
+{
+  "name": "flask",
+  "repository": "https://github.com/pallets/flask",
+  "base_commit": "5addaf833b2e8c7a616f89dd8ad5a44b07d7c000",
+  "fix_commit": "53b8f08218796d95764c5252bccd8a50a173a6fb",
+  "issue_url": "https://github.com/pallets/flask/issues/5786",
+  "description": "Flask's test client exposes an outdated session after following a redirect inside a client context. Session values written by the redirect target are missing from the session visible to the test. This documented non-security testing bug was fixed upstream on 2025-08-18. The upstream regression revises an existing redirect-session test; regression.patch preserves that exact test-only diff without duplicating it.",
+  "question": "Repair Flask's test client so that, inside a client context, following redirects leaves flask.session reflecting the final request's session, including values written by the redirect target. Preserve existing test-client behavior. Only edit src/flask/testing.py; do not edit tests.",
+  "editable": [
+    "src/flask/testing.py"
+  ],
+  "evidence": [
+    "tests/test_testing.py::test_redirect_session FAILED",
+    ">           assert flask.session[\"target\"] is True",
+    "self = <SecureCookieSession {'redirect': True}>, key = 'target'",
+    "E       KeyError: 'target'",
+    "FAILED tests/test_testing.py::test_redirect_session - KeyError: 'target'",
+    "1 failed, 488 passed"
+  ],
+  "diagnostic_args": [
+    "-m",
+    "pytest",
+    "-vv",
+    "tests"
+  ],
+  "verify_args": [
+    "-m",
+    "pytest",
+    "-q",
+    "tests"
+  ],
+  "environment": {
+    "PYTHONPATH": "{workspace}/src",
+    "PYTHONDONTWRITEBYTECODE": "1"
+  },
+  "license": "BSD-3-Clause",
+  "validation": {
+    "status": "validated",
+    "python": "CPython 3.12.13",
+    "platform": "Linux x86_64, Ubuntu 22.04",
+    "upstream_fix_url": "https://github.com/pallets/flask/commit/53b8f08218796d95764c5252bccd8a50a173a6fb",
+    "upstream_pr_url": "https://github.com/pallets/flask/pull/5797",
+    "history": {
+      "upstream_shallow": false,
+      "handoff_shallow": false,
+      "base_is_immediate_fix_parent": true,
+      "selected_candidate": "Preserved session after redirect, issue #5786.",
+      "other_commit_inspected": "da600394865c06a4772c433c1a560453dcf4f868 was not selected because it has no regression-test diff.",
+      "selection_basis": "Documented observable session contract, small genuine source fix, existing upstream regression, reproducible on Python 3.12."
+    },
+    "suite": {
+      "scope": "The complete upstream tests directory, including the independent regression once.",
+      "collected": 489,
+      "excluded_tests": [],
+      "configuration": "Original pyproject.toml is unchanged, including filterwarnings=['error']; no test deselection or plugin/configuration suppression.",
+      "standalone_regression": "tests/test_testing.py::test_redirect_session",
+      "output_note": "Natural unpadded verbose output: 41864 characters on the broken parent and 40468 with the fix. The suite was selected for complete Flask coverage, not log size."
+    },
+    "dependencies": {
+      "pip": "25.1.1",
+      "flit_core": "3.12.0",
+      "asgiref": "3.8.1",
+      "blinker": "1.9.0",
+      "click": "8.2.1",
+      "greenlet": "3.2.3",
+      "iniconfig": "2.1.0",
+      "itsdangerous": "2.2.0",
+      "Jinja2": "3.1.6",
+      "MarkupSafe": "3.0.2",
+      "packaging": "25.0",
+      "pluggy": "1.6.0",
+      "Pygments": "2.19.1",
+      "pytest": "8.4.0",
+      "python-dotenv": "1.1.0",
+      "Werkzeug": "3.1.3"
+    },
+    "dependency_provenance": {
+      "source": "Runtime and test pins match the upstream parent's uv.lock for Python 3.12. pip and flit_core are separately pinned setup requirements. greenlet is included to run its optional test on Python 3.12.",
+      "release_check": "All selected release files were checked against the public PyPI version JSON endpoints and predate 2026-09-12 by more than seven days.",
+      "latest_upload_dates": {
+        "pip": "2025-05-02",
+        "flit_core": "2025-03-25",
+        "asgiref": "2024-03-22",
+        "blinker": "2024-11-08",
+        "click": "2025-05-20",
+        "greenlet": "2025-06-05",
+        "iniconfig": "2025-03-19",
+        "itsdangerous": "2024-04-16",
+        "Jinja2": "2025-03-05",
+        "MarkupSafe": "2024-10-18",
+        "packaging": "2025-04-19",
+        "pluggy": "2025-05-15",
+        "Pygments": "2025-01-06",
+        "pytest": "2025-06-02",
+        "python-dotenv": "2025-03-25",
+        "Werkzeug": "2024-11-08"
+      }
+    },
+    "commands": {
+      "variables": {
+        "UPSTREAM": "/home/ubuntu/repos/flask-historical",
+        "PACKAGE": "/home/ubuntu/repos/jev-pruner/evals/historical/flask",
+        "ROOT": "/home/ubuntu/flask-validation",
+        "VENV": "/home/ubuntu/flask-validation/contract-venv",
+        "BASE": "5addaf833b2e8c7a616f89dd8ad5a44b07d7c000",
+        "FIX": "53b8f08218796d95764c5252bccd8a50a173a6fb"
+      },
+      "regression_patch": "git -C \"$UPSTREAM\" diff \"$BASE\" \"$FIX\" -- tests/test_testing.py > \"$PACKAGE/regression.patch\"",
+      "repair_patch": "git -C \"$UPSTREAM\" diff \"$BASE\" \"$FIX\" -- src/flask/testing.py > \"$PACKAGE/repair.patch\"",
+      "precreate_venv": "python3.12 -m venv \"$VENV\"",
+      "archive_each_workspace": "mkdir \"$WORKSPACE\"; git -C \"$UPSTREAM\" archive \"$BASE\" | tar -x -C \"$WORKSPACE\"; git -C \"$WORKSPACE\" apply \"$PACKAGE/regression.patch\"",
+      "setup_base": "PYTHONDONTWRITEBYTECODE=1 bash \"$PACKAGE/setup.sh\" \"$ROOT/base-archive\" \"$VENV\"",
+      "setup_fixed_reuse": "PYTHONDONTWRITEBYTECODE=1 unshare -Urn bash \"$PACKAGE/setup.sh\" \"$ROOT/fixed-archive\" \"$VENV\"",
+      "apply_genuine_repair": "git -C \"$ROOT/fixed-archive\" apply \"$PACKAGE/repair.patch\"",
+      "regression_each": "PYTHONPATH=\"$WORKSPACE/src\" PYTHONDONTWRITEBYTECODE=1 unshare -Urn \"$VENV/bin/python\" -m pytest -q tests/test_testing.py::test_redirect_session",
+      "diagnostic_each": "PYTHONPATH=\"$WORKSPACE/src\" PYTHONDONTWRITEBYTECODE=1 unshare -Urn \"$VENV/bin/python\" -m pytest -vv tests",
+      "verify_each": "PYTHONPATH=\"$WORKSPACE/src\" PYTHONDONTWRITEBYTECODE=1 unshare -Urn \"$VENV/bin/python\" -m pytest -q tests",
+      "setup_oracle_reuse": "PYTHONDONTWRITEBYTECODE=1 unshare -Urn bash \"$PACKAGE/setup.sh\" \"$ROOT/oracle-archive\" \"$VENV\"",
+      "oracle_source_copy": "cp \"$ROOT/fixed-archive/src/flask/testing.py\" \"$ROOT/oracle-archive/src/flask/testing.py\"",
+      "dependency_snapshot_before_and_after": "\"$VENV/bin/python\" -m pip list --format=json",
+      "cwd": "Each pytest command ran from its WORKSPACE. Other commands ran from ROOT or used explicit git -C arguments.",
+      "initial_absent_venv_check": "bash /home/ubuntu/repos/jev-pruner/evals/historical/flask/setup.sh /home/ubuntu/flask-validation/broken /home/ubuntu/flask-validation/venv",
+      "note": "Shell forms above reproduce the measured subprocess argv; archive transfer and oracle source copying were performed by the local validation driver without altering content. unshare was only a validation wrapper and is not required by setup.sh or the harness arguments."
+    },
+    "results": {
+      "base_regression": {
+        "exit_code": 1,
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "errors": 0,
+        "wall_seconds": 0.454041,
+        "pytest_seconds": 0.08,
+        "stdout_characters": 1495,
+        "stderr_characters": 0,
+        "summary": "1 failed in 0.08s"
+      },
+      "base_diagnostic": {
+        "exit_code": 1,
+        "passed": 488,
+        "failed": 1,
+        "skipped": 0,
+        "errors": 0,
+        "wall_seconds": 2.658753,
+        "pytest_seconds": 2.26,
+        "stdout_characters": 41864,
+        "stderr_characters": 0,
+        "summary": "1 failed, 488 passed in 2.26s"
+      },
+      "base_verify": {
+        "exit_code": 1,
+        "passed": 488,
+        "failed": 1,
+        "skipped": 0,
+        "errors": 0,
+        "wall_seconds": 2.617746,
+        "pytest_seconds": 2.23,
+        "stdout_characters": 1987,
+        "stderr_characters": 0,
+        "summary": "1 failed, 488 passed in 2.23s"
+      },
+      "fixed_regression": {
+        "exit_code": 0,
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "errors": 0,
+        "wall_seconds": 0.422876,
+        "pytest_seconds": 0.06,
+        "stdout_characters": 98,
+        "stderr_characters": 0,
+        "summary": "1 passed in 0.06s"
+      },
+      "fixed_diagnostic": {
+        "exit_code": 0,
+        "passed": 489,
+        "failed": 0,
+        "skipped": 0,
+        "errors": 0,
+        "wall_seconds": 2.624659,
+        "pytest_seconds": 2.23,
+        "stdout_characters": 40468,
+        "stderr_characters": 0,
+        "summary": "489 passed in 2.23s"
+      },
+      "fixed_verify": {
+        "exit_code": 0,
+        "passed": 489,
+        "failed": 0,
+        "skipped": 0,
+        "errors": 0,
+        "wall_seconds": 2.585256,
+        "pytest_seconds": 2.19,
+        "stdout_characters": 580,
+        "stderr_characters": 0,
+        "summary": "489 passed in 2.19s"
+      },
+      "oracle_verify": {
+        "exit_code": 0,
+        "passed": 489,
+        "failed": 0,
+        "skipped": 0,
+        "errors": 0,
+        "wall_seconds": 2.598314,
+        "pytest_seconds": 2.19,
+        "stdout_characters": 580,
+        "stderr_characters": 0,
+        "summary": "489 passed in 2.19s"
+      }
+    },
+    "setup_results": {
+      "absent_venv": "Succeeded; created a Python 3.12 venv and imported the supplied archive.",
+      "precreated_venv": {
+        "exit_code": 0,
+        "wall_seconds": 4.084101
+      },
+      "fixed_workspace_reusing_venv_offline": {
+        "exit_code": 0,
+        "wall_seconds": 0.628624
+      },
+      "oracle_workspace_reusing_venv_offline": {
+        "exit_code": 0,
+        "wall_seconds": 0.636568
+      }
+    },
+    "integrity": {
+      "archive_workspaces": [
+        "base-archive",
+        "fixed-archive",
+        "oracle-archive"
+      ],
+      "no_git_in_all_workspaces": true,
+      "regression_equals_upstream_test_diff": true,
+      "repaired_source_equals_upstream_fix": true,
+      "source_fix_only_changes": [
+        "src/flask/testing.py"
+      ],
+      "frozen_baseline_files": 237,
+      "all_fresh_baseline_file_hashes_identical": true,
+      "existing_baseline_files_unchanged_by_tests": true,
+      "venv_reused_files": 2262,
+      "all_venv_file_hashes_unchanged_on_reuse": true,
+      "dependency_versions_unchanged": true,
+      "flask_not_installed_in_venv": true,
+      "import_checks": "setup.sh asserts flask.__file__ and flask.testing.__file__ resolve within the supplied workspace/src, and Flask metadata is 3.1.2.dev0.",
+      "metadata": "flit_core.buildapi.prepare_metadata_for_build_wheel('src') produces workspace-local distribution metadata for the CLI version tests. No editable install or workspace-specific venv links are created.",
+      "oracle": "A third fresh parent archive plus regression patch and offline setup had identical baseline hashes. Only src/flask/testing.py was copied from the repaired workspace before quiet verification. No repair.patch was copied into any test workspace.",
+      "network": "Every regression, diagnostic and verification command ran with unshare -Urn in a network namespace without external connectivity. The reused setup calls also succeeded there.",
+      "patch_sha256": {
+        "regression.patch": "b33d4a802ef7901a337d1d5e53adf683f0b48f5bcc84a27b4531f006cd65291d",
+        "repair.patch": "7b652eef9b6fdc6e25baab74d38546e664085d4dafc316a0ff182c28c8ae6811"
+      }
+    },
+    "known_gaps": [
+      "Validated on Linux x86_64 with CPython 3.12.13; other Python versions, operating systems and architectures were not evaluated.",
+      "Initial dependency installation requires package-index access; subsequent fresh workspaces reuse the unchanged venv offline.",
+      "Documentation builds and upstream static typing jobs are outside this runtime repair task; all 489 runtime tests ran with zero skips or exclusions."
+    ]
+  }
+}

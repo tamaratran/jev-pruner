@@ -7,11 +7,13 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { cases, execute, repo } from '../codex-repair-workloads.mjs';
 import { evidenceMarker, externalEvidenceDirectory } from './evidence-isolation.mjs';
 
+const historicalSource = process.env.JEV_HISTORICAL_SOURCE_ROOT ??
+  (process.env.JEV_EVAL_SUITE === 'historical' ? repo : undefined);
+const historical = historicalSource
+  ? await import(pathToFileURL(join(historicalSource, 'evals/codex-historical-workloads.mjs')).href)
+  : undefined;
 const collect = process.argv[2] === '--collect';
 const name = process.argv[collect ? 3 : 2];
-const historical = process.env.JEV_HISTORICAL_SOURCE_ROOT
-  ? await import(pathToFileURL(join(process.env.JEV_HISTORICAL_SOURCE_ROOT, 'evals/codex-historical-workloads.mjs')).href)
-  : undefined;
 assert(Object.hasOwn(historical?.cases ?? cases, name));
 assert(process.env.JEV_EVAL_CAPTURE_DIR);
 const rawDirectory = await externalEvidenceDirectory(process.env.JEV_EVAL_CAPTURE_DIR);
@@ -30,13 +32,24 @@ if (collect) {
 } else {
   const pruned = process.env.JEV_EVAL_ARM === 'pruned';
   assert(['pruned', 'native'].includes(process.env.JEV_EVAL_ARM));
+  const deliveredDirectory = await externalEvidenceDirectory(process.env.JEV_EVAL_DELIVERED_DIR);
+  const stdout = [];
   const child = spawn('node', [
     ...(pruned ? [
       '--import', join(repo, 'tests/fixtures/codex-observer.mjs'),
       join(process.env.JEV_CODEX_PLUGIN_ROOT, 'dist/codex/run.js'), '--', 'node',
     ] : []),
     fileURLToPath(import.meta.url), '--collect', name,
-  ], { stdio: 'inherit' });
+  ], { stdio: ['inherit', 'pipe', 'inherit'] });
+  child.stdout.on('data', chunk => {
+    stdout.push(chunk);
+    process.stdout.write(chunk);
+  });
   child.on('error', error => { throw error; });
-  child.on('close', code => { process.exitCode = code ?? 1; });
+  child.on('close', async code => {
+    process.exitCode = code ?? 1;
+    await writeFile(join(deliveredDirectory, `${randomUUID()}.json`),
+      JSON.stringify({ evidenceMarker, output: Buffer.concat(stdout).toString('utf8'), code }, null, 2),
+      { mode: 0o600 });
+  });
 }

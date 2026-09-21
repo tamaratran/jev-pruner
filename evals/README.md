@@ -628,6 +628,86 @@ and uncached tokens separately and reprice all input as uncached as a sensitivit
 check. Dollar values are API-equivalent reference estimates, not subscription
 charges. Review and sanitize the evidence before sharing.
 
+### Historical repository cohort
+
+Five pinned upstream defects and their original regression tests are under
+`historical/`: Click prompt suffixes, Flask redirect sessions, pytest custom
+warnings, pip wheel requirements, and Hatch source-distribution metadata. The
+tasks were selected and reproduced independently of pruning activation.
+The full Click and Flask runtime suites and the relevant warning, requirement,
+and metadata suites run at normal verbose pytest settings. No output is padded.
+The three pip network tests are excluded; upstream platform skips remain.
+
+```sh
+npm run build
+export JEV_HISTORICAL_CACHE=/path/to/new-fixture-cache
+export JEV_EVAL_CASES=click,flask,pytest,pip,hatch
+node evals/codex-historical-workloads.mjs
+export JEV_EVAL_SUITE=historical
+node evals/codex-repair-cohort.mjs /path/to/new-evidence-directory preflight
+node evals/codex-repair-cohort.mjs /path/to/new-evidence-directory run
+```
+
+Preparation needs Python 3.12 and network access for pinned upstream revisions
+and pinned Python dependencies. Trials and repair oracles use offline commands.
+The setup validates the broken parent, the upstream source fix, source imports,
+and expected test counts. Every trial copies an identical baseline without git
+history or the known source fix. The grader restores pristine tests and config
+in a separate workspace and copies only allowed source edits before verification.
+It requires the original successful test/skip counts, not just exit status zero.
+
+Five excluded preflight repairs check instrumentation, then three repetitions
+per arm produce **30 comparison trials**. Unlike the constructed cohort,
+preflight does not require every task to activate: short and unchanged outputs
+remain activation/overhead diagnostics. No task is replaced based on activation
+or success. The policy is frozen from PR #66; the 100,000-token tool-output
+budget is identical across both arms and prevents host truncation of natural
+verbose suites. Model settings, source hashes, complete fixture hashes,
+dependency versions, task order, reference prices, and inclusion rules are
+recorded before inference.
+
+These are five Python repair tasks with visible upstream regression tests,
+not a broad language/build/install benchmark. Historical bugs may have been
+seen during model training. The diagnostic collector and uncontrolled shared
+prompt caching limitations above still apply.
+
+### Bounded Codex execution and fixed-price comparisons
+
+Set `JEV_EVAL_CONCURRENCY` to a positive integer (default `1`) before preflight.
+The limit applies to independent pairs; each pair's arms remain sequential in
+their predeclared order. Each trial has a separate workspace and external observer
+directory. Checkpoints are serialized, and concurrency is frozen in the protocol.
+Choose a limit appropriate for the machine and subscription; this does not
+provision remote workers. A local run's latency includes shared-machine contention.
+
+`normalized_cost_usd` is the primary reference metric: all Codex input tokens,
+including cached tokens, at $5/M, output at $30/M, plus Jev input at $0.042/M.
+Observed-cache reference estimates remain secondary and apply the documented
+long-context price tier when a request exceeds 272K input tokens. Fixed-price repricing is
+not a cold-cache experiment or a subscription bill. Reasoning output is reported
+separately but is already included in output tokens and is not charged twice.
+
+Additional historical fixtures cover Requests adapters, HTTPX empty zstd bodies,
+Rich prompt markup, Packaging marker versions, and attrs field-transformer
+generators. Select fixtures with `JEV_EVAL_CASES` before initialization and preflight;
+the same inventory must be used during measurement. Requests checks its complete
+one-test adapter module, not its HTTP/TLS integration suites; HTTPX and Rich use
+complete relevant modules, while Packaging and attrs use their full suites.
+The attrs fixture places Hypothesis's generated cache under `.pytest_cache`;
+automatic Unicode-table writes therefore do not count as source edits.
+
+Packaging's verbose suite exceeds one million tokenizer tokens. The adapter
+captures exact pre-host delivery under `observer/delivered`, then audits the
+visible output against either that delivery or Codex's UTF-8 prefix/suffix
+truncation, including its earlier 1 MiB output-collection cap and omission notice.
+Both arms retain the same output budget. Raw removal does not
+qualify as effective pruning unless the visible result is shorter than the
+minimum native preview. Unrecognized or split outputs remain audit failures.
+The byte-budget preview algorithm follows
+[Codex's output implementation](https://github.com/openai/codex/blob/rust-v0.152.1/codex-rs/core/src/tools/context.rs)
+and [collection buffer](https://github.com/openai/codex/blob/rust-v0.152.1/codex-rs/core/src/unified_exec/head_tail_buffer.rs);
+live preflight must verify the installed CLI's exact rendering.
+
 ### Evidence isolation
 
 The repair cohort stores raw diagnostic records and Jev request/response captures
@@ -673,6 +753,7 @@ all policy code comes from the current build.
 
 ```sh
 export JEV_HISTORICAL_SOURCE_ROOT=/path/to/historical-fixture-checkout
+unset JEV_EVAL_SUITE
 export JEV_HISTORICAL_CACHE=/path/to/prepared-historical-cache
 export JEV_CODEX_PLUGIN_ROOT="$PWD"
 export JEV_EVAL_CASES=click,flask,hatch

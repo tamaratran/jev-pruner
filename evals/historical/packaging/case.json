@@ -1,0 +1,247 @@
+{
+  "name": "packaging",
+  "repository": "https://github.com/pypa/packaging",
+  "base_commit": "ead9d34f9b6a5e504a4563d9246f76d37a112e85",
+  "fix_commit": "c385b58c4d0e4d66f5c8273ebb155801c92aadf3",
+  "issue_url": "https://github.com/pypa/packaging/issues/678",
+  "description": "Upstream PR #825, merged 2024-08-27, fixes Marker.evaluate raising InvalidVersion when the caller explicitly supplies a python_full_version ending in '+', as produced by untagged Python builds. The immediate parent already handles the default environment but not caller overrides. The regression patch is the complete upstream test-only diff, updating the existing regression's expected behavior without adding or duplicating cases.",
+  "question": "Make Marker.evaluate accept python_full_version values from untagged Python builds when explicitly supplied in the environment, consistently with its default environment behavior. For example, evaluating python_full_version < '3.12' with python_full_version='3.11.1+' must return True rather than raise InvalidVersion. Preserve normal marker comparisons and environment overrides.",
+  "editable": [
+    "src/packaging/markers.py"
+  ],
+  "evidence": [
+    "tests/test_markers.py::TestMarker::test_python_full_version_untagged_user_provided FAILED",
+    "src/packaging/markers.py:325: in evaluate",
+    "E           packaging.version.InvalidVersion: Invalid version: '3.11.1+'",
+    "1 failed, 26845 passed"
+  ],
+  "diagnostic_args": [
+    "-m",
+    "pytest",
+    "-vv",
+    "--strict-markers",
+    "tests"
+  ],
+  "verify_args": [
+    "-m",
+    "pytest",
+    "-vv",
+    "--strict-markers",
+    "tests"
+  ],
+  "environment": {
+    "PYTHONPATH": "{workspace}/src",
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "LC_ALL": "C.UTF-8"
+  },
+  "license": "Apache-2.0 OR BSD-2-Clause",
+  "validation": {
+    "status": "validated",
+    "validated_at": "2026-09-21",
+    "upstream_pr": "https://github.com/pypa/packaging/pull/825",
+    "upstream_fix_url": "https://github.com/pypa/packaging/commit/c385b58c4d0e4d66f5c8273ebb155801c92aadf3",
+    "candidate_selection": {
+      "seriously_attempted_count": 1,
+      "attempts": [
+        {
+          "fix_commit": "c385b58c4d0e4d66f5c8273ebb155801c92aadf3",
+          "issue_url": "https://github.com/pypa/packaging/issues/678",
+          "status": "validated",
+          "reason": "Small documented non-security marker evaluation bug with a genuine upstream regression, a single editable source file, and a fully local test suite. Selection did not use output length, pruning behavior, or predicted model performance.",
+          "observed_result": "The complete upstream suite has exactly one failure on the parent plus regression patch (InvalidVersion for '3.11.1+'); all 26846 tests pass after the genuine repair and in the source-only oracle."
+        }
+      ],
+      "read_only_screening": [
+        {
+          "fix_commit": "8f5bd461e4e7391e5fdb420e701daeda3d5b4710",
+          "decision": "Not attempted: upstream pickle test only performs an in-process round trip, while the described bug concerns cached hashes across processes."
+        },
+        {
+          "fix_commit": "2680259b4fa88885962e1b6f1cca9d92a3e605ca",
+          "decision": "Not attempted: preferred marker evaluation's narrower functional change over a parser fix that also changes eval to compile."
+        }
+      ],
+      "unused_check": "After fetching all origin branches, git log --all -- evals/historical/packaging and git log --all -G 'github.com/pypa/packaging|\"name\": \"packaging\"' -- evals both returned no commits. Existing historical cases are click, flask, pytest, pip, and hatch.",
+      "shallow_status": "Both handoff and upstream repositories returned false before any history search. All history searches used pathspecs."
+    },
+    "suite_selection": "Full upstream tests/ suite for this small project; pytest -vv with upstream nox's --strict-markers. Identical diagnostic and verification argv. 26846 collected items in both states, with no skips, xfails, errors, or deselections. No filters, duplicate tests, or output padding.",
+    "regression_node": "tests/test_markers.py::TestMarker::test_python_full_version_untagged_user_provided",
+    "declared_exclusions_before_testing": [],
+    "platform_network_assessment_before_testing": "No exclusions required on Linux CPython 3.12 with ctypes available. Existing upstream platform skip/xfail conditions remain unchanged. Tests use bundled ELF samples and in-process mocks; URLs in parser and metadata tests are data, not network calls. All diagnostics and grading will run in isolated network namespaces.",
+    "platform": "Ubuntu 22.04 Linux x86_64, non-root uid 1000",
+    "python": "CPython 3.12.13",
+    "upstream_package_version": "24.2.dev0",
+    "dependencies": {
+      "pip": "25.0.1",
+      "pytest": "8.3.5",
+      "pretend": "1.0.9",
+      "coverage": "7.6.1",
+      "iniconfig": "2.1.0",
+      "pluggy": "1.5.0",
+      "flit_core": "3.10.1"
+    },
+    "dependency_release_dates": {
+      "pip==25.0.1": "2025-02-09T17:14:01.463742Z",
+      "pytest==8.3.5": "2025-03-02T12:54:52.069556Z",
+      "pretend==1.0.9": "2018-04-14T14:31:04.213995Z",
+      "coverage==7.6.1": "2024-08-04T19:43:07.695630Z",
+      "iniconfig==2.1.0": "2025-03-19T20:09:59.721246Z",
+      "pluggy==1.5.0": "2024-04-20T21:34:40.434532Z",
+      "flit_core==3.10.1": "2024-11-02T16:22:07.572606Z"
+    },
+    "dependency_release_date_source": "https://pypi.org/pypi/{package}/{version}/json, minimum urls[].upload_time_iso_8601; checked 2026-09-21. All releases exceed the seven-day minimum age and provide wheels.",
+    "build_requirements": {
+      "flit_core": "3.10.1"
+    },
+    "workspace_metadata": "The pinned flit_core backend generates src/packaging-24.2.dev0.dist-info/{METADATA,WHEEL} in each workspace so pytest's packaging distribution requirement is satisfied by the workspace. No packaging wheel, installed duplicate, editable install, or absolute-path binding is added to the shared venv. PYTHONPATH selects each workspace's src directory. pip check passes with that declared environment.",
+    "setup_reuse": "A missing VENV is created and populated with the exact pinned wheel set. An existing VENV is never installed into or upgraded: setup asserts Python 3.12 and exact distribution versions before generating workspace-local metadata. A mismatched or incomplete existing venv fails rather than mutating dependencies.",
+    "system_dependencies": [
+      "Python 3.12 with venv",
+      "bash",
+      "GNU realpath",
+      "C.UTF-8 locale",
+      "git and tar for harness archive preparation"
+    ],
+    "patch_provenance": {
+      "regression_command": "git diff ead9d34f9b6a5e504a4563d9246f76d37a112e85 c385b58c4d0e4d66f5c8273ebb155801c92aadf3 -- tests/test_markers.py",
+      "repair_command": "git diff ead9d34f9b6a5e504a4563d9246f76d37a112e85 c385b58c4d0e4d66f5c8273ebb155801c92aadf3 -- src/packaging/markers.py",
+      "regression_sha256": "f6f0140d5d8160b971c30c2e4d253491f5737ddc5dbf116674d7e691530739b4",
+      "repair_sha256": "de68efea41aa6e156ebb7ea4619e90dc045f5275621fe4b4f3f51931733940cc",
+      "immediate_parent_check": "git rev-list --parents -n 1 c385b58c4d0e4d66f5c8273ebb155801c92aadf3 returns exactly the fix and ead9d34f9b6a5e504a4563d9246f76d37a112e85.",
+      "checks": "Both patches compare byte-for-byte to their scoped upstream git diffs. The complete fix changes only these two files. The patched test and repaired source compare byte-for-byte with the upstream fix blobs. The broken source compares byte-for-byte with the parent blob. Both patches apply cleanly in regression-then-repair order.",
+      "licenses": "LICENSE, LICENSE.APACHE, and LICENSE.BSD are copied unmodified from the immediate parent."
+    },
+    "commands": {
+      "context": "All suite commands use cwd=workspace and the case environment with {workspace} substituted. The actual harness also sets PYTHONDONTWRITEBYTECODE=1, PYTEST_ADDOPTS='', and NO_COLOR=1. Paths below are the validation locations; use fresh directories to repeat.",
+      "archive_base": "git -C /home/ubuntu/repos/packaging archive ead9d34f9b6a5e504a4563d9246f76d37a112e85 | tar -xf - -C /home/ubuntu/packaging-validation/cache/packaging/baseline",
+      "archive_fixed": "git -C /home/ubuntu/repos/packaging archive ead9d34f9b6a5e504a4563d9246f76d37a112e85 | tar -xf - -C /home/ubuntu/packaging-validation/cache/packaging/fixed-check",
+      "apply_regression_in_each_archive": "git apply /home/ubuntu/repos/jev-pruner/evals/historical/packaging/regression.patch",
+      "base_setup": "bash /home/ubuntu/repos/jev-pruner/evals/historical/packaging/setup.sh /home/ubuntu/packaging-validation/cache/packaging/baseline /home/ubuntu/packaging-validation/cache/packaging/venv",
+      "fixed_setup_same_venv": "PIP_NO_INDEX=1 unshare --user --map-current-user --net bash /home/ubuntu/repos/jev-pruner/evals/historical/packaging/setup.sh /home/ubuntu/packaging-validation/cache/packaging/fixed-check /home/ubuntu/packaging-validation/cache/packaging/venv",
+      "repair_in_fixed_archive": "git apply /home/ubuntu/repos/jev-pruner/evals/historical/packaging/repair.patch",
+      "diagnostic_and_verify": "/home/ubuntu/packaging-validation/cache/packaging/venv/bin/python -m pytest -vv --strict-markers tests",
+      "harness_execution": "Imported cases, diagnostic, grade, execute, and testCounts from the unchanged evals/codex-historical-workloads.mjs. Set cases.packaging to this case definition in memory and JEV_HISTORICAL_CACHE=/home/ubuntu/packaging-validation/cache. Ran diagnostic('packaging', baseline), diagnostic('packaging', fixed), diagnostic('packaging', fixed, true), then grade('packaging', fixed). No existing fixture was initialized or executed.",
+      "offline_validation_wrapper": "unshare --user --map-current-user --net node /home/ubuntu/packaging-validation/validate.mjs diagnostics",
+      "oracle_preparation": "The actual grade function copied baseline to a fresh oracle directory, copied only src/packaging/markers.py from fixed, and ran verify_args with the same venv; validation.json contained the observed fixed_counts.",
+      "dependency_check": "PYTHONPATH=<workspace>/src /home/ubuntu/packaging-validation/cache/packaging/venv/bin/python -m pip check",
+      "installed_distribution_check": "/home/ubuntu/packaging-validation/cache/packaging/venv/bin/python -I -m pip freeze --all",
+      "shell_syntax": "bash -n evals/historical/packaging/setup.sh",
+      "shell_lint": "/home/ubuntu/packaging-tools-venv/bin/shellcheck evals/historical/packaging/setup.sh (ShellCheck 0.10.0)",
+      "json_syntax": "python3.12 -m json.tool evals/historical/packaging/case.json",
+      "validation_driver_syntax": "node --check /home/ubuntu/packaging-validation/validate.mjs"
+    },
+    "results": {
+      "base_diagnostic": {
+        "exit_code": 1,
+        "timed_out": false,
+        "counts": {
+          "passed": 26845,
+          "failed": 1,
+          "error": 0,
+          "skipped": 0,
+          "xfailed": 0,
+          "deselected": 0
+        },
+        "output_characters": 3137963,
+        "output_bytes": 3137963,
+        "stderr_characters": 0,
+        "wall_seconds": 16.265,
+        "pytest_seconds": 15.7
+      },
+      "fixed_diagnostic": {
+        "exit_code": 0,
+        "timed_out": false,
+        "counts": {
+          "passed": 26846,
+          "failed": 0,
+          "error": 0,
+          "skipped": 0,
+          "xfailed": 0,
+          "deselected": 0
+        },
+        "output_characters": 3135722,
+        "output_bytes": 3135722,
+        "stderr_characters": 0,
+        "wall_seconds": 17.115,
+        "pytest_seconds": 16.49
+      },
+      "fixed_verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "counts": {
+          "passed": 26846,
+          "failed": 0,
+          "error": 0,
+          "skipped": 0,
+          "xfailed": 0,
+          "deselected": 0
+        },
+        "output_characters": 3135722,
+        "output_bytes": 3135722,
+        "stderr_characters": 0,
+        "wall_seconds": 17.019,
+        "pytest_seconds": 16.44
+      },
+      "oracle_verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "counts": {
+          "passed": 26846,
+          "failed": 0,
+          "error": 0,
+          "skipped": 0,
+          "xfailed": 0,
+          "deselected": 0
+        },
+        "output_characters": 3135717,
+        "output_bytes": 3135717,
+        "stderr_characters": 0,
+        "wall_seconds": 16.383,
+        "pytest_seconds": 15.81
+      }
+    },
+    "measurement": "The unchanged harness measures wall time with Date.now around subprocess execution. Output characters use JavaScript string length of stdout; the command combines pytest stdout/stderr with 2>&1. Output bytes use UTF-8 byte length; this run's output is ASCII. Counts come from the harness testCounts function. The natural upstream parameterization accounts for all 26846 items; no tests or output were added for volume. Paths, object addresses, and timings may vary.",
+    "archive_contract": {
+      "fresh_git_archives": [
+        "baseline",
+        "fixed-check"
+      ],
+      "oracle_from_pristine_baseline": true,
+      "all_workspaces_without_git": true,
+      "same_venv_for_all_states": true,
+      "dependency_hashes_unchanged_after_reuse_and_testing": true,
+      "venv_files_hashed_excluding_bytecode": 651,
+      "reuse_setup_offline": true,
+      "initial_setup_wall_seconds": 3.784,
+      "fixed_reuse_setup_wall_seconds": 0.417,
+      "source_import_checks": [
+        "packaging.__file__ == <workspace>/src/packaging/__init__.py",
+        "packaging.markers.__file__ == <workspace>/src/packaging/markers.py",
+        "importlib.metadata.version('packaging') == packaging.__version__ == '24.2.dev0'",
+        "All checks passed for baseline after fixed setup, fixed-check, and the oracle."
+      ],
+      "installed_packaging_duplicate": false,
+      "oracle_only_copied_source": "src/packaging/markers.py",
+      "oracle_immutable_files_sha256_checked": 86,
+      "baseline_files_sha256_checked": 87,
+      "repair_patch_present_in_workspaces": false,
+      "all_tests_network_isolated": true,
+      "network_isolation_method": "Linux unshare --user --map-current-user --net, retaining uid 1000. The validation process verified that socket.if_nameindex() contains only lo and an external connection is rejected with errno 101. This wrapper is for validation and is not added to diagnostic_args or verify_args.",
+      "integrity": "Hashes taken after setup show identical independently archived baselines. After testing, baseline and fixed files retain their respective hashes; oracle matches fixed, including every pristine test/configuration file. Only pytest caches and Python bytecode are excluded from hash comparisons. No patch files, source archives, venvs, or logs are placed in model-visible source or committed."
+    },
+    "restrictions": [
+      "No Codex, Jev, model comparison, or evaluation trial is run.",
+      "No source fix or repair.patch is placed in the broken archive.",
+      "Tests and configuration are unchanged except the genuine upstream regression diff.",
+      "No external network during diagnostics, verification, or oracle grading.",
+      "Only fixture files under evals/historical/packaging are committed; no shared registration or harness changes."
+    ],
+    "known_gaps": [
+      "Validated on Linux x86_64 with CPython 3.12.13 only; no platform or network exclusions were necessary and every collected test ran.",
+      "Initial setup downloads pinned PyPI wheels. Reusing the same venv and all diagnostic, verification, and oracle commands were validated without external networking.",
+      "This validates the full runtime pytest suite, not nox's separate coverage threshold, documentation build, or upstream static-analysis sessions.",
+      "Shared harness registration is intentionally unchanged. Validation added the case to the exported cases object only in memory; the handoff owner must register it for the later authorized evaluation.",
+      "The validation driver, logs, generated metadata, environments, and source archives remain outside the fixture commit. Commands, provenance, counts, timings, and output lengths are preserved here."
+    ]
+  }
+}

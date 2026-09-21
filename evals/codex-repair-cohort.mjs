@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, readlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -8,9 +8,12 @@ import { contextPath } from '../dist/codex/context.js';
 import { estimateTokens } from '../dist/jev.js';
 import { commandOutput } from '../tests/fixtures/codex-transcript.mjs';
 import { execute, quote, repo } from './codex-repair-workloads.mjs';
+import { runConcurrent } from './codex-parallel.mjs';
+import { auditHostPreview, hostPreviews } from './codex-preview.mjs';
 import { assertNoEvidenceLeak, assertNoEvidenceStateLeak, evidenceMarker, externalEvidenceDirectory } from './observer/evidence-isolation.mjs';
 
-const historicalSource = process.env.JEV_HISTORICAL_SOURCE_ROOT;
+const historical = process.env.JEV_EVAL_SUITE === 'historical';
+const historicalSource = process.env.JEV_HISTORICAL_SOURCE_ROOT ?? (historical ? repo : undefined);
 const { cases, grade, prepare } = await import(historicalSource
   ? pathToFileURL(join(historicalSource, 'evals/codex-historical-workloads.mjs')).href
   : './codex-repair-workloads.mjs');
@@ -18,6 +21,8 @@ const names = process.env.JEV_EVAL_CASES?.split(',') ?? Object.keys(cases);
 assert(names.length > 0 && new Set(names).size === names.length && names.every(name => Object.hasOwn(cases, name)));
 const repetitions = Number(process.env.JEV_EVAL_REPETITIONS ?? 3);
 assert(Number.isInteger(repetitions) && repetitions > 0);
+const concurrency = Number(process.env.JEV_EVAL_CONCURRENCY ?? 1);
+assert(Number.isInteger(concurrency) && concurrency > 0);
 const outputBudget = historicalSource ? 100_000 : 30_000;
 const preserveExit = process.env.JEV_EVAL_PRESERVE_EXIT === 'true';
 
@@ -40,9 +45,15 @@ const list = async path => readdir(path).catch(error => {
 const model = 'gpt-5.5';
 const frozenFiles = [
   'evals/codex-repair-cohort.mjs', 'evals/codex-repair-workloads.mjs',
+  'evals/codex-parallel.mjs', 'evals/codex-preview.mjs',
   'evals/observer/codex-diagnostic.mjs', 'tests/fixtures/codex-observer.mjs',
   'evals/observer/evidence-isolation.mjs',
   'tests/fixtures/codex-transcript.mjs', 'codex/skills/jev-pruner/SKILL.md',
+  ...(historical && !process.env.JEV_HISTORICAL_SOURCE_ROOT ? [
+    'evals/codex-historical-workloads.mjs',
+    ...(await readdir(join(repo, 'evals/historical'), { recursive: true }))
+      .filter(path => /\.(json|sh|patch)$/.test(path)).map(path => `evals/historical/${path}`),
+  ] : []),
   ...(await readdir(join(repo, 'dist'), { recursive: true }))
     .filter(path => path.endsWith('.js')).map(path => `dist/${path}`),
 ];
@@ -51,6 +62,7 @@ for (const file of frozenFiles) {
   hashes[file] = hash(await readFile(join(repo, file)));
   if (file.startsWith('dist/')) assert.equal(hash(await readFile(join(plugin, file))), hashes[file]);
 }
+assert.equal(hash(await readFile(join(skill, 'SKILL.md'))), hashes['codex/skills/jev-pruner/SKILL.md']);
 assert.equal((await execute('codex --version', repo)).stdout.trim(), 'codex-cli 0.152.1');
 const login = await execute('codex login status', repo);
 assert.match(login.stdout + login.stderr, /Logged in using ChatGPT/);
@@ -68,19 +80,35 @@ if (phase === 'preflight') {
   await mkdir(root, { mode: 0o700 });
   protocol = {
     created: new Date().toISOString(), revision: (await execute('git rev-parse HEAD', repo)).stdout.trim(),
-    hashes, model, version: 'codex-cli 0.152.1', pairs,
-    historicalSource, historicalHashes, outputBudget, preserveExit,
-    evidence_layout: 'observer/{raw,jev} outside workspace; marker/path leakage invalidates instrumentation',
+    hashes, model, version: 'codex-cli 0.152.1', pairs, concurrency,
+    historicalSource, historicalHashes, historicalSuite: historical, outputBudget, preserveExit,
+    evidence_layout: 'observer/{raw,jev,delivered} outside workspace; marker/path leakage invalidates instrumentation',
     tool_versions: (await execute('node --version && npm --version && python3 --version && python3 -m pytest --version && node node_modules/typescript/bin/tsc --version', repo)).stdout.trim(),
-    scope: historicalSource ? `Targeted repeat of historical ${names.join(', ')} defects; previously seen tasks, not unseen validation.`
+    scope: historical ? `Historical Python repository bugs: ${names.join(', ')}. Upstream parent + original regression tests; no generated log amplification.`
+      : historicalSource ? `Targeted repeat of historical ${names.join(', ')} defects; previously seen tasks, not unseen validation.`
       : 'Constructed repair projects using real tsc, pytest, and offline npm. Not a real-project benchmark.',
     controls: `Fresh sessions/workspaces, identical prompts within pairs, balanced arm order, low reasoning, ${outputBudget}-token tool budget. Same plugin/skill loaded once in both arms. Shared subscription caching uncontrolled.`,
+    scheduling: 'Bounded parallel pairs; arms within each pair run sequentially. Preflight uses the same concurrency limit. Wall time includes shared-machine contention.',
+    primary_cost_metric: 'All model input tokens at $5/M, model output at $30/M, plus Jev input at $0.042/M. Cache discounts do not affect normalized cost. This is repricing, not a cold-cache experiment.',
+    secondary_cost_metric: 'Observed-cache reference estimate; sessions exceeding 272K input on any request use 2x input and 1.5x output pricing. Not a subscription charge or invoice. https://developers.openai.com/api/docs/models/gpt-5.5',
+    host_preview_audit: 'Capture exact pre-host delivery externally. Accept only exact output or a verified UTF-8 prefix/suffix preview. Pruning qualifies only if the visible result is shorter than the minimum native host preview; raw removal alone is insufficient.',
     diagnostic_adapter: preserveExit
       ? 'Collector merges stderr into stdout and preserves the real exit code. Only pruned arm invokes the production wrapper.'
       : 'Collector merges stderr into stdout, prints the true exit code, and exits zero to make failing diagnostics eligible.',
     inclusion: 'Both audited arms with complete usage, and actual pruning in plugin arm. No filtering on task success, answer correctness, or required-fact retention.',
-    task_grading: 'Independent verifier plus hidden semantic oracle and source integrity; final factual outcome and strict JSON format scored separately.',
-    preflight: `One excluded pruned repair per workflow must activate before ${pairs.length * 2} trials. No retries or tuning after freeze.`,
+    task_grading: historicalSource ? 'Restore pristine files, copy only permitted source edits into a separate oracle workspace, run upstream regression and related suite, require unchanged expected pass/skip counts. Regression tests are visible; oracle workspace and known repair are not. Reported outcome and strict JSON scored separately.'
+      : 'Independent verifier plus hidden semantic oracle and source integrity; final factual outcome and strict JSON format scored separately.',
+    preflight: historical ? `${names.length} excluded pruned repairs audit instrumentation. Tasks remain fixed regardless of activation, length, or accuracy. No policy tuning or retries after freeze.`
+      : `One excluded pruned repair per workflow must activate before ${pairs.length * 2} trials. No retries or tuning after freeze.`,
+    ...(historicalSource ? {
+      cases: Object.fromEntries(names.map(name => [name, cases[name]])),
+      validations: Object.fromEntries(await Promise.all(names.map(async name => [
+        name, await read(join(process.env.JEV_HISTORICAL_CACHE, name, 'validation.json')),
+      ]))),
+      baseline_hashes: Object.fromEntries(await Promise.all(names.map(async name => [
+        name, await tree(join(process.env.JEV_HISTORICAL_CACHE, name, 'baseline')),
+      ]))),
+    } : {}),
     prices: { input: 5, cached_input: 0.5, output: 30, jev_input: 0.042, unit: 'USD per million tokens',
       sources: ['https://developers.openai.com/api/docs/models/gpt-5.5', 'https://openrouter.ai/typesafe/jev-1.13'],
       caveat: 'Reference estimates, not ChatGPT subscription charges or TypeSafe invoices.' },
@@ -90,24 +118,31 @@ if (phase === 'preflight') {
   protocol = await read(join(root, 'protocol.json'));
   assert.deepEqual(hashes, protocol.hashes, 'Protocol source changed');
   assert.deepEqual(historicalHashes, protocol.historicalHashes, 'Historical source changed');
+  assert.equal(historical, protocol.historicalSuite, 'Historical cohort mode changed');
   assert.deepEqual(pairs, protocol.pairs, 'Trial plan changed');
   assert.equal(outputBudget, protocol.outputBudget);
   assert.equal(preserveExit, protocol.preserveExit);
+  assert.equal(concurrency, protocol.concurrency, 'Concurrency changed');
   const preflight = await read(join(root, 'preflight.json'));
   assert.equal(preflight.length, names.length);
-  assert(preflight.every(row => row.audit_pass && row.pruned), 'Activation preflight failed');
+  assert(preflight.every(row => row.audit_pass && (historical || row.pruned)), 'Preflight failed');
   assert.equal((await list(join(root, 'trials'))).length, 0, 'Trials already started');
 }
 await mkdir(join(root, phase === 'preflight' ? 'preflight' : 'trials'));
 const rows = [];
+let checkpoint = Promise.resolve();
 
 async function tree(directory) {
   const result = {};
   const walk = async (path, prefix = '') => {
     for (const entry of await readdir(path, { withFileTypes: true })) {
-      if (['node_modules', 'dist', '.jev-pruner', '.npm-cache', '__pycache__', '.pytest_cache'].includes(entry.name)) continue;
+      if ((historicalSource
+        ? ['.jev-pruner', '__pycache__', '.pytest_cache']
+        : ['node_modules', 'dist', '.jev-pruner', '.npm-cache', '__pycache__', '.pytest_cache'])
+        .includes(entry.name)) continue;
       const relative = prefix + entry.name;
       if (entry.isDirectory()) await walk(join(path, entry.name), relative + '/');
+      else if (entry.isSymbolicLink()) result[relative] = `symlink:${await readlink(join(path, entry.name))}`;
       else if (entry.isFile() && relative !== 'installation-ok.json') {
         result[relative] = hash(await readFile(join(path, entry.name)));
       }
@@ -131,11 +166,13 @@ async function trial(pair, arm) {
   const observerDirectory = await externalEvidenceDirectory(join(evidence, 'observer'), cwd);
   const rawDirectory = await externalEvidenceDirectory(join(observerDirectory, 'raw'), cwd);
   const captureDirectory = await externalEvidenceDirectory(join(observerDirectory, 'jev'), cwd);
+  const deliveredDirectory = await externalEvidenceDirectory(join(observerDirectory, 'delivered'), cwd);
   const initial = await tree(cwd);
+  if (historicalSource) assert.deepEqual(initial, protocol.baseline_hashes[pair.name], 'Baseline changed');
   await save(join(evidence, 'fixture-hashes.json'), initial);
   const command = `node ${quote(diagnostic)} ${pair.name}`;
   const prompt = `${cases[pair.name].question}
-First read ${quote(join(skill, 'SKILL.md'))} exactly once. The evaluation adapter already applies the assigned output treatment; do not add wrappers.
+${historicalSource ? `Only edit ${cases[pair.name].editable.join(', ')}. Do not modify tests, configuration, or dependencies.\n` : ''}First read ${quote(join(skill, 'SKILL.md'))} exactly once. The evaluation adapter already applies the assigned output treatment; do not add wrappers.
 Next run exactly this diagnostic command with yield_time_ms=1000 and max_output_tokens=${outputBudget}:
 ${command}
 Poll it to completion with max_output_tokens=${outputBudget}. Then inspect project files, repair the defect, and rerun that same diagnostic command to verify. Use it for all verbose build/test/install runs.
@@ -153,10 +190,12 @@ Return only a JSON object with outcome ("fixed" or "not_fixed"), cause, and chan
   const result = await execute(`codex ${args.map(quote).join(' ')}`, cwd, {
     ...process.env, JEV_EVAL_ARM: arm, JEV_CODEX_PLUGIN_ROOT: plugin,
     JEV_EVAL_CAPTURE_DIR: rawDirectory, JEV_OBSERVER_CAPTURE_DIR: captureDirectory,
+    JEV_EVAL_DELIVERED_DIR: deliveredDirectory,
   }, 600_000);
   await save(join(evidence, 'execution.json'), result);
   const row = { pair: pair.id, workload: pair.name, arm, seconds: result.seconds, evidence_isolation_pass: false };
   const after = await tree(cwd);
+  await save(join(evidence, 'final-file-hashes.json'), after);
   row.unexpected_changes = [...new Set([...Object.keys(initial), ...Object.keys(after)])]
     .filter(file => !cases[pair.name].editable.includes(file) && initial[file] !== after[file]);
   const oracle = await grade(pair.name, cwd);
@@ -181,6 +220,19 @@ Return only a JSON object with outcome ("fixed" or "not_fixed"), cause, and chan
     assert(session, 'Missing session');
     const pointer = await read(contextPath(session));
     const transcript = (await readFile(pointer.transcript, 'utf8')).split('\n').filter(Boolean).map(JSON.parse);
+    const tokenEvents = transcript.filter(entry =>
+      entry.type === 'event_msg' && entry.payload.type === 'token_count' && entry.payload.info);
+    row.reasoning_output_tokens = tokenEvents.at(-1)?.payload.info.total_token_usage.reasoning_output_tokens ?? null;
+    row.peak_request_input_tokens = Math.max(0, ...tokenEvents.map(entry =>
+      entry.payload.info.last_token_usage.input_tokens));
+    row.long_context_pricing = row.peak_request_input_tokens > 272_000;
+    if (row.long_context_pricing) {
+      row.model_estimated_usd = (row.uncached_input_tokens * 10 +
+        row.usage.cached_input_tokens + row.usage.output_tokens * 45) / 1e6;
+    }
+    await save(join(evidence, 'token-events.json'), tokenEvents.map(entry => ({
+      timestamp: entry.timestamp, info: entry.payload.info,
+    })));
     const responses = transcript.filter(entry => entry.type === 'response_item').map(entry => entry.payload);
     await save(join(evidence, 'responses.json'), responses);
     assert(transcript.some(entry => entry.type === 'turn_context' && entry.payload.model === model));
@@ -199,7 +251,9 @@ Return only a JSON object with outcome ("fixed" or "not_fixed"), cause, and chan
     assert.equal((await list(join(cwd, '.eval-raw'))).length, 0, 'Raw diagnostics inside workspace');
     const raw = [];
     for (const file of await list(rawDirectory)) raw.push(await read(join(rawDirectory, file)));
+    const delivered = await Promise.all((await list(deliveredDirectory)).map(file => read(join(deliveredDirectory, file))));
     assert(raw.every(capture => capture.evidenceMarker === evidenceMarker), 'Missing evidence marker');
+    assert(delivered.every(capture => capture.evidenceMarker === evidenceMarker), 'Missing delivery marker');
     const outputs = responses.filter(entry => /^(function_call_output|custom_tool_call_output)$/.test(entry.type))
       .map(commandOutput).filter(text => text !== undefined);
     for (const text of outputs) assertNoEvidenceLeak(text, [observerDirectory]);
@@ -207,37 +261,47 @@ Return only a JSON object with outcome ("fixed" or "not_fixed"), cause, and chan
     const visible = outputs.filter(text => /(?:^|\n)Exit status: \d+\n/.test(text));
     assert(raw.length > 0, 'Diagnostic never ran');
     assert.equal(visible.length, raw.length, 'Missing or split diagnostic output');
+    assert.equal(delivered.length, raw.length, 'Missing delivery capture');
     row.diagnostics = [];
     const unused = [...raw];
+    const unusedDelivered = [...delivered];
     for (let index = 0; index < visible.length; index += 1) {
       const text = visible[index];
-      assert(!/\d+ (?:tokens|characters) truncated|Warning: truncated output/.test(text), 'Host truncation');
-      const pruned = text.includes('[fast-jev-output trimmed');
+      const deliveredIndex = unusedDelivered.findIndex(entry => hostPreviews(entry.output, outputBudget).includes(text));
+      assert(deliveredIndex >= 0, 'No exact delivery/host-preview match');
+      const [delivery] = unusedDelivered.splice(deliveredIndex, 1);
+      const hostTruncated = auditHostPreview(text, delivery.output, outputBudget);
+      const wrapperPruned = delivery.output.includes('[fast-jev-output trimmed');
       let original;
-      if (pruned) {
+      if (wrapperPruned) {
         assert.equal(arm, 'pruned');
-        const archive = text.match(/\[fast-jev-output full output: (.*?) \(Read or grep it if needed\)\]/)?.[1];
+        const archive = delivery.output.match(/\[fast-jev-output full output: (.*?) \(Read or grep it if needed\)\]/)?.[1];
         assert(archive, 'Missing archive footer');
         original = await readFile(archive, 'utf8');
         const lines = new Set(original.split('\n'));
-        assert(text.split('\n').every(line => !line || line.startsWith('[fast-jev-output') || lines.has(line)),
+        assert(delivery.output.split('\n').every(line => !line || line.startsWith('[fast-jev-output') || lines.has(line)),
           'Retained text changed');
-        assert(text.length < original.length);
+        assert(delivery.output.length < original.length);
       } else {
-        original = text;
+        original = delivery.output;
       }
       const match = unused.findIndex(entry => entry.output === original);
       assert(match >= 0, 'Original/archive does not match captured output');
       const [captured] = unused.splice(match, 1);
+      if (preserveExit) assert.equal(delivery.code, captured.code, 'Diagnostic exit status changed');
+      const nativePreviewChars = Math.min(...hostPreviews(original, outputBudget).map(preview => preview.length));
+      const pruned = wrapperPruned && text.length < nativePreviewChars;
       row.diagnostics.push({
         original_chars: original.length, visible_chars: text.length, pruned,
+        delivered_chars: delivery.output.length, wrapper_pruned: wrapperPruned,
+        host_truncated: hostTruncated, native_preview_min_chars: nativePreviewChars,
         original_estimated_tokens: estimateTokens(original), exit_code: captured.code,
-        archive_exact: pruned ? true : null, retained_lines_verbatim: true,
+        archive_exact: wrapperPruned ? true : null, retained_lines_verbatim: true,
         required_facts_visible: index === 0 ? cases[pair.name].evidence.every(fact => text.includes(fact)) : null,
       });
       await writeFile(join(evidence, `visible-${index}.txt`), text);
     }
-    assert(row.diagnostics[0].original_estimated_tokens > 10_000, 'Below activation threshold');
+    if (!historicalSource) assert(row.diagnostics[0].original_estimated_tokens > 10_000, 'Below activation threshold');
     assert.notEqual(row.diagnostics[0].exit_code, 0, 'Fixture did not fail');
     row.pruned = row.diagnostics.some(output => output.pruned);
     row.required_facts_visible = row.diagnostics[0].required_facts_visible;
@@ -288,18 +352,22 @@ Return only a JSON object with outcome ("fixed" or "not_fixed"), cause, and chan
   if (row.model_estimated_usd !== undefined && row.jev_estimated_usd !== null) {
     row.total_estimated_usd = row.model_estimated_usd + row.jev_estimated_usd;
     row.total_all_uncached_usd = row.model_all_uncached_usd + row.jev_estimated_usd;
+    row.normalized_cost_usd = row.total_all_uncached_usd;
   }
   await save(join(evidence, 'result.json'), row);
   rows.push(row);
-  await save(join(root, phase === 'preflight' ? 'preflight.json' : 'results.json'), rows);
+  checkpoint = checkpoint.then(() => save(join(root, phase === 'preflight' ? 'preflight.json' : 'results.json'), rows));
+  await checkpoint;
   console.log(`${pair.id}-${arm}: audit=${row.audit_pass} pruning=${row.pruned} task=${row.task_pass} Jev=${row.jev_requests} ${row.error ?? ''}`);
 }
 
 if (phase === 'preflight') {
-  for (const name of names) await trial({ id: name, name }, 'pruned');
-  assert(rows.every(row => row.audit_pass && row.pruned), 'Preflight did not qualify all workflows');
+  await runConcurrent(names, concurrency, name => trial({ id: name, name }, 'pruned'));
+  assert(rows.every(row => row.audit_pass && (historical || row.pruned)), 'Preflight did not qualify all workflows');
 } else {
-  for (const pair of pairs) for (const arm of pair.arms) await trial(pair, arm);
+  await runConcurrent(pairs, concurrency, async pair => {
+    for (const arm of pair.arms) await trial(pair, arm);
+  });
   const qualifying = pairs.filter(pair => {
     const matched = rows.filter(row => row.pair === pair.id);
     return matched.length === 2 && matched.every(row => row.audit_pass) &&

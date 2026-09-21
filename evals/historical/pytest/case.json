@@ -1,0 +1,290 @@
+{
+  "name": "pytest",
+  "repository": "https://github.com/pytest-dev/pytest",
+  "base_commit": "6ef0cf150ab234eaa631e54b3122e2f01571eafb",
+  "fix_commit": "9b838f491f895c8b46778c38953295364999aaee",
+  "issue_url": "https://github.com/pytest-dev/pytest/issues/11906",
+  "description": "Real upstream regression fixed on 2024-02-16: pytest.warns mishandles custom Warning subclasses with multiple required constructor arguments when a warning does not match the requested expression. The exact upstream test is added to the immediate broken parent; the source fix is kept separately.",
+  "question": "pytest.warns must support custom Warning subclasses whose constructors require multiple arguments. A nonmatching warning inside nested warning checks currently raises TypeError and fails to reach the outer warning catcher. Restore the expected warning-checking behavior while preserving existing warning matching and exception behavior.",
+  "editable": [
+    "src/_pytest/recwarn.py"
+  ],
+  "evidence": [
+    "test_multiple_arg_custom_warning",
+    "Emitted warnings: [CustomWarning(1, 2)].",
+    "TypeError: test_multiple_arg_custom_warning.<locals>.CustomWarning.__init__() missing 1 required positional argument: 'b'",
+    "testing/test_recwarn.py:595: TypeError",
+    "FAILED testing/test_recwarn.py::test_multiple_arg_custom_warning",
+    "1 failed, 116 passed, 3 skipped"
+  ],
+  "diagnostic_args": [
+    "-m",
+    "pytest",
+    "-vv",
+    "testing/test_recwarn.py",
+    "testing/test_warnings.py",
+    "testing/test_warning_types.py"
+  ],
+  "verify_args": [
+    "-m",
+    "pytest",
+    "-q",
+    "-ra",
+    "testing/test_recwarn.py",
+    "testing/test_warnings.py",
+    "testing/test_warning_types.py"
+  ],
+  "environment": {
+    "PYTHONPATH": "{workspace}/src",
+    "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "PYTHONHASHSEED": "0",
+    "LC_ALL": "C.UTF-8",
+    "TERM": "dumb"
+  },
+  "license": "MIT; upstream copyright and permission notice retained in LICENSE",
+  "validation": {
+    "validated_on": "2026-09-19",
+    "package_checks": {
+      "bash_syntax": "bash -n evals/historical/pytest/setup.sh: passed",
+      "shell_lint": "ShellCheck 0.10.0 evals/historical/pytest/setup.sh: passed",
+      "json_syntax": "python3.12 -m json.tool evals/historical/pytest/case.json: passed",
+      "embedded_python": "All three setup.sh Python heredocs passed ruff 0.12.12 and mypy with the reusable Python 3.12 venv.",
+      "patch_provenance": "Both patches are byte-identical to git diff BASE FIX scoped respectively to testing/test_recwarn.py and src/_pytest/recwarn.py. The resulting regression test module matches the fix commit byte for byte.",
+      "evidence": "Every evidence string was checked literally against the recorded broken diagnostic stdout."
+    },
+    "fix_url": "https://github.com/pytest-dev/pytest/commit/9b838f491f895c8b46778c38953295364999aaee",
+    "candidate_count": 1,
+    "selection_rationale": "Small documented warning API regression with one original regression test and one source file. Selected for semantic clarity and Python 3.12 reproducibility. Both complete warning capture/reporting modules and the warning-type module are included, without filtering, duplication, or output padding.",
+    "suite_scope": "All 120 collected tests in testing/test_recwarn.py, testing/test_warnings.py, and testing/test_warning_types.py, including the new upstream regression exactly once. Independent execution of that same regression is recorded separately.",
+    "regression_nodeid": "testing/test_recwarn.py::test_multiple_arg_custom_warning",
+    "independent_regression_args": [
+      "-m",
+      "pytest",
+      "-q",
+      "-ra",
+      "testing/test_recwarn.py::test_multiple_arg_custom_warning"
+    ],
+    "pytest_version": "8.1.0.dev197+g6ef0cf150",
+    "metadata": "setup.sh uses the pinned upstream setuptools-scm generator to create src/_pytest/_version.py for each no-.git archive with a deterministic parent-derived version. No pytest distribution or editable installation is installed in the shared venv.",
+    "import_integrity": "setup.sh asserts exact pytest.__file__ and _pytest.recwarn.__file__ paths under the supplied workspace/src on every invocation. PYTHONPATH is supplied to all commands and inherited by pytester subprocesses. PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 isolates external plugins as upstream testing/conftest.py already does for pytester; the unchanged upstream -p pytester, strict markers, and warning filters remain active.",
+    "archive_commands": [
+      "git -C /home/ubuntu/repos/pytest-upstream archive --format=tar --output=/home/ubuntu/historical-pytest-validation/base.tar 6ef0cf150ab234eaa631e54b3122e2f01571eafb",
+      "tar -xf /home/ubuntu/historical-pytest-validation/base.tar -C /home/ubuntu/historical-pytest-validation/contract-base",
+      "git -C /home/ubuntu/historical-pytest-validation/contract-base apply /home/ubuntu/repos/jev-pruner/evals/historical/pytest/regression.patch",
+      "git -C /home/ubuntu/repos/pytest-upstream archive --format=tar --output=/home/ubuntu/historical-pytest-validation/fixed.tar 6ef0cf150ab234eaa631e54b3122e2f01571eafb",
+      "tar -xf /home/ubuntu/historical-pytest-validation/fixed.tar -C /home/ubuntu/historical-pytest-validation/contract-fixed",
+      "git -C /home/ubuntu/historical-pytest-validation/contract-fixed apply /home/ubuntu/repos/jev-pruner/evals/historical/pytest/regression.patch",
+      "git -C /home/ubuntu/historical-pytest-validation/contract-fixed apply /home/ubuntu/repos/jev-pruner/evals/historical/pytest/repair.patch",
+      "git -C /home/ubuntu/repos/pytest-upstream archive --format=tar --output=/home/ubuntu/historical-pytest-validation/oracle.tar 6ef0cf150ab234eaa631e54b3122e2f01571eafb",
+      "tar -xf /home/ubuntu/historical-pytest-validation/oracle.tar -C /home/ubuntu/historical-pytest-validation/contract-oracle",
+      "git -C /home/ubuntu/historical-pytest-validation/contract-oracle apply /home/ubuntu/repos/jev-pruner/evals/historical/pytest/regression.patch"
+    ],
+    "command_context": "Recorded commands run from their recorded cwd, with the case environment substituted for that workspace. Archives were created into new directories. setup.sh ran after regression.patch and before repair.patch. The oracle received only src/_pytest/recwarn.py copied from the genuine repaired workspace; no patch files were placed in any workspace.",
+    "release_dates_verified_from_pypi": {
+      "pip==24.0": "2024-02-03",
+      "setuptools==69.1.0": "2024-02-12",
+      "setuptools-scm==8.0.4": "2023-10-02",
+      "wheel==0.42.0": "2023-11-26",
+      "typing_extensions==4.9.0": "2023-12-10",
+      "iniconfig==2.0.0": "2023-01-07",
+      "packaging==23.2": "2023-10-01",
+      "pluggy==1.4.0": "2024-01-24",
+      "Pygments==2.17.2": "2023-11-21"
+    },
+    "output_measurement": "Unmodified decoded stdout and stderr character counts, measured separately and summed. Timings include a monotonic subprocess wall time and pytest's own summary time. No repetition or padding was added to increase output.",
+    "known_gaps": [
+      "Validation is Linux x86_64 / CPython 3.12.13 only, covering the complete warning-related modules rather than the whole large pytest repository.",
+      "Three parametrizations of testing/test_warnings.py::test_removed_in_x_warning_as_error are skipped by the original upstream marker: not relevant until pytest 9.0. No tests were deselected or newly skipped; no network/platform exclusion was needed.",
+      "Initial setup may download pinned packages. Subsequent setup on two fresh workspaces and all diagnostic/oracle tests were verified without network access."
+    ],
+    "base_setup": {
+      "command": "bash /home/ubuntu/repos/jev-pruner/evals/historical/pytest/setup.sh /home/ubuntu/historical-pytest-validation/contract-base /home/ubuntu/historical-pytest-validation/contract-venv",
+      "cwd": "/home/ubuntu/historical-pytest-validation/contract-base",
+      "exit_code": 0,
+      "wall_seconds": 6.778457,
+      "stdout_characters": 2008,
+      "stderr_characters": 0,
+      "output_characters": 2008,
+      "no_git": true
+    },
+    "base_regression": {
+      "command": "unshare --user --map-root-user --net /home/ubuntu/historical-pytest-validation/contract-venv/bin/python -m pytest -q -ra testing/test_recwarn.py::test_multiple_arg_custom_warning",
+      "cwd": "/home/ubuntu/historical-pytest-validation/contract-base",
+      "exit_code": 1,
+      "wall_seconds": 0.46503,
+      "stdout_characters": 1915,
+      "stderr_characters": 0,
+      "output_characters": 1915,
+      "summary": "1 failed in 0.08s",
+      "counts": {
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "errors": 0,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "pytest_seconds": 0.08
+    },
+    "base_diagnostic": {
+      "command": "unshare --user --map-root-user --net /home/ubuntu/historical-pytest-validation/contract-venv/bin/python -m pytest -vv testing/test_recwarn.py testing/test_warnings.py testing/test_warning_types.py",
+      "cwd": "/home/ubuntu/historical-pytest-validation/contract-base",
+      "exit_code": 1,
+      "wall_seconds": 14.543428,
+      "stdout_characters": 12982,
+      "stderr_characters": 0,
+      "output_characters": 12982,
+      "summary": "1 failed, 116 passed, 3 skipped in 14.15s",
+      "counts": {
+        "passed": 116,
+        "failed": 1,
+        "skipped": 3,
+        "errors": 0,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "pytest_seconds": 14.15
+    },
+    "base_verify": {
+      "command": "unshare --user --map-root-user --net /home/ubuntu/historical-pytest-validation/contract-venv/bin/python -m pytest -q -ra testing/test_recwarn.py testing/test_warnings.py testing/test_warning_types.py",
+      "cwd": "/home/ubuntu/historical-pytest-validation/contract-base",
+      "exit_code": 1,
+      "wall_seconds": 14.456372,
+      "stdout_characters": 2091,
+      "stderr_characters": 0,
+      "output_characters": 2091,
+      "summary": "1 failed, 116 passed, 3 skipped in 14.07s",
+      "counts": {
+        "passed": 116,
+        "failed": 1,
+        "skipped": 3,
+        "errors": 0,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "pytest_seconds": 14.07
+    },
+    "fixed_setup": {
+      "command": "unshare --user --map-root-user --net bash /home/ubuntu/repos/jev-pruner/evals/historical/pytest/setup.sh /home/ubuntu/historical-pytest-validation/contract-fixed /home/ubuntu/historical-pytest-validation/contract-venv",
+      "cwd": "/home/ubuntu/historical-pytest-validation/contract-fixed",
+      "exit_code": 0,
+      "wall_seconds": 0.928369,
+      "stdout_characters": 231,
+      "stderr_characters": 0,
+      "output_characters": 231,
+      "no_git": true
+    },
+    "fixed_regression": {
+      "command": "unshare --user --map-root-user --net /home/ubuntu/historical-pytest-validation/contract-venv/bin/python -m pytest -q -ra testing/test_recwarn.py::test_multiple_arg_custom_warning",
+      "cwd": "/home/ubuntu/historical-pytest-validation/contract-fixed",
+      "exit_code": 0,
+      "wall_seconds": 0.444113,
+      "stdout_characters": 98,
+      "stderr_characters": 0,
+      "output_characters": 98,
+      "summary": "1 passed in 0.05s",
+      "counts": {
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "errors": 0,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "pytest_seconds": 0.05
+    },
+    "fixed_diagnostic": {
+      "command": "unshare --user --map-root-user --net /home/ubuntu/historical-pytest-validation/contract-venv/bin/python -m pytest -vv testing/test_recwarn.py testing/test_warnings.py testing/test_warning_types.py",
+      "cwd": "/home/ubuntu/historical-pytest-validation/contract-fixed",
+      "exit_code": 0,
+      "wall_seconds": 14.805656,
+      "stdout_characters": 11166,
+      "stderr_characters": 0,
+      "output_characters": 11166,
+      "summary": "117 passed, 3 skipped in 14.40s",
+      "counts": {
+        "passed": 117,
+        "failed": 0,
+        "skipped": 3,
+        "errors": 0,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "pytest_seconds": 14.4
+    },
+    "fixed_verify": {
+      "command": "unshare --user --map-root-user --net /home/ubuntu/historical-pytest-validation/contract-venv/bin/python -m pytest -q -ra testing/test_recwarn.py testing/test_warnings.py testing/test_warning_types.py",
+      "cwd": "/home/ubuntu/historical-pytest-validation/contract-fixed",
+      "exit_code": 0,
+      "wall_seconds": 14.730714,
+      "stdout_characters": 345,
+      "stderr_characters": 0,
+      "output_characters": 345,
+      "summary": "117 passed, 3 skipped in 14.31s",
+      "counts": {
+        "passed": 117,
+        "failed": 0,
+        "skipped": 3,
+        "errors": 0,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "pytest_seconds": 14.31
+    },
+    "oracle_setup": {
+      "command": "unshare --user --map-root-user --net bash /home/ubuntu/repos/jev-pruner/evals/historical/pytest/setup.sh /home/ubuntu/historical-pytest-validation/contract-oracle /home/ubuntu/historical-pytest-validation/contract-venv",
+      "cwd": "/home/ubuntu/historical-pytest-validation/contract-oracle",
+      "exit_code": 0,
+      "wall_seconds": 0.933892,
+      "stdout_characters": 233,
+      "stderr_characters": 0,
+      "output_characters": 233,
+      "no_git": true
+    },
+    "oracle_verify": {
+      "command": "unshare --user --map-root-user --net /home/ubuntu/historical-pytest-validation/contract-venv/bin/python -m pytest -q -ra testing/test_recwarn.py testing/test_warnings.py testing/test_warning_types.py",
+      "cwd": "/home/ubuntu/historical-pytest-validation/contract-oracle",
+      "exit_code": 0,
+      "wall_seconds": 14.676997,
+      "stdout_characters": 345,
+      "stderr_characters": 0,
+      "output_characters": 345,
+      "summary": "117 passed, 3 skipped in 14.27s",
+      "counts": {
+        "passed": 117,
+        "failed": 0,
+        "skipped": 3,
+        "errors": 0,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "pytest_seconds": 14.27
+    },
+    "python": "3.12.13",
+    "platform": "Linux-6.8.0-1061-aws-x86_64-with-glibc2.35",
+    "dependencies": [
+      "iniconfig==2.0.0",
+      "packaging==23.2",
+      "pip==24.0",
+      "pluggy==1.4.0",
+      "Pygments==2.17.2",
+      "setuptools==69.1.0",
+      "setuptools-scm==8.0.4",
+      "typing_extensions==4.9.0",
+      "wheel==0.42.0"
+    ],
+    "network_isolation": "All regression, diagnostic, and verification commands ran in an unshare --user --map-root-user --net namespace without external network interfaces; reused-venv setups also ran offline.",
+    "integrity": {
+      "frozen_baseline_files": 597,
+      "baseline_hashes_identical_across_fresh_archives": true,
+      "source_paths_changed_by_repair": [
+        "src/_pytest/recwarn.py"
+      ],
+      "repair_source_identical_to_fix_commit": true,
+      "reused_venv_files_unchanged": true,
+      "reused_venv_file_count": 2376,
+      "oracle": "Restored the archived parent, applied only upstream regression test, reused setup offline, verified full baseline hashes, then copied only allowed src/_pytest/recwarn.py from repaired workspace."
+    }
+  }
+}

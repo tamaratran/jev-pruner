@@ -1,0 +1,294 @@
+{
+  "name": "httpx",
+  "repository": "https://github.com/encode/httpx",
+  "base_commit": "189fc4bcbe5f314128775dec66a616ac9a31ad48",
+  "fix_commit": "47f4a96ffaaaa07dca1614409549b5d7a6e7af49",
+  "issue_url": "https://github.com/encode/httpx/issues/3411",
+  "description": "HTTPX raises DecodingError for an empty response body carrying Content-Encoding: zstd, including the bodyless HEAD responses reported in issue #3411. Upstream PR #3412 fixed this non-security content-decoding defect on 2024-11-22 and added regression tests for empty and truncated content.",
+  "question": "HTTPX should accept an empty response body with Content-Encoding: zstd and expose empty content, while continuing to reject invalid or truncated compressed data and correctly decode nonempty responses. Preserve existing response and streaming behavior. Only edit httpx/_decoders.py; do not edit tests.",
+  "editable": [
+    "httpx/_decoders.py"
+  ],
+  "evidence": [
+    "tests/test_decoders.py::test_zstd_empty FAILED",
+    ">       response = httpx.Response(200, headers=headers, content=b\"\")",
+    "httpx.DecodingError: Zstandard data is incomplete",
+    "tests/test_decoders.py::test_zstd_truncated PASSED",
+    "1 failed, 145 passed"
+  ],
+  "diagnostic_args": [
+    "-m",
+    "pytest",
+    "-vv",
+    "tests/test_decoders.py",
+    "tests/models/test_responses.py"
+  ],
+  "verify_args": [
+    "-m",
+    "pytest",
+    "-vv",
+    "tests/test_decoders.py",
+    "tests/models/test_responses.py"
+  ],
+  "environment": {
+    "PYTHONPATH": "{workspace}",
+    "PYTHONDONTWRITEBYTECODE": "1"
+  },
+  "license": "BSD-3-Clause",
+  "validation": {
+    "status": "validated",
+    "python": "CPython 3.12.13",
+    "platform": "Linux x86_64, Ubuntu 22.04.5 LTS",
+    "validated_at": "2026-09-21",
+    "candidate_selection": {
+      "seriously_attempted_candidates": 1,
+      "selected": "Empty zstd responses, issue #3411 / PR #3412.",
+      "basis": "Small documented functional defect with genuine upstream regressions; reproduced entirely through in-process Response objects on Python 3.12.",
+      "not_selection_criteria": [
+        "Output length",
+        "Expected pruning",
+        "Expected model success"
+      ],
+      "failed_candidates": [],
+      "handoff_shallow": false,
+      "upstream_shallow": false,
+      "unused_check": "Fetched all handoff origin branches; git log --all -- evals/historical/httpx is empty. Scoped evals history searches found no encode/httpx fixture, fix SHA, test_zstd_empty, or Zstandard data is incomplete. Numeric substring hits were unrelated Click timing values.",
+      "upstream_pr_url": "https://github.com/encode/httpx/pull/3412",
+      "upstream_fix_url": "https://github.com/encode/httpx/commit/47f4a96ffaaaa07dca1614409549b5d7a6e7af49",
+      "base_is_immediate_parent": true,
+      "patch_scope": "Complete upstream tests/test_decoders.py diff; complete upstream httpx/_decoders.py diff. Unrelated release edits in README.md, CHANGELOG.md, and httpx/__version__.py are omitted."
+    },
+    "suite": {
+      "scope": "Complete standard decoder and response-model modules, covering content decoding plus synchronous and asynchronous response consumption. HTTPX has a larger client/transport/network suite outside this functional area.",
+      "declared_before_testing": true,
+      "collected": 146,
+      "platform_network_exclusions": [],
+      "configuration": "Original pyproject.toml unchanged: -rxXs and all original warning filters, including error. No -k/-m filters, deselection, test rewrites, or plugin suppression.",
+      "network": "No external network is needed. Diagnostics and grading run under unshare -Urn; selected modules use in-process responses and both original anyio backends.",
+      "regression_tests": [
+        "tests/test_decoders.py::test_zstd_empty",
+        "tests/test_decoders.py::test_zstd_truncated"
+      ]
+    },
+    "restrictions": {
+      "models_run": false,
+      "production_changes": false,
+      "registration_changes": false,
+      "patches_in_model_visible_workspace": false,
+      "source_only_oracle": "Fresh parent plus genuine regression tests; copy only httpx/_decoders.py from the repaired archive.",
+      "metadata": "No build or installed HTTPX distribution metadata is required by these modules. Import the archived package directly through workspace-relative PYTHONPATH; do not install HTTPX."
+    },
+    "dependencies": {
+      "pip": "25.1.1",
+      "anyio": "4.6.2.post1",
+      "attrs": "24.2.0",
+      "Brotli": "1.1.0",
+      "certifi": "2024.8.30",
+      "cffi": "1.17.1",
+      "chardet": "5.2.0",
+      "click": "8.1.7",
+      "cryptography": "43.0.1",
+      "h11": "0.14.0",
+      "httpcore": "1.0.7",
+      "idna": "3.10",
+      "iniconfig": "2.0.0",
+      "outcome": "1.3.0.post0",
+      "packaging": "24.1",
+      "pluggy": "1.5.0",
+      "pycparser": "2.22",
+      "pytest": "8.3.3",
+      "sniffio": "1.3.1",
+      "sortedcontainers": "2.4.0",
+      "trio": "0.26.2",
+      "trustme": "1.1.0",
+      "typing_extensions": "4.12.2",
+      "uvicorn": "0.31.0",
+      "zstandard": "0.23.0"
+    },
+    "dependency_provenance": {
+      "selection": "pytest, trio, cryptography, trustme, uvicorn and chardet match the upstream parent's requirements.txt pins. Runtime, decoder and transitive dependencies are compatible pinned releases available by the November 2024 fix. pip is a separately pinned setup tool. No package build is needed; wheels only, no dependency resolution, no editable install.",
+      "release_check": "Queried https://pypi.org/pypi/{name}/{version}/json for every installed distribution and checked every release-file upload timestamp is earlier than 2026-09-14, seven days before validation.",
+      "latest_upload_dates": {
+        "pip": "2025-05-02",
+        "anyio": "2024-10-14",
+        "attrs": "2024-08-06",
+        "Brotli": "2024-10-18",
+        "certifi": "2024-08-30",
+        "cffi": "2024-09-04",
+        "chardet": "2023-08-01",
+        "click": "2023-08-17",
+        "cryptography": "2024-09-03",
+        "h11": "2022-09-25",
+        "httpcore": "2024-11-15",
+        "idna": "2024-09-15",
+        "iniconfig": "2023-01-07",
+        "outcome": "2023-10-26",
+        "packaging": "2024-06-09",
+        "pluggy": "2024-04-20",
+        "pycparser": "2024-03-30",
+        "pytest": "2024-09-10",
+        "sniffio": "2024-02-25",
+        "sortedcontainers": "2021-05-16",
+        "trio": "2024-08-08",
+        "trustme": "2023-07-10",
+        "typing_extensions": "2024-06-07",
+        "uvicorn": "2024-09-27",
+        "zstandard": "2024-07-15"
+      }
+    },
+    "commands": {
+      "variables": {
+        "UPSTREAM": "/home/ubuntu/repos/httpx-upstream",
+        "PACKAGE": "/home/ubuntu/repos/jev-pruner/evals/historical/httpx",
+        "ROOT": "/home/ubuntu/httpx-validation/cache/httpx",
+        "VENV": "/home/ubuntu/httpx-validation/cache/httpx/venv",
+        "BASE": "189fc4bcbe5f314128775dec66a616ac9a31ad48",
+        "FIX": "47f4a96ffaaaa07dca1614409549b5d7a6e7af49"
+      },
+      "shallow_checks": "git -C \"$UPSTREAM\" rev-parse --is-shallow-repository; git -C /home/ubuntu/repos/jev-pruner rev-parse --is-shallow-repository",
+      "parent_check": "git -C \"$UPSTREAM\" rev-parse \"$FIX^\"",
+      "regression_patch": "git -C \"$UPSTREAM\" diff \"$BASE\" \"$FIX\" -- tests/test_decoders.py > \"$PACKAGE/regression.patch\"",
+      "repair_patch": "git -C \"$UPSTREAM\" diff \"$BASE\" \"$FIX\" -- httpx/_decoders.py > \"$PACKAGE/repair.patch\"",
+      "each_fresh_archive": "mkdir \"$WORKSPACE\"; git -C \"$UPSTREAM\" archive \"$BASE\" | tar -x -C \"$WORKSPACE\"; git -C \"$WORKSPACE\" apply \"$PACKAGE/regression.patch\"",
+      "precreate_venv": "python3.12 -m venv \"$VENV\"",
+      "setup_base": "PYTHONDONTWRITEBYTECODE=1 bash \"$PACKAGE/setup.sh\" \"$ROOT/baseline\" \"$VENV\"",
+      "apply_repair_to_separate_archive": "git -C \"$ROOT/fixed\" apply \"$PACKAGE/repair.patch\"",
+      "setup_fixed_same_venv_offline": "PYTHONDONTWRITEBYTECODE=1 unshare -Urn bash \"$PACKAGE/setup.sh\" \"$ROOT/fixed\" \"$VENV\"",
+      "diagnostic_and_verify": "PYTHONPATH=\"$WORKSPACE\" PYTHONDONTWRITEBYTECODE=1 PYTEST_ADDOPTS='' NO_COLOR=1 unshare -Urn \"$VENV/bin/python\" -m pytest -vv tests/test_decoders.py tests/models/test_responses.py",
+      "dependency_snapshot": "\"$VENV/bin/python\" -m pip freeze --all --disable-pip-version-check",
+      "absent_venv_setup": "bash \"$PACKAGE/setup.sh\" /home/ubuntu/httpx-validation/broken /home/ubuntu/httpx-validation/venv",
+      "actual_harness_validation": "unshare -Urn node /home/ubuntu/httpx-validation/validate.mjs validate",
+      "actual_harness_calls": "The local validation driver imports cases, diagnostic, grade and testCounts from the unchanged evals/codex-historical-workloads.mjs. It assigns cases.httpx from this case.json in memory, sets JEV_HISTORICAL_CACHE, calls diagnostic('httpx', baseline), diagnostic('httpx', fixed), diagnostic('httpx', fixed, true), then grade('httpx', fixed) with recorded fixed_counts. No shared registration or harness file was edited; initialize() and all inference were not invoked.",
+      "oracle": "The actual grade() copies the broken baseline into a separate oracle workspace, restores baseline tests/configuration by construction, copies only editable httpx/_decoders.py, and calls diagnostic(..., true). The 125 original archive files were independently hash-checked after grading.",
+      "cwd_and_network": "Every pytest command executes from its own WORKSPACE with the declared environment plus the harness's PYTHONDONTWRITEBYTECODE=1, PYTEST_ADDOPTS='', NO_COLOR=1. All diagnostics and grading, including fixed-workspace setup, ran inside the same unshare -Urn network namespace without external connectivity.",
+      "syntax_json_type_checks": "bash -n evals/historical/httpx/setup.sh; python3.12 -m json.tool evals/historical/httpx/case.json; npm run typecheck"
+    },
+    "results": {
+      "base_diagnostic": {
+        "exit_code": 1,
+        "timed_out": false,
+        "counts": {
+          "passed": 145,
+          "failed": 1,
+          "error": 0,
+          "skipped": 0,
+          "xfailed": 0,
+          "deselected": 0
+        },
+        "wall_seconds": 1.098,
+        "pytest_seconds": 0.57,
+        "stdout_characters": 13859,
+        "stdout_bytes": 13859,
+        "stderr_characters": 0,
+        "summary": "1 failed, 145 passed in 0.57s"
+      },
+      "fixed_diagnostic": {
+        "exit_code": 0,
+        "timed_out": false,
+        "counts": {
+          "passed": 146,
+          "failed": 0,
+          "error": 0,
+          "skipped": 0,
+          "xfailed": 0,
+          "deselected": 0
+        },
+        "wall_seconds": 0.962,
+        "pytest_seconds": 0.52,
+        "stdout_characters": 12773,
+        "stdout_bytes": 12773,
+        "stderr_characters": 0,
+        "summary": "146 passed in 0.52s"
+      },
+      "fixed_verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "counts": {
+          "passed": 146,
+          "failed": 0,
+          "error": 0,
+          "skipped": 0,
+          "xfailed": 0,
+          "deselected": 0
+        },
+        "wall_seconds": 0.976,
+        "pytest_seconds": 0.52,
+        "stdout_characters": 12773,
+        "stdout_bytes": 12773,
+        "stderr_characters": 0,
+        "summary": "146 passed in 0.52s"
+      },
+      "oracle_verify": {
+        "exit_code": 0,
+        "timed_out": false,
+        "counts": {
+          "passed": 146,
+          "failed": 0,
+          "error": 0,
+          "skipped": 0,
+          "xfailed": 0,
+          "deselected": 0
+        },
+        "wall_seconds": 0.947,
+        "pytest_seconds": 0.51,
+        "stdout_characters": 12774,
+        "stdout_bytes": 12774,
+        "stderr_characters": 0,
+        "summary": "146 passed in 0.51s"
+      }
+    },
+    "setup_results": {
+      "absent_venv": "Succeeded: created Python 3.12 venv, installed pins, pip check passed, imported the broken archive.",
+      "precreated_python312_venv": {
+        "exit_code": 0,
+        "wall_seconds": 3.683
+      },
+      "fixed_workspace_same_venv_offline": {
+        "exit_code": 0,
+        "wall_seconds": 0.423
+      },
+      "reuse_policy": "An already initialized venv must exactly match the complete pinned distribution set. Reuse performs no pip install. A populated mismatching venv is rejected without changing its dependencies."
+    },
+    "source_import_checks": {
+      "base": {
+        "httpx": "/home/ubuntu/httpx-validation/cache/httpx/baseline/httpx/__init__.py",
+        "decoder": "/home/ubuntu/httpx-validation/cache/httpx/baseline/httpx/_decoders.py"
+      },
+      "fixed": {
+        "httpx": "/home/ubuntu/httpx-validation/cache/httpx/fixed/httpx/__init__.py",
+        "decoder": "/home/ubuntu/httpx-validation/cache/httpx/fixed/httpx/_decoders.py"
+      },
+      "oracle": {
+        "httpx": "/home/ubuntu/httpx-validation/cache/httpx/oracle/httpx/__init__.py",
+        "decoder": "/home/ubuntu/httpx-validation/cache/httpx/oracle/httpx/_decoders.py"
+      },
+      "assertions": "Each path resolved exactly to its workspace file. HTTPX distribution metadata was absent from the venv; __version__ remained the unmodified parent's 0.27.2. setup.sh independently asserts both package and decoder imports."
+    },
+    "integrity": {
+      "no_git_workspaces": true,
+      "separate_fresh_fixed_archive": true,
+      "fresh_broken_and_fixed_baseline_hashes_identical": true,
+      "original_archive_files": 125,
+      "original_archive_files_unchanged_by_tests": true,
+      "unchanged_venv_files": 2286,
+      "venv_file_hashes_unchanged_after_reuse_and_all_runs": true,
+      "dependencies_unchanged": true,
+      "exact_upstream_patches": true,
+      "repaired_source_matches_fix_commit": true,
+      "actual_harness_diagnostic_and_grade": true,
+      "oracle_only_copied_editable_source": true,
+      "pristine_oracle_tests_and_configuration": true,
+      "repair_patch_never_copied_into_workspaces": true,
+      "patch_sha256": {
+        "regression.patch": "9e48148c5f8106436f8fb97957d73f134e20b7c5c3d895542a0e5013f9586d26",
+        "repair.patch": "6d8cd97e5c60623e2b0677cd88e9cf7775049450baf3908d4dbe0002d2f69cd4"
+      }
+    },
+    "known_gaps": [
+      "Only Linux x86_64 with CPython 3.12.13 was validated.",
+      "Initial dependency installation requires package-index access; the same initialized venv is reused offline without dependency changes.",
+      "The full HTTPX client, transport, CLI, documentation and typing suites are outside the selected decoder/response functional scope; both complete relevant modules ran with zero exclusions or skips.",
+      "This package is intentionally not registered in the shared workload list. The parent session must integrate it separately before evaluation."
+    ]
+  }
+}
