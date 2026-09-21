@@ -53,12 +53,24 @@ have a separate protocol and directory.
 
 The audit reconciles CLI totals with the native transcript, checks the model and
 dataset revision, verifies observer isolation, and matches wrapped stdout against
-native tool outputs (including asynchronous polls). Host-truncated deliveries
+native tool outputs (including asynchronous polls) when pruning occurs.
+Identical raw/delivered captures receive zero pruning credit without assuming
+one wrapper invocation per tool call: loops, pipes and redirects can change that
+relationship. Captures without completion metadata remain invalid, including
+interrupted commands. Multiple pruned captures sharing one delivery group remain
+unattributable rather than receiving duplicate savings credit.
+The frozen 10,000-token global cap bounds per-call preview budgets.
+Host-truncated deliveries
 receive no pruning credit. The unpruned preview estimate omits stderr, making it
 a conservative lower bound, while delivered size counts stderr and earlier polls.
 Explicit archive-path tool calls are counted as recovery; indirect aliases cannot
 be reliably identified. Raw stdout reduction and model-visible reduction are
-separate metrics. Jev usage from invalid trials remains in accounting diagnostics.
+separate metrics. Native/CLI-reconciled usage and complete Jev usage remain in
+overall cost accounting even when delivery instrumentation is invalid; those
+trials remain excluded from pruning effectiveness. Incomplete usage is not zero.
+The aggregate lower bound includes all reconciled model usage and reported Jev
+usage, even when some Jev responses lack usage; complete-cost totals sum only
+rows with complete accounting and include an explicit availability count.
 Primary cost prices every input token at $5/M, output at $30/M and Jev input at
 $0.042/M; observed cached input at $0.50/M is secondary. These are comparison
 estimates, not subscription charges or Modal infrastructure bills.

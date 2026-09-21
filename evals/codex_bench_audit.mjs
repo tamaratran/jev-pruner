@@ -34,7 +34,7 @@ export function toolGroups(transcript) {
       } else if (item.name.endsWith('write_stdin')) {
         group = groups.find(candidate => String(candidate.session) === String(args.session_id));
       }
-      if (group) calls.set(item.call_id, { group, budget: args.max_output_tokens ?? 10000 });
+      if (group) calls.set(item.call_id, { group, budget: Math.min(args.max_output_tokens ?? 10000, 10000) });
     } else if (item.type === 'function_call_output' && calls.has(item.call_id)) {
       const { group, budget } = calls.get(item.call_id);
       const output = typeof item.output === 'string' ? item.output : JSON.stringify(item.output);
@@ -70,6 +70,7 @@ export async function auditTrial(root, planned, protocol) {
     ...planned, reward: null, measurement_issues: [], outputs: [], wrapped_commands: 0,
     shell_commands: 0, jev_requests: 0, jev_input_tokens: 0, jev_usage_complete: true,
     pruned_outputs: 0, archive_recovery_calls: 0, evidence_isolated: false,
+    model_usage_valid: false, incomplete_captures: [],
   };
   const job = join(root, 'jobs', planned.job_name);
   const trials = (await exists(job)).filter(name => name.startsWith(`${planned.task}__`));
@@ -103,6 +104,15 @@ export async function auditTrial(root, planned, protocol) {
       row.measurement_issues.push(`Observer ${name}: ${error.message}`);
       row.jev_usage_complete = false;
     }
+  }
+  const completed = new Set(records.map(record => record.id));
+  row.incomplete_captures = [...new Set(evidenceFiles
+    .filter(name => /\.(?:raw|delivered)$/.test(name))
+    .map(name => name.replace(/\.(?:raw|delivered)$/, '')))]
+    .filter(id => !completed.has(id));
+  if (row.incomplete_captures.length) {
+    row.measurement_issues.push(`Incomplete command captures: ${row.incomplete_captures.length}`);
+    if (planned.arm === 'plugin') row.jev_usage_complete = false;
   }
   try {
     const result = await json(join(trial, 'result.json'));
@@ -140,30 +150,35 @@ export async function auditTrial(root, planned, protocol) {
     assert.equal(total.cached_input_tokens, row.usage.cached_input_tokens, 'Native/CLI cache mismatch');
     assert.equal(total.output_tokens, row.usage.output_tokens, 'Native/CLI output mismatch');
     row.reasoning_output_tokens = total.reasoning_output_tokens ?? null;
+    row.model_usage_valid = true;
     const visible = JSON.stringify(payloads(transcript));
     assertNoEvidenceLeak(visible, privatePaths);
     row.evidence_isolated = true;
     const groups = toolGroups(transcript);
-    row.wrapped_commands = groups.length;
+    row.wrapper_tool_calls = groups.length;
+    row.wrapped_commands = records.length;
     row.shell_commands = payloads(transcript).filter(item =>
       item.type === 'function_call' && /(?:exec_command|shell_command|shell)$/.test(item.name)).length;
     records.sort((left, right) => left.started - right.started);
-    assert.equal(records.length, groups.length, 'Wrapper calls/captures differ');
-    const remaining = [...groups];
+    const credited = new Set();
     for (const record of records) {
       assert.equal(record.child_code, record.wrapper_code, 'Exit status mismatch');
       const raw = await readFile(join(observer, `${record.id}.raw`), 'utf8');
       const delivered = await readFile(join(observer, `${record.id}.delivered`), 'utf8');
-      const index = remaining.findIndex(group => record.archive
-        ? group.outputs.some(output => output.text.includes(record.archive))
-        : group.outputs.some(output => hostPreviews(delivered, output.budget).some(preview => output.text.endsWith(preview))));
-      assert(index >= 0, 'Cannot match captured command delivery');
-      const [group] = remaining.splice(index, 1);
-      const reduction = visibleReduction(raw, delivered, group);
       const wrapperPruned = Boolean(record.archive) && delivered.length < raw.length;
       if (wrapperPruned) assert.equal(record.archive_exact, true, 'Archive mismatch');
       else assert.equal(raw, delivered, 'Unexplained output modification');
       if (planned.arm === 'control') assert.equal(wrapperPruned, false, 'Control output pruned');
+      let reduction = { native_chars: null, visible_chars: null, removed_chars: 0 };
+      if (wrapperPruned) {
+        const matches = groups.filter(group =>
+          group.outputs.some(output => output.text.includes(record.archive)));
+        assert.equal(matches.length, 1, 'Expected one native group containing the archive footer');
+        const [group] = matches;
+        assert(!credited.has(group), 'Multiple pruned captures share one native group; savings not attributable');
+        credited.add(group);
+        reduction = visibleReduction(raw, delivered, group);
+      }
       const actual = wrapperPruned && reduction.removed_chars > 0;
       row.pruned_outputs += Number(actual);
       if (record.archive) row.archive_recovery_calls += payloads(transcript).filter(item =>
@@ -180,8 +195,11 @@ export async function auditTrial(root, planned, protocol) {
     row.measurement_issues.push(error.message);
   }
   row.jev_estimated_usd = row.jev_usage_complete ? row.jev_input_tokens * 0.042 / 1e6 : null;
-  if (row.usage && row.jev_estimated_usd !== null && row.measurement_issues.length === 0) {
-    row.normalized_cost_usd = (row.usage.input_tokens * 5 + row.usage.output_tokens * 30) / 1e6 + row.jev_estimated_usd;
+  if (row.model_usage_valid) {
+    row.model_normalized_cost_usd = (row.usage.input_tokens * 5 + row.usage.output_tokens * 30) / 1e6;
+  }
+  if (row.model_usage_valid && row.jev_estimated_usd !== null) {
+    row.normalized_cost_usd = row.model_normalized_cost_usd + row.jev_estimated_usd;
     row.observed_cache_cost_usd = row.normalized_cost_usd - row.usage.cached_input_tokens * 4.5 / 1e6;
   }
   row.measurement_valid = row.measurement_issues.length === 0;
@@ -191,17 +209,29 @@ export async function auditTrial(root, planned, protocol) {
 export function summarize(rows) {
   const aggregate = group => ({
     planned: group.length, finished: group.filter(row => row.state === 'finished').length,
+    states: Object.fromEntries([...new Set(group.map(row => row.state))]
+      .map(state => [state, group.filter(row => row.state === state).length])),
     rewards_available: group.filter(row => row.reward !== null).length,
     passed: group.filter(row => row.reward === 1).length,
+    failed: group.filter(row => row.reward === 0).length,
     valid_measurements: group.filter(row => row.measurement_valid).length,
+    valid_model_usage: group.filter(row => row.model_usage_valid).length,
     cost_available: group.filter(row => row.normalized_cost_usd !== undefined).length,
+    model_normalized_cost_usd_known: group.reduce((sum, row) => sum + (row.model_normalized_cost_usd ?? 0), 0),
+    normalized_cost_usd_lower_bound: group.reduce((sum, row) =>
+      sum + (row.model_normalized_cost_usd ?? 0) + row.jev_input_tokens * 0.042 / 1e6, 0),
     normalized_cost_usd_known: group.reduce((sum, row) => sum + (row.normalized_cost_usd ?? 0), 0),
     observed_cache_cost_usd_known: group.reduce((sum, row) => sum + (row.observed_cache_cost_usd ?? 0), 0),
     input_tokens_known: group.reduce((sum, row) => sum + (row.usage?.input_tokens ?? 0), 0),
+    cached_input_tokens_known: group.reduce((sum, row) => sum + (row.usage?.cached_input_tokens ?? 0), 0),
     output_tokens_known: group.reduce((sum, row) => sum + (row.usage?.output_tokens ?? 0), 0),
+    reasoning_output_tokens_known: group.reduce((sum, row) => sum + (row.reasoning_output_tokens ?? 0), 0),
     jev_requests: group.reduce((sum, row) => sum + row.jev_requests, 0),
     jev_input_tokens_known: group.reduce((sum, row) => sum + row.jev_input_tokens, 0),
     trials_with_actual_pruning: group.filter(row => row.measurement_valid && row.pruned_outputs > 0).length,
+    completed_wrapped_commands: group.reduce((sum, row) => sum + (row.wrapped_commands ?? 0), 0),
+    agent_seconds_known: group.reduce((sum, row) => sum + (row.agent_seconds ?? 0), 0),
+    wall_seconds_known: group.reduce((sum, row) => sum + (row.wall_seconds ?? 0), 0),
     recovery_calls: group.reduce((sum, row) => sum + row.archive_recovery_calls, 0),
   });
   const tasks = [...new Set(rows.map(row => row.task))];
