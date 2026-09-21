@@ -49,3 +49,67 @@ class CodexAdapterTests(unittest.TestCase):
                 + "\n"
             )
             self.assertTrue(access_blocked(root))
+
+    def test_task_errors_do_not_block_other_trials(self) -> None:
+        messages = [
+            "This operation is not supported by the tool",
+            "The requested file is not available",
+            "Assertion failed at line 401",
+            "Expected 429 records, found 430",
+            "Task service returned 401 Unauthorized",
+            "Task service returned 429 Too Many Requests",
+            "Task authentication failed",
+            "Could not read the refresh token example",
+            "The rate_limit fixture is not available",
+            "The task's usage limit assertion failed",
+            "unexpected status 500 Internal Server Error: request 429",
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            agent = root / "task__trial" / "agent"
+            agent.mkdir(parents=True)
+            stream = agent / "codex.txt"
+            for message in messages:
+                for kind in ("error", "turn.failed"):
+                    with self.subTest(message=message, kind=kind):
+                        event: dict[str, object] = {
+                            "type": kind,
+                            "request_id": "401-429-authentication",
+                        }
+                        if kind == "error":
+                            event["message"] = message
+                        else:
+                            event["error"] = {"message": message}
+                        stream.write_text(json.dumps(event) + "\n")
+                        self.assertFalse(access_blocked(root))
+
+    def test_pinned_codex_account_messages_block_trials(self) -> None:
+        messages = [
+            "You've hit your usage limit. Try again tomorrow.",
+            "You've hit your usage limit for GPT-5.5. Switch to another model now.",
+            "rate limit exceeded: Too many requests",
+            "Quota exceeded. Check your plan and billing details.",
+            "To use Codex with your ChatGPT plan, upgrade to Plus: https://chatgpt.com/explore/plus.",
+            "Your access token could not be refreshed. Please log out and sign in again.",
+            "Your access token could not be refreshed because your refresh token has expired. Please log out and sign in again.",
+            "unexpected status 401 Unauthorized: Invalid token, url: https://chatgpt.com/backend-api/codex/responses",
+            "unexpected status 429 Too Many Requests: Rate limit reached",
+            "exceeded retry limit, last status: 401 Unauthorized",
+            "exceeded retry limit, last status: 429 Too Many Requests, request id: example",
+            "The 'gpt-5.5' model is not supported when using Codex with a ChatGPT account.",
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            agent = root / "task__trial" / "agent"
+            agent.mkdir(parents=True)
+            stream = agent / "codex.txt"
+            for message in messages:
+                for kind in ("error", "turn.failed"):
+                    with self.subTest(message=message, kind=kind):
+                        event: dict[str, object] = {"type": kind}
+                        if kind == "error":
+                            event["message"] = message
+                        else:
+                            event["error"] = {"message": message}
+                        stream.write_text(json.dumps(event) + "\n")
+                        self.assertTrue(access_blocked(root))

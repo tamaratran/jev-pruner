@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import subprocess
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -155,22 +156,40 @@ def access_blocked(job: Path) -> bool:
                 event = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if event.get("type") not in ("error", "turn.failed"):
+            if not isinstance(event, dict) or event.get("type") not in (
+                "error",
+                "turn.failed",
+            ):
                 continue
-            text = json.dumps(event).lower()
-            if any(
-                term in text
-                for term in (
-                    "usage limit",
-                    "rate limit",
-                    "rate_limit",
-                    "unauthorized",
-                    "401",
-                    "429",
-                    "refresh token",
-                    "authentication",
-                    "not supported",
-                    "not available",
+            error = event if event["type"] == "error" else event.get("error")
+            if not isinstance(error, dict):
+                continue
+            message = error.get("message")
+            if not isinstance(message, str):
+                continue
+            if (
+                message == "usage limit"
+                or message.startswith(
+                    (
+                        "You've hit your usage limit.",
+                        "You've hit your usage limit for ",
+                        "rate limit exceeded: ",
+                        "Quota exceeded. Check your plan and billing details.",
+                        "To use Codex with your ChatGPT plan, upgrade to Plus:",
+                        "Your access token could not be refreshed. Please log out and sign in again.",
+                        "Your access token could not be refreshed because ",
+                    )
+                )
+                or re.fullmatch(
+                    r"(?:unexpected status |exceeded retry limit, last status: )"
+                    r"(?:401 Unauthorized|429 Too Many Requests)(?:[:,] .*)?",
+                    message,
+                    re.DOTALL,
+                )
+                or re.fullmatch(
+                    r"The '[^'\n]+' model is not supported when using Codex "
+                    r"with a ChatGPT account\.",
+                    message,
                 )
             ):
                 return True
