@@ -673,6 +673,38 @@ prompt caching limitations above still apply.
 
 ### Bounded Codex execution and fixed-price comparisons
 
+To compare two pruning thresholds on the existing repair tasks, set
+`JEV_EVAL_THRESHOLDS=10000,5000` before both preflight and measurement. Both arms
+use the same wrapper, policy, prompts, and fixtures; only the estimated-token gate
+differs. The protocol freezes the thresholds, delivery captures record the setting,
+and the audit rejects mismatches. The last threshold is used for the excluded
+instrumentation preflight. Unset this variable for the existing native/pruned comparison.
+Keep every trial in the overall threshold comparison, with an additional subset
+for audited pairs where at least one arm actually pruned. Check the fixture output
+sizes before running: lowering the gate only adds eligibility between the two thresholds.
+
+```sh
+export JEV_EVAL_SUITE=historical JEV_EVAL_CASES=rich,httpx,attrs
+export JEV_HISTORICAL_CACHE=/path/to/prepared-fixture-cache
+export JEV_CODEX_PLUGIN_ROOT="$PWD"
+export JEV_EVAL_THRESHOLDS=10000,5000 JEV_EVAL_REPETITIONS=2
+export JEV_EVAL_CONCURRENCY=2 JEV_EVAL_PRESERVE_EXIT=true
+npm run build
+node evals/codex-repair-cohort.mjs /path/to/new-evidence-directory preflight
+node evals/codex-repair-cohort.mjs /path/to/new-evidence-directory run
+```
+
+For a cheap Jev-only replay of a saved output between the two thresholds:
+
+```sh
+JEV_EVAL_THRESHOLDS=10000,5000 node evals/codex-threshold-replay.mjs \
+  /path/to/saved-trial /path/to/new-replay
+```
+
+This selects by output length, reconstructs the saved pre-output history, and
+checks diagnostic-section retention. It measures Jev activation and usage only;
+it does not measure Codex accuracy or combined model cost.
+
 Set `JEV_EVAL_CONCURRENCY` to a positive integer (default `1`) before preflight.
 The limit applies to independent pairs; each pair's arms remain sequential in
 their predeclared order. Each trial has a separate workspace and external observer

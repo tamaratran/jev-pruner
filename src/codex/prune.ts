@@ -19,11 +19,12 @@ export async function pruneCodexOutput(
     home?: string;
     asker?: JevAsker;
     signal?: AbortSignal;
+    minTokens?: number;
   },
 ): Promise<Buffer> {
   const apiKey = options.apiKey;
   const text = output.toString('utf8');
-  if (!output.equals(Buffer.from(text)) || !exceedsOutputThreshold(text)
+  if (!output.equals(Buffer.from(text)) || !exceedsOutputThreshold(text, options.minTokens)
       || !options.sessionId || !apiKey || looksSecret(command, text)) return output;
   try {
     const messages = codexMessages(
@@ -64,6 +65,7 @@ export async function pruneCodexOutput(
           }
         },
       },
+      { minTokens: options.minTokens },
     );
     return result.trimmed && !options.signal?.aborted
       ? Buffer.from(`${result.output}\n\n[fast-jev-output full output: ${path} (Read or grep it if needed)]`)

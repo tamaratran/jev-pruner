@@ -49,7 +49,8 @@ if (collect) {
   child.on('close', async code => {
     process.exitCode = code ?? 1;
     await writeFile(join(deliveredDirectory, `${randomUUID()}.json`),
-      JSON.stringify({ evidenceMarker, output: Buffer.concat(stdout).toString('utf8'), code }, null, 2),
+      JSON.stringify({ evidenceMarker, output: Buffer.concat(stdout).toString('utf8'), code,
+        minTokens: pruned ? Number(process.env.JEV_PRUNER_MIN_TOKENS ?? 10_000) : null }, null, 2),
       { mode: 0o600 });
   });
 }

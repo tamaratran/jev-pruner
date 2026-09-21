@@ -95,6 +95,42 @@ describe('Codex transcript adapter', () => {
 });
 
 describe('Codex output pruning', () => {
+  it.each([4_999, 5_000, 5_001, 9_999, 10_000])('honors an opt-in 5,000-token gate for %i tokens', async tokens => {
+    const options = { ...await fixture(), minTokens: 5_000 };
+    const original = Buffer.from('cache\n'.repeat(tokens));
+    expect(estimateTokens(original.toString())).toBe(tokens);
+    const result = await pruneCodexOutput(original, 'npm test', options);
+    if (tokens <= 5_000) {
+      expect(result).toBe(original);
+      expect(discard).not.toHaveBeenCalled();
+      await expect(readdir(join(options.cwd, '.jev-pruner'))).rejects.toThrow();
+    } else {
+      expect(discard).toHaveBeenCalled();
+      expect(result.length).toBeLessThan(original.length);
+      const archive = (await readdir(join(options.cwd, '.jev-pruner'))).find(file => file.endsWith('.txt'))!;
+      expect(await readFile(join(options.cwd, '.jev-pruner', archive))).toEqual(original);
+    }
+  });
+
+  it.each([0, -1, NaN, Infinity, 5_000.5])('uses the default gate for invalid threshold %s', async minTokens => {
+    const options = { ...await fixture(), minTokens };
+    const original = Buffer.from('cache\n'.repeat(9_999));
+    expect(await pruneCodexOutput(original, 'npm test', options)).toBe(original);
+    expect(discard).not.toHaveBeenCalled();
+    await expect(readdir(join(options.cwd, '.jev-pruner'))).rejects.toThrow();
+  });
+
+  it('keeps diagnostics and reference material protected below the default gate', async () => {
+    const options = { ...await fixture(), minTokens: 5_000, exitCode: 1 };
+    const original = Buffer.from(`${'cache\n'.repeat(6_000)}ERROR missing engine.o\nTests: 1 failed\n`);
+    const result = await pruneCodexOutput(original, 'npm test', options);
+    expect(result.length).toBeLessThan(original.length);
+    expect(result.toString()).toContain('ERROR missing engine.o\nTests: 1 failed\n');
+    discard.mockClear();
+    expect(await pruneCodexOutput(original, 'cat reference.txt', options)).toBe(original);
+    expect(discard).not.toHaveBeenCalled();
+  });
+
   it.each([9_999, 10_000])('passes through %i tokens without archives or scoring', async tokens => {
     const options = await fixture();
     const small = Buffer.from('cache\n'.repeat(tokens));
