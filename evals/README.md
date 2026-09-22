@@ -1,5 +1,81 @@
 # Eval suite
 
+## Alpine checkpoint continuations
+
+`codex_checkpoint.mjs` reconstructs the conversation immediately before the
+archive-listing result reaches the model. It verifies the transcript against
+the archived initial request and the captured delivery against Codex's preview.
+The gateway inserts that frozen prefix on every request, changing exactly one
+`function_call_output.output`. Later messages and tool results come from the
+new continuation. No extra "continue" prompt is added. Encrypted reasoning is
+passed through opaquely; it must never be decoded or published.
+
+Both conditions get the same source archive, empty installation directory and
+full-output recovery archive. Later pruning is disabled in both conditions.
+The listing is precomputed, with the same 250 ms gateway delay before first
+inference; no live Jev scoring can cause an extra poll at this boundary.
+Subsequent command execution and network timing are not deterministic.
+
+Build `jev-coreutils-causal-probe:local` from the pinned CompileBench
+`coreutils-old-version-alpine/environment/Dockerfile`, then:
+
+```sh
+npm run build
+docker build -t jev-coreutils-continuation:local -f evals/continuation.Dockerfile .
+node evals/codex_checkpoint.mjs prepare "$ARCHIVED_AGENT" "$CAPTURE_ID" "$CALL_ID" "$NEW_ROOT"
+node evals/codex_continuations.mjs plan "$NEW_ROOT" jev-coreutils-continuation:local \
+  "$FROZEN_CATALOG" "$PINNED_TASK/tests"
+export JEV_CODEX_AUTH_FILE="$HOME/.codex/auth.json"
+node evals/codex_continuations.mjs probe "$NEW_ROOT" offline-native native
+cp "$NEW_ROOT/offline-native/private/runtime.json" "$NEW_ROOT/expected-runtime.json"
+node evals/codex_continuations.mjs probe "$NEW_ROOT" offline-pruned pruned
+node evals/codex_continuations.mjs live-probe "$NEW_ROOT" live-native native
+node evals/codex_continuations.mjs live-probe "$NEW_ROOT" live-pruned pruned
+node evals/codex_continuations.mjs run "$NEW_ROOT"
+```
+
+Inspect both offline request bodies and runtime manifests before launching.
+Their bodies must differ only at the selected output, and their runtime hashes
+must match. Live probes make one inference request and execute its selected
+tools, then deliberately reject request two. They are compatibility checks,
+not measured trials.
+
+Validate the reconstructed native output against Codex's actual formatter
+before measurement. In a separate container with the same image and private
+checkpoint/catalog/login paths, copy `codex_native_probe.mjs` beside
+`codex_gate.mjs` and execute it with Node. Its local mock responses ask Codex to
+list the archive and compare the real tool result to the reconstruction, ignoring
+only chunk ID and wall time. No model inference is forwarded. A successful probe
+writes `private/formatter-check.json`; retain it outside the measured rows.
+The longest matching preview must be replaced, including its line-count header.
+
+The frozen schedule has four blocks, each containing two unchanged native
+continuations and one pruned continuation. The two native labels provide an
+A/A comparison of ordinary variation. Sorting a fixed-seed hash determines
+launch order, not model sampling; the model API supplies no reproducible seed.
+Each container receives 0.5 CPU and 2 GiB, with a 65-request/45-minute cap.
+The image ID, catalog, source workspace, build-tool hashes, first request,
+runtime, verifier file and protocol are checked. Existing launch directories
+cannot be reused. Failed, capped, mismatched and quota-blocked rows remain;
+there are no replacement attempts. The official verifier runs only after
+the agent, so its files and extra dependencies are absent during inference.
+
+Keep this entire evidence root private: it contains authentication-free but
+sensitive request bodies, encrypted history and native transcripts. Publish
+only separately generated aggregate accounting and reviewed command summaries.
+The primary cost charges all input at $5/M and output at $30/M. Replayed Jev
+output has no new scoring charge. This experiment estimates the effect of one
+listing intervention at one historical checkpoint, not overall pruner savings.
+
+After all attempts finish, run
+`node evals/continuation_audit.mjs "$NEW_ROOT" "$PRIVATE_ANALYSIS"`.
+The auditor reconciles completed response usage with native telemetry, checks
+the replay prefixes and later output/scoring records, and retains incomplete
+accounting. `accounting.json` contains aggregate rows; the evidence root also
+receives private command/timeline files for manual semantic review. Review
+whether shell conditionals actually executed before labeling configure
+omissions, repairs or repeated builds. Never publish the raw timeline files.
+
 ## Codex on Terminal-Bench
 
 `evals.harbor_codex:JevCodex` subclasses Harbor's Codex agent. Harbor retains the
