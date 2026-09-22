@@ -9,6 +9,13 @@ import { fingerprint, initialRequest, runtimeManifest } from './codex_start.mjs'
 
 const hopHeaders = ['host', 'connection', 'transfer-encoding', 'content-length'];
 
+export function spawnCodex(args) {
+  const child = spawn(args[0], args.slice(1), { stdio: ['inherit', 'pipe', 'pipe'] });
+  child.stdout.pipe(process.stdout, { end: false });
+  child.stderr.pipe(process.stderr, { end: false });
+  return child;
+}
+
 export function createGate({ upstream, runtime, expected, record, onReject }) {
   let first = true;
   let accepted = false;
@@ -109,7 +116,7 @@ export async function runGated(args) {
     server.listen(49371, '127.0.0.1', resolve);
   });
   try {
-    child = spawn(args[0], args.slice(1), { stdio: 'inherit' });
+    child = spawnCodex(args);
     const forward = signal => child.kill(signal);
     const interrupt = () => forward('SIGINT');
     const terminate = () => forward('SIGTERM');
@@ -118,7 +125,7 @@ export async function runGated(args) {
     try {
       const code = await new Promise((resolve, reject) => {
         child.on('error', reject);
-        child.on('exit', code => resolve(code ?? 1));
+        child.on('close', code => resolve(code ?? 1));
       });
       return rejected ? 78 : code;
     } finally {

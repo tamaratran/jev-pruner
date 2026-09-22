@@ -976,7 +976,8 @@ Run a live paired transport preflight before a benchmark batch:
 export JEV_CODEX_AUTH_FILE="$HOME/.codex/auth.json"
 export JEV_EVAL_MODEL_CATALOG="$HOME/.codex/models_cache.json"
 python -m evals.standardized_preflight \
-  /path/to/CompileBench/datasets/compilebench/cowsay /external/preflight-linux
+  /path/to/CompileBench/datasets/compilebench/cowsay /external/preflight-linux \
+  --large-output
 ```
 
 Repeat on Alpine and ARM cross-compilation task images. For Windows use
@@ -984,7 +985,10 @@ Repeat on Alpine and ARM cross-compilation task images. For Windows use
 image override planned for the benchmark. Each check creates two fresh
 environments, makes a small live subscription-authenticated Codex request in
 each, exercises the wrapper, and requires matching initial fingerprints.
-These are transport checks, not benchmark attempts or correctness scores.
+The large-output probe produces 983,040 bytes through the wrapper, ensuring
+Codex completes after streaming a long log. A tiny probe alone does not validate
+output backpressure. These are transport checks, not benchmark attempts or
+correctness scores.
 The helper pins Modal's image builder to the benchmark's `2025.06` version.
 Keep failed preflight directories; rerun fixes into fresh directories.
 

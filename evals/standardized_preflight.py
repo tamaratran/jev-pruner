@@ -22,6 +22,13 @@ INSTRUCTION = (
     "node /opt/jev-eval/evals/codex_command.mjs -- printf 'preflight-ready\\n'\n"
     "Then reply READY. Do not build software or modify any files."
 )
+LARGE_INSTRUCTION = (
+    "This is a transport compatibility check, not the benchmark task. "
+    "Run exactly this command once: "
+    "node /opt/jev-eval/evals/codex_command.mjs -- node -e "
+    "\"process.stdout.write('preflight-ready\\n'.repeat(65536))\"\n"
+    "Then reply READY. Do not build software or modify any files."
+)
 
 
 async def check(
@@ -29,6 +36,7 @@ async def check(
     root: Path,
     environment_type: EnvironmentType,
     compose: list[Path],
+    large_output: bool = False,
 ) -> None:
     task = Task(task_path)
     root.mkdir(mode=0o700)
@@ -66,7 +74,11 @@ async def check(
             )
             await agent.setup(environment)
             try:
-                await agent.run(INSTRUCTION, environment, AgentContext())
+                await agent.run(
+                    LARGE_INSTRUCTION if large_output else INSTRUCTION,
+                    environment,
+                    AgentContext(),
+                )
             finally:
                 await environment.download_dir("/logs/agent", paths.agent_dir)
             start_path = paths.agent_dir / "start.json"
@@ -82,10 +94,12 @@ async def check(
             if start["status"] != "accepted" or len(completed) != 1:
                 raise ValueError("Preflight rejected or inference incomplete")
             captures = list((paths.agent_dir / "observer").glob("*.raw"))
-            if len(captures) != 1 or captures[0].read_bytes() != b"preflight-ready\n":
+            expected_output = b"preflight-ready\n" * (65536 if large_output else 1)
+            if len(captures) != 1 or captures[0].read_bytes() != expected_output:
                 raise ValueError("Expected one captured wrapper command")
             if (
-                captures[0].with_suffix(".delivered").read_bytes()
+                not large_output
+                and captures[0].with_suffix(".delivered").read_bytes()
                 != captures[0].read_bytes()
             ):
                 raise ValueError("Tiny probe output must be delivered unchanged")
@@ -98,6 +112,7 @@ async def check(
                     "arm": arm,
                     "start_sha256": start["sha256"],
                     "usage": completed[0]["usage"],
+                    "probe_bytes": len(expected_output),
                 }
             )
             save(root / "results.json", results)
@@ -122,6 +137,7 @@ def main() -> None:
     parser.add_argument("task", type=Path)
     parser.add_argument("root", type=Path)
     parser.add_argument("--env", type=EnvironmentType, default=EnvironmentType.MODAL)
+    parser.add_argument("--large-output", action="store_true")
     parser.add_argument(
         "--extra-docker-compose", type=Path, action="append", default=[]
     )
@@ -134,6 +150,7 @@ def main() -> None:
             args.root.resolve(),
             args.env,
             args.extra_docker_compose,
+            args.large_output,
         )
     )
 

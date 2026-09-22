@@ -5,11 +5,40 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from evals.codex_bench import access_blocked
+from evals.codex_bench import access_blocked, blocking_failure
 from evals.harbor_codex import INSTRUCTIONS, MODEL, VERSION, JevCodex
 
 
 class CodexAdapterTests(unittest.TestCase):
+    def test_codex_crash_blocks_queue_but_task_output_does_not(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            trial = root / "task__trial"
+            (trial / "agent").mkdir(parents=True)
+            (trial / "agent" / "codex.txt").write_text(
+                json.dumps(
+                    {
+                        "type": "item.completed",
+                        "text": "Command failed (exit 101): failed printing to stdout",
+                    }
+                )
+                + "\n"
+            )
+            result = {
+                "agent_execution": {"started_at": "2026-09-22T00:00:00Z"},
+                "exception_info": None,
+            }
+            (trial / "result.json").write_text(json.dumps(result))
+            self.assertIsNone(blocking_failure(root))
+            result["exception_info"] = {
+                "exception_type": "NonZeroAgentExitCodeError",
+                "exception_message": "Command failed (exit 101): codex exec",
+            }
+            (trial / "result.json").write_text(json.dumps(result))
+            self.assertEqual(
+                blocking_failure(root), "Codex process exited with status 101"
+            )
+
     def test_identical_flags_and_subscription_only_auth(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
