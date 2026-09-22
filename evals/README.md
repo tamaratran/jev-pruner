@@ -985,7 +985,7 @@ Repeat on Alpine and ARM cross-compilation task images. For Windows use
 image override planned for the benchmark. Each check creates two fresh
 environments, makes a small live subscription-authenticated Codex request in
 each, exercises the wrapper, and requires matching initial fingerprints.
-The large-output probe produces 983,040 bytes through the wrapper, ensuring
+The large-output probe produces 1 MiB through the wrapper, ensuring
 Codex completes after streaming a long log. A tiny probe alone does not validate
 output backpressure. These are transport checks, not benchmark attempts or
 correctness scores.
