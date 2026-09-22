@@ -215,6 +215,20 @@ def run(root: Path, harbor: str) -> None:
     rows = json.loads((root / "progress.json").read_text())
     if any(row["state"] != "pending" for row in rows):
         raise ValueError("A started run cannot be restarted or silently retried")
+    standardized = protocol.get("standardization")
+    if standardized:
+        catalog = root / "models.json"
+        if (
+            hashlib.sha256(catalog.read_bytes()).hexdigest()
+            != standardized["catalog_sha256"]
+        ):
+            raise ValueError("Model catalog differs from the frozen protocol")
+        if any(
+            "evals.standardized_codex:StandardizedCodex"
+            not in protocol.get("task_flags", {}).get(task, protocol["flags"])
+            for task in protocol["selected_tasks"]
+        ):
+            raise ValueError("Standardized protocol requires the gated adapter")
     if (
         git(REPO, "status", "--porcelain")
         or source_hashes() != protocol["source_sha256"]
@@ -234,6 +248,7 @@ def run(root: Path, harbor: str) -> None:
     local_worker = threading.Lock()
 
     def pair(task: str) -> None:
+        reference: Path | None = None
         for row in [entry for entry in rows if entry["task"] == task]:
             with lock:
                 if stop.is_set():
@@ -255,6 +270,12 @@ def run(root: Path, harbor: str) -> None:
                     ],
                 }
             )
+            env.pop("JEV_EVAL_EXPECTED_START", None)
+            env.pop("JEV_EVAL_MODEL_CATALOG", None)
+            if standardized:
+                env["JEV_EVAL_MODEL_CATALOG"] = str(root / "models.json")
+                if reference is not None:
+                    env["JEV_EVAL_EXPECTED_START"] = str(reference)
             command = [
                 harbor,
                 "run",
@@ -277,11 +298,25 @@ def run(root: Path, harbor: str) -> None:
                     )
                 row["returncode"] = result.returncode
                 row["state"] = "finished"
+                if standardized:
+                    starts = list(
+                        (root / "jobs" / row["job_name"]).glob("*/agent/start.json")
+                    )
+                    start = (
+                        json.loads(starts[0].read_text()) if len(starts) == 1 else {}
+                    )
+                    if start.get("status") != "accepted":
+                        row["state"] = "preflight_rejected"
+                        row["blocker"] = "Missing or rejected starting-state evidence"
+                        stop.set()
+                    else:
+                        row["start_sha256"] = start["sha256"]
+                        reference = starts[0]
                 reason = blocking_failure(root / "jobs" / row["job_name"])
                 if reason:
                     row["blocker"] = reason
                     stop.set()
-            except OSError as error:
+            except (OSError, ValueError, KeyError) as error:
                 row["state"] = "launcher_error"
                 row["error"] = str(error)
                 stop.set()
