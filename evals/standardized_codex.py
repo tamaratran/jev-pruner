@@ -56,6 +56,15 @@ class StandardizedCodex(JevCodex):
                 "Standardized trials require a fresh session without skills"
             )
         await super().setup(environment)
+        await self.exec_as_agent(
+            environment, command=f"mkdir -p {self._REMOTE_CODEX_HOME}"
+        )
+        await self._upload_config_text(
+            environment,
+            content="",
+            remote_path=str(self._REMOTE_CODEX_HOME / "config.toml"),
+            filename="config.toml",
+        )
         for name in ("codex_gate.mjs", "codex_start.mjs"):
             await environment.upload_file(
                 REPO / "evals" / name, f"{REMOTE}/evals/{name}"
