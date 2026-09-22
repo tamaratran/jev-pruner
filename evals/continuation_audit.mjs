@@ -47,6 +47,7 @@ export async function auditAttempt(root, attempt, checkpoint, reference) {
     id: attempt.id, block: attempt.block, group: attempt.group, condition: attempt.condition,
     status: result.status, reward: result.reward ?? null, matched_start: null,
     forwarded: 0, completed: 0, input: 0, output: 0, cached: 0,
+    first_input: null, max_input: null,
     costs_complete: false, tool_calls: 0, exec_calls: 0, polls: 0, patch_calls: 0,
     captured_outputs: 0, changed_later_outputs: 0, wrapper_failures: 0, jev_requests: 0,
     first_delay_ms: null, issues: [], commands: [],
@@ -100,6 +101,8 @@ export async function auditAttempt(root, attempt, checkpoint, reference) {
         row.input += usage.input;
         row.output += usage.output;
         row.cached += usage.cached;
+        if (record.number === 1) row.first_input = usage.input;
+        row.max_input = Math.max(row.max_input ?? 0, usage.input);
       }
       if (record.status !== 200) row.issues.push(`http_${record.status}`);
       for (const event of events) {
