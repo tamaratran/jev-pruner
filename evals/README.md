@@ -1,5 +1,118 @@
 # Eval suite
 
+## Codex on Terminal-Bench
+
+`evals.harbor_codex:JevCodex` subclasses Harbor's Codex agent. Harbor retains the
+upstream task instruction, environment, timeout and verifier. Both arms receive
+the same developer instructions to use an instrumented command wrapper for
+verbose, noninteractive commands. This is an opt-in wrapper integration, not
+automatic interception of every shell tool call.
+
+The adapter pins Codex 0.152.1 and `openai/gpt-5.5`. Set `JEV_EVAL_ARM` to `control`
+or `plugin`, `JEV_CODEX_AUTH_FILE` to the existing private ChatGPT `auth.json`,
+and provide `TYPESAFE_API_KEY` through the environment. No API-key fallback is
+allowed. Only the private login file is copied; existing skills, settings and
+transcripts are not imported. Authentication files and the Jev key are kept
+outside downloaded evidence. Do not publish the login directory.
+
+The wrapper runs the unchanged built production code. Control omits the Jev key.
+An observer records raw stdout, delivery, exit status and Jev usage outside task
+workspaces; recovery archives retain the production location. Native Codex
+transcripts supply pruning context without installing a treatment-only skill.
+Host truncation must be audited separately before crediting visible reductions.
+Task failures and unchanged outputs remain in overall benchmark results. Only
+instrumented pairs with actual delivered reductions qualify for effectiveness.
+
+Validation starts with the existing fixed three-task pilot: `build-cython-ext`,
+`chess-best-move`, and `configure-git-webserver`. Official oracle outcomes and
+integration failures are retained separately from measured model trials.
+
+Freeze and run the pilot from a clean, built checkout:
+
+```sh
+python -m evals.codex_bench plan "$HOME/tb-codex-pilot" \
+  --benchmark "$HOME/terminal-bench-2" --phase pilot --concurrency 3
+JEV_CODEX_AUTH_FILE="$HOME/.codex/auth.json" \
+  python -m evals.codex_bench run "$HOME/tb-codex-pilot" --harbor "$HARBOR_BIN"
+node evals/codex_bench_audit.mjs "$HOME/tb-codex-pilot"
+```
+
+After validation, use a fresh directory with `--phase comparison --concurrency 16`.
+This preselects 32 distinct upstream tasks by SHA256 of a fixed seed and task name,
+excluding the three pilot tasks and nine documented security-sensitive tasks.
+The protocol retains the full 89-task inventory and every selection/exclusion.
+There is one control/plugin pair per selected task: 64 measured trials. This is
+a Terminal-Bench subset, not a complete 89-task leaderboard result or a repetition
+study. Selection is independent of observed reward and pruning activity.
+
+Pairs run sequentially with alternating arm order; separate pairs run in parallel.
+Task limits and verifiers remain upstream defaults. Harbor retries are disabled.
+The launcher stops queued work on account/authentication errors and refuses to
+restart an already-started run. Preserve blocked rows; any supplemental run must
+have a separate protocol and directory.
+
+The audit reconciles CLI totals with the native transcript, checks the model and
+dataset revision, verifies observer isolation, and matches wrapped stdout against
+native tool outputs (including asynchronous polls) when pruning occurs.
+Identical raw/delivered captures receive zero pruning credit without assuming
+one wrapper invocation per tool call: loops, pipes and redirects can change that
+relationship. Captures without completion metadata remain invalid, including
+interrupted commands. Multiple pruned captures sharing one delivery group remain
+unattributable rather than receiving duplicate savings credit.
+The frozen 10,000-token global cap bounds per-call preview budgets.
+Host-truncated deliveries
+receive no pruning credit. The unpruned preview estimate omits stderr, making it
+a conservative lower bound, while delivered size counts stderr and earlier polls.
+Explicit archive-path tool calls are counted as recovery; indirect aliases cannot
+be reliably identified. Raw stdout reduction and model-visible reduction are
+separate metrics. Native/CLI-reconciled usage and complete Jev usage remain in
+overall cost accounting even when delivery instrumentation is invalid; those
+trials remain excluded from pruning effectiveness. Incomplete usage is not zero.
+The aggregate lower bound includes all reconciled model usage and reported Jev
+usage, even when some Jev responses lack usage; complete-cost totals sum only
+rows with complete accounting and include an explicit availability count.
+Primary cost prices every input token at $5/M, output at $30/M and Jev input at
+$0.042/M; observed cached input at $0.50/M is secondary. These are comparison
+estimates, not subscription charges or Modal infrastructure bills.
+
+## Repeated CompileBench comparison
+
+First replay the four reviewed build-log candidates from the capture pilot.
+This uses the production Codex pruning adapter with pre-command native context,
+records Jev usage, and checks required lines and conservative native-preview
+reduction. Inspect the removed text before proceeding. The replay does not run
+Codex or establish task accuracy. Preserve interrupted replays separately.
+
+```sh
+node evals/compilebench_replay.mjs /external/capture-pilot /external/replay-new
+python -m evals.compilebench plan /external/comparison-new \
+  --benchmark /path/to/CompileBench --replay /external/replay-new --concurrency 4 \
+  --model-catalog "$HOME/.codex/models_cache.json" \
+  --seed jev-standardized-compilebench-v1 --repetitions 3
+JEV_CODEX_AUTH_FILE="$HOME/.codex/auth.json" \
+  python -m evals.compilebench run /external/comparison-new --harbor "$HARBOR_BIN"
+node evals/codex_bench_audit.mjs /external/comparison-new
+```
+
+Commit the harness and build before planning. Keep `TYPESAFE_API_KEY` available
+through the environment. The source hashes must match the replay; task files
+are checked at launch and audit. New CLI plans use `StandardizedCodex` and identical buffered
+output transport. No production threshold or scoring changes are made.
+
+The four tasks are cowsay, coreutils, jq, and curl-ssl at the capture pilot's
+CompileBench revision, each repeated three times per arm (24 attempts). Copies
+have `-r1`, `-r2`, and `-r3` aliases so the existing paired scheduler and auditor
+keep repetitions separate. `qualifying_tasks` therefore lists **pairs**, while
+`source_task` identifies the four distinct upstream tasks. Original instructions,
+environments, limits, and verifiers are unchanged. Windows remains outside this
+comparison because its recorded Wine verifier failure is unresolved.
+
+This subset follows an opportunity-finding pilot; it is not an unseen test set.
+Report all attempts and overall accuracy, then actual-pruning pairs separately.
+No-pruning attempts, invalid measurements, incomplete usage, and task failures
+remain recorded. Cache-normalized cost is primary; observed-cache pricing is
+secondary. Retries are disabled, and account errors stop queued work.
+
 ## Codex paired log-reading comparison
 
 With Codex CLI 0.152.1 authenticated through ChatGPT, the installed Codex plugin
@@ -769,6 +882,190 @@ Historical output uses a 100,000-token tool budget to avoid host truncation.
 The selected tasks have been seen before; this is a targeted regression
 comparison, not evidence of general savings or performance on unseen tasks.
 No-pruning pairs remain separate activation and overhead diagnostics.
+
+## Cross-benchmark capture pilot
+
+`capture_pilot.py` freezes five tasks from each of CompileBench,
+MMLongBench-Doc, and DABstep's public development split. Selection uses seeded
+hash ranks within declared strata, never output size or observed success.
+Supply clean pinned upstream checkouts; the selection manifest records their
+revisions. MMLongBench-Doc data is CC BY-NC 4.0; use it for permitted research.
+
+```sh
+python -m evals.capture_pilot prepare /external/evidence \
+  --compile-repo /path/to/CompileBench --pdf-repo /path/to/mmlongbench-doc
+python -m evals.capture_pilot freeze /external/evidence --concurrency 3
+JEV_CODEX_AUTH_FILE=/private/auth.json \
+  python -m evals.capture_pilot run /external/evidence
+npm run build
+node evals/capture_audit.mjs /external/evidence
+python -m evals.capture_grade /external/evidence
+```
+
+The runner requires a clean committed checkout, Harbor 0.22.0, Modal access,
+and an existing Codex ChatGPT subscription login. It removes API-key overrides
+and the Jev key from worker environments. External PDF answer extraction uses
+the benchmark's GPT-4o prompt via `OPENAI_API_KEY`; its usage and fixed-price
+estimate are recorded separately. DABstep scoring is deterministic.
+CompileBench retains its upstream environment and verifier. PDF and DABstep
+use terminal adaptations with original questions/data and external graders;
+these are not full leaderboard evaluations.
+
+The capture wrapper streams stdout and stderr unchanged into separate files.
+Native Codex session records measure what reached the model, including stderr
+and host truncation. A command can produce several native polling responses,
+so command counts, captured stdout counts, and native response counts have
+different denominators. The streaming baseline also differs from the buffering
+needed for a future pruning arm. Image calls are counted separately; their
+content cannot be measured as Bash text.
+
+The audit uses the production token estimate, not the host's byte-based preview
+budget. Its `candidate` flag only screens size, document, binary, and sensitive
+content gates. It does not score relevance or establish that any text is safe
+to remove; inspect candidates before proposing paired trials. PDF passages and
+data values remain reference material even when a heuristic misses them.
+No output is pruned and no Jev request is made in this pilot.
+
+Evidence, answer keys, and scorers stay outside agent workspaces. The frozen
+protocol hashes task inputs and scorer files. Started attempts are never
+silently retried; blocked and incomplete rows remain in the audit. Do not
+interpret absent captures as small outputs or failed grader calls as wrong
+answers. Each grading call writes a started record first and is not repeated
+on rerun. Use `--family dab` to score data tasks without an OpenAI API key;
+API failures leave PDF scores pending rather than counting them as wrong.
+
+## Complete CompileBench comparison
+
+The full protocol includes every task at CompileBench revision
+`66e27468505706643088b79f8efad6260c274dc5`: 15 distinct task definitions,
+three fresh attempts per arm by default (90 attempts). Set `--repetitions 1`
+explicitly for 30 attempts. This includes related variants of
+cowsay, coreutils, jq and curl; it is not 15 unrelated projects.
+The earlier four-task, three-repetition protocol remains the default.
+
+```sh
+python -m evals.compilebench plan /external/compilebench-full \
+  --benchmark /path/to/CompileBench --replay /external/passing-replay \
+  --full --concurrency 15 \
+  --model-catalog "$HOME/.codex/models_cache.json" \
+  --seed jev-standardized-compilebench-v1 --repetitions 3 \
+  --docker-task jq-windows --docker-task jq-windows2
+python -m evals.compilebench run /external/compilebench-full
+node evals/codex_bench_audit.mjs /external/compilebench-full
+```
+
+Use the existing subscription authentication and Jev environment variables
+documented above. Complete runtime compatibility checks before freezing:
+Alpine must run the pinned Codex binary; ARM64 needs QEMU; Windows tasks need
+working Wine, including its 32-bit launcher. The prior Modal Windows verifier
+failed with `Exec format error`. Explicit Docker tasks use a single local
+worker, with both arms kept sequential on that worker. Other pairs run on
+Modal. Task files and original verifiers are copied without changes.
+
+The frozen protocol records the task-specific flags and serial task list.
+No started attempt is retried, and account/setup errors stop queued work.
+Report every planned task, including failures and unavailable measurements.
+Show the full-suite result alongside the conditional actual-pruning subset;
+one attempt per arm does not establish repeatability.
+
+## Standardized CompileBench starting conditions
+
+Run a live paired transport preflight before a benchmark batch:
+
+```sh
+export JEV_CODEX_AUTH_FILE="$HOME/.codex/auth.json"
+export JEV_EVAL_MODEL_CATALOG="$HOME/.codex/models_cache.json"
+python -m evals.standardized_preflight \
+  /path/to/CompileBench/datasets/compilebench/cowsay /external/preflight-linux \
+  --large-output
+```
+
+Repeat on Alpine and ARM cross-compilation task images. For Windows use
+`--env docker --extra-docker-compose /external/pinned-image.yaml` with the same
+image override planned for the benchmark. Each check creates two fresh
+environments, makes a small live subscription-authenticated Codex request in
+each, exercises the wrapper, and requires matching initial fingerprints.
+The large-output probe produces 1 MiB through the wrapper, ensuring
+Codex completes after streaming a long log. A tiny probe alone does not validate
+output backpressure. These are transport checks, not benchmark attempts or
+correctness scores.
+The helper pins Modal's image builder to the benchmark's `2025.06` version.
+Keep failed preflight directories; rerun fixes into fresh directories.
+
+New CompileBench CLI plans require a local Codex model catalog. Planning copies
+only the `gpt-5.5` definition, hashes it, and records the complete adapter settings
+in `protocol.json`. The CLI defaults to three repetitions and a fixed seed.
+SHA256(seed, task) chooses the first arm, with order reversed each repetition;
+SHA256(seed, task/repetition) determines the submission queue. Actual start/end
+times remain recorded because concurrent completion order can vary.
+Old protocol files and the legacy Python planner defaults remain readable; they
+are **not retroactively standardized**. The separate Terminal-Bench planner and
+custom repair/capture runners do not yet opt into these new controls.
+
+Both arms use Codex 0.152.1, GPT-5.5 with high reasoning, identical developer
+instructions and tool limits, and the same pinned model metadata. Built-in plugin
+discovery, remote plugins, recommended plugins, apps, memories and web search are
+disabled. Host skill discovery is disabled; bundled skills remain part of the
+pinned CLI and their initial guidance is compared. Each run starts with an empty,
+fixed-path Codex home outside the task workspace. Resuming sessions or supplying
+extra skills/configuration is rejected. The adapter explicitly creates an empty
+`config.toml` before Harbor runs; Harbor omits this file when it has no settings.
+
+Before Codex starts, the adapter fingerprints:
+
+- Task workspace file contents, permissions, empty directories and symlink targets.
+  Symlinks outside that tree and special files are rejected.
+- OS release, architecture, OS/Python/global npm package inventories, available
+  tool binary hashes, Codex/Node versions, UID/GID and available cgroup v2 limits.
+- Effective Codex config, CLI arguments, model catalog and the explicit environment
+  variable allowlist in `codex_start.mjs`. Credentials are not read into this manifest.
+
+Benchmark/task/verifier hashes, environment selection, task resource settings,
+wrapper sources/builds, Harbor version and fixed token rates remain frozen by the
+existing protocol. A first arm establishes a **provisional per-pair reference**.
+The other arm must match its runtime before Codex starts, then its initial request
+before model inference is forwarded. This does not promise every repetition uses
+a byte-identical container image: drift checks cover the listed state, not every
+system file, kernel setting, external service or future network download.
+
+The adapter uses a loopback HTTP gateway with ChatGPT authentication and a fixed
+HTTPS upstream. Both arms use HTTP streaming, with WebSockets and request
+compression disabled. The gateway returns no remote user settings and disables
+telemetry; it never stores authorization headers. The initial request evidence
+includes **all base instructions, developer/user messages, environment guidance,
+tool definitions and model settings**. The original request bytes are forwarded
+unchanged after comparison. Later requests are forwarded without constraining
+Codex's commands, repairs, polling, model steps or outputs.
+
+Comparison removes only these transport bookkeeping fields, without rewriting
+text or filtering unknown fields:
+
+- Top-level `prompt_cache_key` and initial message `id`.
+- Message metadata `turn_id` and `create_time`.
+- Client metadata `session_id`, `thread_id`, `turn_id`, `root_turn_id`,
+  `installation_id`, `window_id`, `context_window_id`, `turn_started_at_unix_ms`,
+  `x-codex-installation-id` and `x-codex-window-id`; the same explicit list applies
+  inside the JSON-valued `x-codex-turn-metadata`.
+
+Timestamps appearing **in prompt text**, including Codex's current date, are not
+normalized. Crossing midnight can therefore reject a pair. Request metadata other
+than the listed fields is retained. This is a comparison of client request bodies,
+not visibility into the provider's hidden context, backend revisions or random seed.
+
+Missing evidence or mismatches stop queued work and preserve the affected attempt
+as `preflight_rejected`; no automatic retries or replacement tasks are allowed.
+The private start evidence is copied to each trial's `agent/start.json`.
+`overall` retains all diagnostic accounting. `controlled_tasks`/`controlled`
+require two matching, valid starting states and valid task/settings identity.
+`uncontrolled_tasks` lists excluded standardized pairs. `effectiveness` additionally
+requires complete measurements and actual delivered pruning, never a passing reward.
+Unchanged runs remain in the controlled overall benchmark; their cost differences
+cannot be attributed to removed output. Fixed input/output/Jev prices remain primary.
+
+Validation before another benchmark: run the checks below, inspect a small
+environment compatibility preflight, and confirm both initial-request fingerprints
+match. Local HTTP fixtures test drift rejection without inference or real credentials.
+No new benchmark results follow merely from implementing these controls.
 
 ## Checks
 
