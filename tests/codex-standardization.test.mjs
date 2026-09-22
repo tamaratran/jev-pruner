@@ -1,8 +1,12 @@
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { mkdtemp, mkdir, chmod, rm, symlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { Writable } from 'node:stream';
+import { finished } from 'node:stream/promises';
 import { test } from 'vitest';
 import { createGate } from '../evals/codex_gate.mjs';
 import { fingerprint, initialRequest, workspaceManifest } from '../evals/codex_start.mjs';
@@ -79,6 +83,57 @@ test('workspace evidence detects contents, hidden files, modes, links and added 
 const listen = server => new Promise(resolve =>
   server.listen(0, '127.0.0.1', () => resolve(`http://127.0.0.1:${server.address().port}`)));
 const close = server => new Promise(resolve => { server.closeAllConnections(); server.close(resolve); });
+
+test('Codex output stays blocking and complete when the outer pipe becomes nonblocking', async () => {
+  const size = 8 * 1024 * 1024;
+  const writer = [
+    'import os, sys',
+    'os.read(0, 1)',
+    'assert os.get_blocking(1) and os.get_blocking(2)',
+    `sys.stdout.buffer.write(b"x" * ${size})`,
+    'sys.stdout.flush()',
+    'sys.stderr.write("child-stderr\\n")',
+    'sys.exit(17)',
+  ].join('\n');
+  const fixture = `
+    import {spawnSync} from 'node:child_process';
+    import {spawnCodex} from ${JSON.stringify(new URL('../evals/codex_gate.mjs', import.meta.url).href)};
+    const child = spawnCodex(['python3', '-c', ${JSON.stringify(writer)}]);
+    child.on('error', () => { process.exitCode = 99; });
+    child.on('close', code => { process.exitCode = code; });
+    const mode = spawnSync('python3', ['-c',
+      'import os; os.set_blocking(1, False); os.set_blocking(2, False)'],
+      {stdio: 'inherit'});
+    if (mode.status !== 0) throw Error('Failed to configure pipe');
+    process.stderr.write('READY\\n');
+  `;
+  const child = spawn(process.execPath, ['--input-type=module', '-e', fixture]);
+  const hash = createHash('sha256');
+  let bytes = 0;
+  let stderr = '';
+  const slow = new Writable({
+    highWaterMark: 1024,
+    write(chunk, _encoding, callback) {
+      bytes += chunk.length;
+      hash.update(chunk);
+      setTimeout(callback, 1);
+    },
+  });
+  child.stdout.pipe(slow);
+  child.stderr.on('data', chunk => {
+    stderr += chunk;
+    if (stderr.includes('READY\n') && !child.stdin.writableEnded) child.stdin.end('x');
+  });
+  const code = await new Promise((resolve, reject) => {
+    child.on('error', reject);
+    child.on('close', resolve);
+  });
+  await finished(slow);
+  assert.equal(code, 17, stderr);
+  assert.equal(bytes, size);
+  assert.equal(hash.digest('hex'), createHash('sha256').update(Buffer.alloc(size, 'x')).digest('hex'));
+  assert.equal(stderr, 'READY\nchild-stderr\n');
+}, 15000);
 
 test.each(['matched', 'prompt-drift', 'missing-tools'])(
   'request gate forwards only accepted starts and preserves evidence: %s', async mode => {

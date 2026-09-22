@@ -970,6 +970,28 @@ one attempt per arm does not establish repeatability.
 
 ## Standardized CompileBench starting conditions
 
+Run a live paired transport preflight before a benchmark batch:
+
+```sh
+export JEV_CODEX_AUTH_FILE="$HOME/.codex/auth.json"
+export JEV_EVAL_MODEL_CATALOG="$HOME/.codex/models_cache.json"
+python -m evals.standardized_preflight \
+  /path/to/CompileBench/datasets/compilebench/cowsay /external/preflight-linux \
+  --large-output
+```
+
+Repeat on Alpine and ARM cross-compilation task images. For Windows use
+`--env docker --extra-docker-compose /external/pinned-image.yaml` with the same
+image override planned for the benchmark. Each check creates two fresh
+environments, makes a small live subscription-authenticated Codex request in
+each, exercises the wrapper, and requires matching initial fingerprints.
+The large-output probe produces 1 MiB through the wrapper, ensuring
+Codex completes after streaming a long log. A tiny probe alone does not validate
+output backpressure. These are transport checks, not benchmark attempts or
+correctness scores.
+The helper pins Modal's image builder to the benchmark's `2025.06` version.
+Keep failed preflight directories; rerun fixes into fresh directories.
+
 New CompileBench CLI plans require a local Codex model catalog. Planning copies
 only the `gpt-5.5` definition, hashes it, and records the complete adapter settings
 in `protocol.json`. The CLI defaults to three repetitions and a fixed seed.
@@ -986,7 +1008,8 @@ discovery, remote plugins, recommended plugins, apps, memories and web search ar
 disabled. Host skill discovery is disabled; bundled skills remain part of the
 pinned CLI and their initial guidance is compared. Each run starts with an empty,
 fixed-path Codex home outside the task workspace. Resuming sessions or supplying
-extra skills/configuration is rejected.
+extra skills/configuration is rejected. The adapter explicitly creates an empty
+`config.toml` before Harbor runs; Harbor omits this file when it has no settings.
 
 Before Codex starts, the adapter fingerprints:
 

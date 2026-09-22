@@ -16,6 +16,28 @@ from evals.standardized_codex import SETTINGS, StandardizedCodex
 
 
 class StandardizedAdapterTests(unittest.IsolatedAsyncioTestCase):
+    async def test_setup_creates_fingerprintable_empty_config(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            agent = StandardizedCodex(
+                logs_dir=Path(directory), model_name=MODEL, version=VERSION
+            )
+            remote = create_autospec(BaseEnvironment, instance=True)
+            with (
+                patch.object(JevCodex, "setup", new_callable=AsyncMock),
+                patch.object(agent, "exec_as_agent", new_callable=AsyncMock),
+                patch.object(
+                    agent, "_upload_config_text", new_callable=AsyncMock
+                ) as upload,
+                patch.dict(os.environ, {"JEV_EVAL_MODEL_CATALOG": "models.json"}),
+            ):
+                await agent.setup(remote)
+                upload.assert_awaited_once_with(
+                    remote,
+                    content="",
+                    remote_path="/opt/jev-eval/codex-home/config.toml",
+                    filename="config.toml",
+                )
+
     async def test_both_arms_use_the_gate_with_identical_cli_flags(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             agent = StandardizedCodex(

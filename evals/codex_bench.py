@@ -203,6 +203,11 @@ def blocking_failure(job: Path) -> str | None:
     if len(results) != 1:
         return "Missing or ambiguous Harbor trial result"
     trial = json.loads(results[0].read_text())
+    exception = trial.get("exception_info") or {}
+    if exception.get("exception_type") == "NonZeroAgentExitCodeError" and exception.get(
+        "exception_message", ""
+    ).startswith("Command failed (exit 101):"):
+        return "Codex process exited with status 101"
     if trial.get("exception_info") and not (trial.get("agent_execution") or {}).get(
         "started_at"
     ):
