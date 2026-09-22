@@ -6,6 +6,27 @@ import { join } from 'node:path';
 import { test } from 'vitest';
 import { verifyTask, summarize } from '../evals/codex_bench_audit.mjs';
 
+test('task-specific environments are enforced for both arms', async () => {
+  const protocol = {
+    benchmark_commit: 'pinned',
+    flags: ['--env', 'modal'],
+    task_flags: { windows: ['--env', 'docker'] },
+  };
+  for (const arm of ['control', 'plugin']) {
+    for (const task of ['windows', 'linux']) {
+      const environment = task === 'windows' ? 'docker' : 'modal';
+      const result = {
+        task_id: { git_commit_id: 'pinned' },
+        config: { environment: { type: environment } },
+      };
+      await verifyTask(result, { task, arm }, protocol);
+      result.config.environment.type = environment === 'docker' ? 'modal' : 'docker';
+      await assert.rejects(verifyTask(result, { task, arm }, protocol),
+        /Execution environment mismatch/);
+    }
+  }
+});
+
 test('local task audit rejects changed verifier content and wrong task paths', async () => {
   const root = await mkdtemp(join(tmpdir(), 'compilebench-audit-'));
   try {
