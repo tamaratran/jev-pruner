@@ -20,6 +20,11 @@ const payloads = transcript => transcript.filter(event => event.type === 'respon
 const finalOutput = text => text.replace(/^[\s\S]*?\n(?:Final output|Output):\n/, '');
 
 export async function verifyTask(result, planned, protocol) {
+  const flags = protocol.task_flags?.[planned.task] ?? protocol.flags;
+  if (flags?.includes('--env')) {
+    assert.equal(result.config?.environment?.type, flags[flags.indexOf('--env') + 1],
+      'Execution environment mismatch');
+  }
   if (!protocol.local_task_root) {
     assert.equal(result.task_id.git_commit_id, protocol.benchmark_commit, 'Dataset revision mismatch');
     return;

@@ -231,6 +231,7 @@ def run(root: Path, harbor: str) -> None:
     (root / "console").mkdir()
     (root / "jobs").mkdir()
     lock, stop = threading.Lock(), threading.Event()
+    local_worker = threading.Lock()
 
     def pair(task: str) -> None:
         for row in [entry for entry in rows if entry["task"] == task]:
@@ -257,7 +258,7 @@ def run(root: Path, harbor: str) -> None:
             command = [
                 harbor,
                 "run",
-                *protocol["flags"],
+                *protocol.get("task_flags", {}).get(task, protocol["flags"]),
                 "-i",
                 task,
                 "--job-name",
@@ -290,8 +291,15 @@ def run(root: Path, harbor: str) -> None:
                     save(root / "progress.json", rows)
                     print(f"{task} {row['arm']}: {row['state']}", flush=True)
 
+    def scheduled_pair(task: str) -> None:
+        if task in protocol.get("serial_tasks", []):
+            with local_worker:
+                pair(task)
+        else:
+            pair(task)
+
     with ThreadPoolExecutor(max_workers=protocol["concurrency"]) as pool:
-        list(pool.map(pair, protocol["selected_tasks"]))
+        list(pool.map(scheduled_pair, protocol["selected_tasks"]))
 
 
 def main() -> None:

@@ -932,6 +932,37 @@ answers. Each grading call writes a started record first and is not repeated
 on rerun. Use `--family dab` to score data tasks without an OpenAI API key;
 API failures leave PDF scores pending rather than counting them as wrong.
 
+## Complete CompileBench comparison
+
+The full protocol includes every task at CompileBench revision
+`66e27468505706643088b79f8efad6260c274dc5`: 15 distinct task definitions,
+one fresh attempt per arm (30 attempts). This includes related variants of
+cowsay, coreutils, jq and curl; it is not 15 unrelated projects.
+The earlier four-task, three-repetition protocol remains the default.
+
+```sh
+python -m evals.compilebench plan /external/compilebench-full \
+  --benchmark /path/to/CompileBench --replay /external/passing-replay \
+  --full --concurrency 15 \
+  --docker-task jq-windows --docker-task jq-windows2
+python -m evals.compilebench run /external/compilebench-full
+node evals/codex_bench_audit.mjs /external/compilebench-full
+```
+
+Use the existing subscription authentication and Jev environment variables
+documented above. Complete runtime compatibility checks before freezing:
+Alpine must run the pinned Codex binary; ARM64 needs QEMU; Windows tasks need
+working Wine, including its 32-bit launcher. The prior Modal Windows verifier
+failed with `Exec format error`. Explicit Docker tasks use a single local
+worker, with both arms kept sequential on that worker. Other pairs run on
+Modal. Task files and original verifiers are copied without changes.
+
+The frozen protocol records the task-specific flags and serial task list.
+No started attempt is retried, and account/setup errors stop queued work.
+Report every planned task, including failures and unavailable measurements.
+Show the full-suite result alongside the conditional actual-pruning subset;
+one attempt per arm does not establish repeatability.
+
 ## Checks
 
 ```sh

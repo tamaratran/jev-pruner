@@ -1,4 +1,4 @@
-"""Repeat the four Linux tasks from the capture pilot with unchanged verifiers."""
+"""Compare the pilot subset or every pinned CompileBench task."""
 
 import argparse
 import json
@@ -15,7 +15,15 @@ TASKS = ("cowsay", "coreutils", "jq", "curl-ssl")
 REVISION = "66e27468505706643088b79f8efad6260c274dc5"
 
 
-def plan(root: Path, benchmark: Path, replay: Path, concurrency: int) -> None:
+def plan(
+    root: Path,
+    benchmark: Path,
+    replay: Path,
+    concurrency: int,
+    *,
+    full: bool = False,
+    docker_tasks: tuple[str, ...] = (),
+) -> None:
     if root.exists():
         raise ValueError("Use a fresh evidence directory")
     if git(REPO, "status", "--porcelain") or git(benchmark, "status", "--porcelain"):
@@ -29,13 +37,36 @@ def plan(root: Path, benchmark: Path, replay: Path, concurrency: int) -> None:
     for name, expected in replay_protocol["source_sha256"].items():
         if digest(REPO / name) != expected:
             raise ValueError(f"Source changed since replay: {name}")
+    tasks = (
+        tuple(
+            sorted(
+                path.name
+                for path in (benchmark / "datasets/compilebench").iterdir()
+                if (path / "task.toml").is_file()
+            )
+        )
+        if full
+        else TASKS
+    )
+    if full and len(tasks) != 15:
+        raise ValueError("Expected all 15 tasks at the pinned revision")
+    if set(docker_tasks) - set(tasks):
+        raise ValueError("Docker tasks must belong to the selected suite")
+    repetitions = 1 if full else 3
+    flags = ["-p", str(root / "tasks"), *FLAGS[FLAGS.index("-a") :]]
+    docker_flags = [*flags[: flags.index("--env")], "--env", "docker"]
     root.mkdir(mode=0o700)
     rows = []
     selected = []
-    for repetition in range(1, 4):
-        for index, source in enumerate(TASKS):
+    task_flags = {}
+    serial_tasks = []
+    for repetition in range(1, repetitions + 1):
+        for index, source in enumerate(tasks):
             task = f"{source}-r{repetition}"
             selected.append(task)
+            if source in docker_tasks:
+                task_flags[task] = docker_flags
+                serial_tasks.append(task)
             shutil.copytree(
                 benchmark / "datasets/compilebench" / source, root / "tasks" / task
             )
@@ -59,20 +90,29 @@ def plan(root: Path, benchmark: Path, replay: Path, concurrency: int) -> None:
         root / "protocol.json",
         {
             "created_at": datetime.now(UTC).isoformat(),
-            "benchmark": "CompileBench Linux subset",
+            "benchmark": "CompileBench full suite"
+            if full
+            else "CompileBench Linux subset",
             "benchmark_revision": REVISION,
             "local_task_root": str(root / "tasks"),
             "task_sha256": task_hashes(root),
             "selected_tasks": selected,
-            "distinct_tasks": list(TASKS),
-            "selection": "All four Linux tasks from the capture pilot, including unchanged outputs. jq-windows remains excluded for its separately recorded Wine verifier failure.",
+            "distinct_tasks": list(tasks),
+            "selection": (
+                "Every task directory at the pinned revision, with no exclusions."
+                if full
+                else "All four Linux tasks from the capture pilot, including unchanged outputs. jq-windows remains excluded for its separately recorded Wine verifier failure."
+            ),
             "commit": git(REPO, "rev-parse", "HEAD"),
             "source_sha256": source_hashes(),
             "replay_results_sha256": digest(replay / "results.json"),
-            "flags": ["-p", str(root / "tasks"), *FLAGS[FLAGS.index("-a") :]],
+            "flags": flags,
+            "task_flags": task_flags,
+            "serial_tasks": serial_tasks,
+            "environment_policy": "Modal by default; explicitly selected Docker task pairs share one local worker. Both arms use the same environment.",
             "instructions": INSTRUCTIONS,
             "concurrency": concurrency,
-            "repetitions": 3,
+            "repetitions": repetitions,
             "attempts": len(rows),
             "arm_order": "Alternating across tasks and repetitions; sequential within each pair.",
             "retries": 0,
@@ -84,8 +124,12 @@ def plan(root: Path, benchmark: Path, replay: Path, concurrency: int) -> None:
                 "cached_secondary": 0.5,
             },
             "primary_cost": "All model input * 5/M + output * 30/M + Jev input * 0.042/M.",
-            "scope": "Exploratory repeated subset selected after observing capture opportunities; not an unseen or full benchmark result.",
-            "inclusion": "All 24 attempts retained. Effectiveness requires both measurements valid and actual pruning; no reward-based exclusions. A task alias identifies one repetition, not a distinct benchmark task.",
+            "scope": (
+                "Full task coverage at the pinned revision, one attempt per arm; not a repeated-trial estimate. The suite includes related variants of the same projects."
+                if full
+                else "Exploratory repeated subset selected after observing capture opportunities; not an unseen or full benchmark result."
+            ),
+            "inclusion": f"All {len(rows)} attempts retained. Effectiveness requires both measurements valid and actual pruning; no reward-based exclusions. A task alias identifies one repetition, not a distinct benchmark task.",
         },
     )
     save(root / "progress.json", rows)
@@ -98,6 +142,8 @@ def main() -> None:
     parser.add_argument("--benchmark", type=Path)
     parser.add_argument("--replay", type=Path)
     parser.add_argument("--concurrency", type=int, default=4)
+    parser.add_argument("--full", action="store_true")
+    parser.add_argument("--docker-task", action="append", default=[])
     parser.add_argument("--harbor", default="harbor")
     args = parser.parse_args()
     root = args.root.resolve()
@@ -106,7 +152,14 @@ def main() -> None:
     if args.action == "plan":
         if args.benchmark is None or args.replay is None:
             parser.error("--benchmark and --replay are required")
-        plan(root, args.benchmark.resolve(), args.replay.resolve(), args.concurrency)
+        plan(
+            root,
+            args.benchmark.resolve(),
+            args.replay.resolve(),
+            args.concurrency,
+            full=args.full,
+            docker_tasks=tuple(args.docker_task),
+        )
     else:
         protocol = json.loads((root / "protocol.json").read_text())
         if task_hashes(root) != protocol["task_sha256"]:
