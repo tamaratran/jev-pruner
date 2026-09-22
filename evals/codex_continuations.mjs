@@ -88,9 +88,11 @@ export async function runAttempt(root, attempt, { probe = false, liveProbe = fal
     const records = (await readFile(join(directory, 'private/requests.jsonl'), 'utf8'))
       .trim().split('\n').map(JSON.parse);
     const exit = await json(join(directory, 'private/exit.json'));
+    result.codex_code = exit.code;
     const rejection = records.find(row => row.type === 'rejected');
     result.status = rejection?.error.includes('request cap') ? 'request_cap'
-      : rejection ? 'gate_rejected' : exit.stopped ? 'deadline' : 'agent_finished';
+      : rejection ? 'gate_rejected' : exit.stopped ? 'deadline'
+        : exit.code !== 0 ? 'agent_failed' : 'agent_finished';
     if (probe) {
       assert(records.some(row => row.type === 'probe_accepted'), 'Offline probe did not accept request');
       result.status = 'probe_accepted';
@@ -133,7 +135,10 @@ export async function runBatch(root) {
     const results = await Promise.all(rows.map(row => runAttempt(root, row)));
     for (const result of results) {
       if (result.status === 'error' || result.status === 'gate_rejected') blocked = true;
-      const text = await readFile(join(root, result.id, 'codex.jsonl'), 'utf8');
+      const text = await readFile(join(root, result.id, 'codex.jsonl'), 'utf8').catch(error => {
+        if (error.code === 'ENOENT') return '';
+        throw error;
+      });
       if (/usage_limit_reached|usage limit|rate_limit_exceeded|insufficient_quota|token_expired|refresh_token_reused/i.test(text)) blocked = true;
     }
   }

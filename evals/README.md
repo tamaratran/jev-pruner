@@ -40,6 +40,15 @@ must match. Live probes make one inference request and execute its selected
 tools, then deliberately reject request two. They are compatibility checks,
 not measured trials.
 
+Validate the reconstructed native output against Codex's actual formatter
+before measurement. In a separate container with the same image and private
+checkpoint/catalog/login paths, copy `codex_native_probe.mjs` beside
+`codex_gate.mjs` and execute it with Node. Its local mock responses ask Codex to
+list the archive and compare the real tool result to the reconstruction, ignoring
+only chunk ID and wall time. No model inference is forwarded. A successful probe
+writes `private/formatter-check.json`; retain it outside the measured rows.
+The longest matching preview must be replaced, including its line-count header.
+
 The frozen schedule has four blocks, each containing two unchanged native
 continuations and one pruned continuation. The two native labels provide an
 A/A comparison of ordinary variation. Sorting a fixed-seed hash determines
@@ -57,6 +66,15 @@ only separately generated aggregate accounting and reviewed command summaries.
 The primary cost charges all input at $5/M and output at $30/M. Replayed Jev
 output has no new scoring charge. This experiment estimates the effect of one
 listing intervention at one historical checkpoint, not overall pruner savings.
+
+After all attempts finish, run
+`node evals/continuation_audit.mjs "$NEW_ROOT" "$PRIVATE_ANALYSIS"`.
+The auditor reconciles completed response usage with native telemetry, checks
+the replay prefixes and later output/scoring records, and retains incomplete
+accounting. `accounting.json` contains aggregate rows; the evidence root also
+receives private command/timeline files for manual semantic review. Review
+whether shell conditionals actually executed before labeling configure
+omissions, repairs or repeated builds. Never publish the raw timeline files.
 
 ## Codex on Terminal-Bench
 

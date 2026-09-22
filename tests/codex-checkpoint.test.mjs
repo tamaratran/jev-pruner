@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { test } from 'vitest';
-import { checkpointRequest, commonCheckpointHash, createContinuationGate, createRewriter } from '../evals/codex_checkpoint.mjs';
+import { checkpointRequest, commonCheckpointHash, createContinuationGate, createRewriter, nativeOutput } from '../evals/codex_checkpoint.mjs';
+import { hostPreviews } from '../evals/codex-preview.mjs';
 
 const fresh = () => ({
   model: 'gpt-5.5', instructions: 'identical instructions', reasoning: { effort: 'high' },
@@ -16,6 +17,19 @@ const checkpoint = () => {
   );
   return { request, target: 2, outputs: { native: 'original list', pruned: 'modified list' } };
 };
+
+test('native reconstruction replaces the full preview including its line-count header exactly once', () => {
+  const raw = 'original path\n'.repeat(30);
+  const delivered = 'kept path\n'.repeat(15);
+  const frame = text => `Chunk ID: fixture\nOriginal token count: ${Math.ceil(Buffer.byteLength(text) / 4)}\nOutput:\nWarning: truncated output (original token count: ${Math.ceil(Buffer.byteLength(text) / 4)})\n`;
+  const visible = frame(delivered) + hostPreviews(delivered, 10).at(-1);
+  const native = nativeOutput(visible, raw, delivered, 10);
+  assert.equal(native, frame(raw) + hostPreviews(raw, 10).at(-1));
+  assert.equal(native.match(/Total output lines:/g).length, 1);
+  assert(native.includes('Total output lines: 30'));
+  assert(!native.includes('Total output lines: 15'));
+  assert.throws(() => nativeOutput('unmatched', raw, delivered, 10), /does not match/);
+});
 
 test('checkpoint branches differ only in the selected output and preserve subsequent history', () => {
   const original = checkpoint();

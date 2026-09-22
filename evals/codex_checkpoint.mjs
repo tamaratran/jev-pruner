@@ -28,6 +28,17 @@ export function commonCheckpointHash(checkpoint, condition) {
   return fingerprint(request);
 }
 
+export function nativeOutput(visible, raw, delivered, tokens = 10000) {
+  const candidates = hostPreviews(delivered, tokens);
+  const index = candidates.findLastIndex(preview => visible.endsWith(preview));
+  assert(index >= 0, 'Recorded result does not match host preview');
+  const header = visible.slice(0, visible.length - candidates[index].length);
+  assert(!header.includes('Total output lines:'), 'Line count remains outside matched preview');
+  const native = hostPreviews(raw, tokens);
+  return header.replace(/([Oo]riginal token count: )\d+/g,
+    `$1${Math.ceil(Buffer.byteLength(raw) / 4)}`) + (native[index] ?? native.at(-1));
+}
+
 export function createRewriter(checkpoint) {
   let initial;
   return body => {
@@ -69,12 +80,7 @@ export async function prepareCheckpoint(agent, captureId, callId, destination) {
   const delivered = await readFile(join(agent, 'observer', `${captureId}.delivered`), 'utf8');
   assert(record.archive_exact && record.archive.startsWith('/workdir/.jev-pruner/'));
   const pruned = prefix[target].output;
-  const preview = hostPreviews(delivered, 10000).find(text => pruned.endsWith(text));
-  assert(preview, 'Recorded result does not match host preview');
-  const nativePreview = hostPreviews(raw, 10000).at(-1);
-  const header = pruned.slice(0, pruned.length - preview.length);
-  const native = header.replaceAll(String(Math.ceil(Buffer.byteLength(delivered) / 4)),
-    String(Math.ceil(Buffer.byteLength(raw) / 4))) + nativePreview;
+  const native = nativeOutput(pruned, raw, delivered);
   assert.notEqual(native, pruned);
   for (const item of prefix) if (item.id === null) delete item.id;
   const checkpoint = {
