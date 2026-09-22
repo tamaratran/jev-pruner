@@ -86,7 +86,9 @@ Codex or establish task accuracy. Preserve interrupted replays separately.
 ```sh
 node evals/compilebench_replay.mjs /external/capture-pilot /external/replay-new
 python -m evals.compilebench plan /external/comparison-new \
-  --benchmark /path/to/CompileBench --replay /external/replay-new --concurrency 4
+  --benchmark /path/to/CompileBench --replay /external/replay-new --concurrency 4 \
+  --model-catalog "$HOME/.codex/models_cache.json" \
+  --seed jev-standardized-compilebench-v1 --repetitions 3
 JEV_CODEX_AUTH_FILE="$HOME/.codex/auth.json" \
   python -m evals.compilebench run /external/comparison-new --harbor "$HARBOR_BIN"
 node evals/codex_bench_audit.mjs /external/comparison-new
@@ -94,7 +96,7 @@ node evals/codex_bench_audit.mjs /external/comparison-new
 
 Commit the harness and build before planning. Keep `TYPESAFE_API_KEY` available
 through the environment. The source hashes must match the replay; task files
-are checked at launch and audit. Both arms use `JevCodex` and identical buffered
+are checked at launch and audit. New CLI plans use `StandardizedCodex` and identical buffered
 output transport. No production threshold or scoring changes are made.
 
 The four tasks are cowsay, coreutils, jq, and curl-ssl at the capture pilot's
@@ -936,7 +938,8 @@ API failures leave PDF scores pending rather than counting them as wrong.
 
 The full protocol includes every task at CompileBench revision
 `66e27468505706643088b79f8efad6260c274dc5`: 15 distinct task definitions,
-one fresh attempt per arm (30 attempts). This includes related variants of
+three fresh attempts per arm by default (90 attempts). Set `--repetitions 1`
+explicitly for 30 attempts. This includes related variants of
 cowsay, coreutils, jq and curl; it is not 15 unrelated projects.
 The earlier four-task, three-repetition protocol remains the default.
 
@@ -944,6 +947,8 @@ The earlier four-task, three-repetition protocol remains the default.
 python -m evals.compilebench plan /external/compilebench-full \
   --benchmark /path/to/CompileBench --replay /external/passing-replay \
   --full --concurrency 15 \
+  --model-catalog "$HOME/.codex/models_cache.json" \
+  --seed jev-standardized-compilebench-v1 --repetitions 3 \
   --docker-task jq-windows --docker-task jq-windows2
 python -m evals.compilebench run /external/compilebench-full
 node evals/codex_bench_audit.mjs /external/compilebench-full
@@ -962,6 +967,82 @@ No started attempt is retried, and account/setup errors stop queued work.
 Report every planned task, including failures and unavailable measurements.
 Show the full-suite result alongside the conditional actual-pruning subset;
 one attempt per arm does not establish repeatability.
+
+## Standardized CompileBench starting conditions
+
+New CompileBench CLI plans require a local Codex model catalog. Planning copies
+only the `gpt-5.5` definition, hashes it, and records the complete adapter settings
+in `protocol.json`. The CLI defaults to three repetitions and a fixed seed.
+SHA256(seed, task) chooses the first arm, with order reversed each repetition;
+SHA256(seed, task/repetition) determines the submission queue. Actual start/end
+times remain recorded because concurrent completion order can vary.
+Old protocol files and the legacy Python planner defaults remain readable; they
+are **not retroactively standardized**. The separate Terminal-Bench planner and
+custom repair/capture runners do not yet opt into these new controls.
+
+Both arms use Codex 0.152.1, GPT-5.5 with high reasoning, identical developer
+instructions and tool limits, and the same pinned model metadata. Built-in plugin
+discovery, remote plugins, recommended plugins, apps, memories and web search are
+disabled. Host skill discovery is disabled; bundled skills remain part of the
+pinned CLI and their initial guidance is compared. Each run starts with an empty,
+fixed-path Codex home outside the task workspace. Resuming sessions or supplying
+extra skills/configuration is rejected.
+
+Before Codex starts, the adapter fingerprints:
+
+- Task workspace file contents, permissions, empty directories and symlink targets.
+  Symlinks outside that tree and special files are rejected.
+- OS release, architecture, OS/Python/global npm package inventories, available
+  tool binary hashes, Codex/Node versions, UID/GID and available cgroup v2 limits.
+- Effective Codex config, CLI arguments, model catalog and the explicit environment
+  variable allowlist in `codex_start.mjs`. Credentials are not read into this manifest.
+
+Benchmark/task/verifier hashes, environment selection, task resource settings,
+wrapper sources/builds, Harbor version and fixed token rates remain frozen by the
+existing protocol. A first arm establishes a **provisional per-pair reference**.
+The other arm must match its runtime before Codex starts, then its initial request
+before model inference is forwarded. This does not promise every repetition uses
+a byte-identical container image: drift checks cover the listed state, not every
+system file, kernel setting, external service or future network download.
+
+The adapter uses a loopback HTTP gateway with ChatGPT authentication and a fixed
+HTTPS upstream. Both arms use HTTP streaming, with WebSockets and request
+compression disabled. The gateway returns no remote user settings and disables
+telemetry; it never stores authorization headers. The initial request evidence
+includes **all base instructions, developer/user messages, environment guidance,
+tool definitions and model settings**. The original request bytes are forwarded
+unchanged after comparison. Later requests are forwarded without constraining
+Codex's commands, repairs, polling, model steps or outputs.
+
+Comparison removes only these transport bookkeeping fields, without rewriting
+text or filtering unknown fields:
+
+- Top-level `prompt_cache_key` and initial message `id`.
+- Message metadata `turn_id` and `create_time`.
+- Client metadata `session_id`, `thread_id`, `turn_id`, `root_turn_id`,
+  `installation_id`, `window_id`, `context_window_id`, `turn_started_at_unix_ms`,
+  `x-codex-installation-id` and `x-codex-window-id`; the same explicit list applies
+  inside the JSON-valued `x-codex-turn-metadata`.
+
+Timestamps appearing **in prompt text**, including Codex's current date, are not
+normalized. Crossing midnight can therefore reject a pair. Request metadata other
+than the listed fields is retained. This is a comparison of client request bodies,
+not visibility into the provider's hidden context, backend revisions or random seed.
+
+Missing evidence or mismatches stop queued work and preserve the affected attempt
+as `preflight_rejected`; no automatic retries or replacement tasks are allowed.
+The private start evidence is copied to each trial's `agent/start.json`.
+`overall` retains all diagnostic accounting. `controlled_tasks`/`controlled`
+require two matching, valid starting states and valid task/settings identity.
+`uncontrolled_tasks` lists excluded standardized pairs. `effectiveness` additionally
+requires complete measurements and actual delivered pruning, never a passing reward.
+Unchanged runs remain in the controlled overall benchmark; their cost differences
+cannot be attributed to removed output. Fixed input/output/Jev prices remain primary.
+
+Validation before another benchmark: run the checks below, inspect a small
+environment compatibility preflight, and confirm both initial-request fingerprints
+match. Local HTTP fixtures test drift rejection without inference or real credentials.
+No new benchmark results follow merely from implementing these controls.
 
 ## Checks
 

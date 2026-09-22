@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { hostPreviews } from './codex-preview.mjs';
 import { assertNoEvidenceLeak } from './observer/evidence-isolation.mjs';
+import { fingerprint, initialRequest } from './codex_start.mjs';
 
 const privatePaths = ['/opt/jev-eval/evidence', '/opt/jev-eval/private'];
 const wrapper = '/opt/jev-eval/evals/codex_command.mjs';
@@ -94,6 +95,8 @@ export async function auditTrial(root, planned, protocol) {
     shell_commands: 0, jev_requests: 0, jev_input_tokens: 0, jev_usage_complete: true,
     pruned_outputs: 0, archive_recovery_calls: 0, evidence_isolated: false,
     model_usage_valid: false, incomplete_captures: [],
+    standardization_required: Boolean(protocol.standardization),
+    configuration_valid: false,
   };
   const job = join(root, 'jobs', planned.job_name);
   const trials = (await exists(job)).filter(name => name.startsWith(`${planned.task}__`));
@@ -104,6 +107,22 @@ export async function auditTrial(root, planned, protocol) {
   }
   const trial = join(job, trials[0]);
   const agent = join(trial, 'agent');
+  if (protocol.standardization) {
+    row.standardization_required = true;
+    row.start_valid = false;
+    try {
+      const start = await json(join(agent, 'start.json'));
+      assert.equal(start.status, 'accepted', 'Starting conditions rejected');
+      assert.equal(start.sha256, fingerprint(start.start), 'Starting-state checksum mismatch');
+      initialRequest(start.start.request);
+      assert.equal(start.start.runtime.catalog_sha256, protocol.standardization.catalog_sha256,
+        'Frozen model catalog mismatch');
+      row.start_sha256 = start.sha256;
+      row.start_valid = true;
+    } catch (error) {
+      row.measurement_issues.push(`Standardization: ${error.message}`);
+    }
+  }
   const observer = join(agent, 'observer');
   const records = [];
   const evidenceFiles = await exists(observer);
@@ -150,6 +169,7 @@ export async function auditTrial(root, planned, protocol) {
     const settings = await json(join(agent, 'eval-settings.json'));
     assert.equal(settings.arm, planned.arm);
     assert.equal(settings.instructions, protocol.instructions);
+    row.configuration_valid = true;
     const stream = events(await readFile(join(agent, 'codex.txt'), 'utf8'));
     row.agent_errors = stream.filter(event => ['error', 'turn.failed'].includes(event.type));
     const turns = stream.filter(event => event.type === 'turn.completed');
@@ -258,13 +278,26 @@ export function summarize(rows) {
     recovery_calls: group.reduce((sum, row) => sum + row.archive_recovery_calls, 0),
   });
   const tasks = [...new Set(rows.map(row => row.task))];
+  const controlled = tasks.filter(task => {
+    const pair = rows.filter(row => row.task === task);
+    return pair.length === 2 && new Set(pair.map(row => row.arm)).size === 2 &&
+      pair.every(row => row.standardization_required && row.start_valid && row.configuration_valid) &&
+      pair[0].start_sha256 === pair[1].start_sha256;
+  });
   const qualifying = tasks.filter(task => {
     const pair = rows.filter(row => row.task === task);
     return pair.length === 2 && pair.every(row => row.measurement_valid) &&
+      (!pair.some(row => row.standardization_required) || controlled.includes(task)) &&
       pair.some(row => row.arm === 'plugin' && row.pruned_outputs > 0);
   });
   return {
     overall: Object.fromEntries(['control', 'plugin'].map(arm => [arm, aggregate(rows.filter(row => row.arm === arm))])),
+    controlled_tasks: controlled,
+    uncontrolled_tasks: tasks.filter(task => !controlled.includes(task) &&
+      rows.some(row => row.task === task && row.standardization_required)),
+    controlled: Object.fromEntries(['control', 'plugin'].map(arm => [
+      arm, controlled.length ? aggregate(rows.filter(row => row.arm === arm && controlled.includes(row.task))) : null,
+    ])),
     qualifying_tasks: qualifying,
     effectiveness: Object.fromEntries(['control', 'plugin'].map(arm => [
       arm, qualifying.length ? aggregate(rows.filter(row => row.arm === arm && qualifying.includes(row.task))) : null,
