@@ -1,5 +1,6 @@
 node_modules
 dist
+__pycache__/
 .env
 .jev-pruner
 .claude/fast-jev-output

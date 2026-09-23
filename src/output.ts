@@ -151,7 +151,7 @@ function splitLongLines(output: string): string[] {
   return out;
 }
 
-function chunkOutput(output: string, chunkLines: number, chunkChars: number): OutputChunk[] {
+export function chunkOutput(output: string, chunkLines: number, chunkChars: number): OutputChunk[] {
   const lines = splitLongLines(output);
   const target = chunkChars > 0 ? Math.max(chunkChars, Math.ceil(output.length / MAX_CHUNKS)) : 0;
   const groups: string[][] = [];
@@ -182,7 +182,7 @@ function chunkOutput(output: string, chunkLines: number, chunkChars: number): Ou
   return chunks;
 }
 
-function stateFor(
+export function stateFor(
   input: TrimOutputInput,
   chunks: readonly OutputChunk[],
   history: HistoryEntry[],
@@ -202,7 +202,7 @@ function stateFor(
   };
 }
 
-function questionFor(chunk: OutputChunk): JevQuestions {
+export function questionFor(chunk: OutputChunk): JevQuestions {
   return {
     [chunk.id]: {
       type: 'noul',
@@ -305,7 +305,7 @@ function minimumRetainedChars(
     (compact ? COMPACT_HEADER.length + recoveryFooter(input.fullOutputPath).length : 0);
 }
 
-function scoringRequests(
+export function scoringRequests(
   input: TrimOutputInput,
   chunks: readonly OutputChunk[],
   histories: HistoryEntry[][],
