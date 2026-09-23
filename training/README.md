@@ -57,19 +57,32 @@ npx tsx training/prepare.mts \
 Inspect the adjacent preparation report before proceeding. The limit is a maximum,
 not a promise that enough eligible records exist.
 
-Provision `OPENAI_API_KEY` in the process environment, then run:
+Provision `ANTHROPIC_API_KEY` in the process environment, then run:
 
 ```bash
-npx tsx training/review.mts \
-  --input "$DATA/candidates.jsonl" --out "$DATA/reviews.jsonl" \
+npx tsx training/review.mts --provider anthropic \
+  --input "$DATA/candidates.jsonl" --out "$DATA/raw-reviews.jsonl" \
   --budget 10 --limit 5000
+npx tsx training/audit.mts --candidates "$DATA/candidates.jsonl" \
+  --reviews "$DATA/raw-reviews.jsonl" --out "$DATA/reviews.jsonl"
 ```
 
-Review uses `gpt-4.1-mini-2025-04-14` with a conservative retention policy. It
-records model, policy hash, candidate hash, DROP rationales and token costs.
+Review defaults to Claude Sonnet 5 with a forced, strict-schema tool response and a
+conservative retention policy. The optional `--provider openai` selects
+`gpt-4.1-mini-2025-04-14` and requires `OPENAI_API_KEY`. The returned model identity
+is recorded alongside policy hash, candidate hash, DROP rationales and token costs.
+Only proposed-drop questions are sent, with the complete sampled state retained.
 Empty DROP lists are valid. Labels are model-reviewed supervision, not human
 ground truth. Review all proposed critical-diagnostic losses independently before
 using an evaluation result to approve deployment.
+
+The audit vetoes model-approved losses of warnings, tracebacks, final exit
+statuses, diffs, source/configuration references, numeric outputs and test
+environment details. It retains the raw review hash and each veto reason.
+These checks were added after a training-partition audit found Claude calling
+protected information "repetitive noise". They supplement review; they do not
+prove that all remaining negatives are correct. Records whose proposed drops
+are all protected by these checks need no provider call.
 
 The request ledger reserves an upper cost bound before each API call. Failed or
 interrupted attempts retain that reservation when resumed. The same command resumes
@@ -77,13 +90,30 @@ completed reviews without repeating them and refuses changed candidates. Do not
 delete the attempts ledger to bypass the budget. HTTP errors stop the run without
 automatic retries; an unfunded account cannot complete review.
 
+Request bounds use UTF-8 byte counts plus framing overhead and maximum output
+tokens. Actual costs use returned token usage and the documented standard rates:
+Claude Sonnet 5 $2/$10 and GPT-4.1 mini $0.40/$1.60 per million input/output tokens.
+Recheck provider pricing before rerunning.
+
 ## Freeze a new suite
 
 Use the Python environment from
 [Kev at 84f23b3](https://github.com/jaredpalmer/kev/commit/84f23b3752c597827c2f05b712768f50ea5d882f)
-(`uv sync --python 3.12 --locked` in that checkout). Set `KEV_CHECKOUT` to its
+(`uv sync --locked` in that checkout, using its Python 3.13 selection). Set `KEV_CHECKOUT` to its
 absolute directory. This step loads checkpoint metadata and the actual tokenizer,
 but does not run GPU training.
+
+Apply the included compatibility patch before using Kev's study runner:
+
+```bash
+git -C "$KEV_CHECKOUT" apply --check --unidiff-zero "$PWD/training/kev-context.patch"
+git -C "$KEV_CHECKOUT" apply --unidiff-zero "$PWD/training/kev-context.patch"
+```
+
+The pinned runner otherwise evaluates with its default 384-token state limit,
+ignoring the suite's larger admission context. The patch makes development,
+transfer and locked-test evaluation respect each suite's declared context. Its
+modified source hashes are recorded by the study.
 
 ```bash
 SUITE="$KEV_CHECKOUT/evals/external/pruner-v1"
@@ -114,6 +144,7 @@ manifest and confirming enough reviewed examples survived context admission:
 ```bash
 export KEV_APP_NAME=kev-pruner-research
 export KEV_GPU=H100
+export MODAL_IMAGE_BUILDER_VERSION=2025.06
 uv run modal deploy modal_app.py
 uv run modal run modal_app.py::study \
   --suite evals/external/pruner-v1 \
@@ -139,6 +170,28 @@ Report false deletion, realized token reduction, calibration, latency and cost.
 Long-output and end-to-end agent preservation checks remain required before
 production integration.
 
+Use saved benchmark rows for the retention-specific report (from this repo):
+
+```bash
+"$KEV_CHECKOUT/.venv/bin/python" training/score.py \
+  --suite "$SUITE" --rows "$TRIAL/development/rows.json" \
+  --temperature "$CALIBRATED_TEMPERATURE" --out "$DATA/development-retention.json"
+npx tsx training/rules.mts --input "$SUITE/development.jsonl" \
+  --out "$DATA/rules-development-rows.json"
+"$KEV_CHECKOUT/.venv/bin/python" training/score.py \
+  --suite "$SUITE" --rows "$DATA/rules-development-rows.json" \
+  --out "$DATA/rules-development-retention.json"
+```
+
+Set `TRIAL` to the pulled trial directory and `CALIBRATED_TEMPERATURE` to the
+temperature in its calibration artifact. The report includes deletion-error
+denominators, low-probability reliability bins, and repository, source,
+language, command, confidence and length slices. Token reduction is a conditional
+estimate over sampled chunks, not realized production savings: the production
+activation gate, separator overhead and protected-line overrides are excluded.
+After recording development selection, `--split test --allow-test` scores a
+locked test at the selected `--cutoff`; it does not search test thresholds.
+
 ## Local checks
 
 ```bash
@@ -146,11 +199,11 @@ npm test
 npm run typecheck
 npm run build
 npx tsc -p training/tsconfig.json
-"$KEV_CHECKOUT/.venv/bin/python" -m pytest training/test_freeze.py -q
+"$KEV_CHECKOUT/.venv/bin/python" -m pytest training -q
 uvx --from ruff==0.12.12 ruff check training
 uvx --from pyright==1.1.405 pyright \
   --project "$KEV_CHECKOUT" --pythonpath "$KEV_CHECKOUT/.venv/bin/python" \
-  training/freeze.py training/test_freeze.py
+  training
 ```
 
 The Python unit tests mock checkpoint/tokenizer access and use synthetic labels.

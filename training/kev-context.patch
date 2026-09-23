@@ -1,0 +1,21 @@
+diff --git a/kev/experiment.py b/kev/experiment.py
+index bb422b0..a3d0140 100644
+--- a/kev/experiment.py
++++ b/kev/experiment.py
+@@ -35 +35 @@ from kev.predictors import LocalPredictor
+-from kev.suite import ENCODING, digest, load_split, read_json, read_manifest, record_digest, validate_training, write_json
++from kev.suite import CONTEXT, ENCODING, digest, load_split, read_json, read_manifest, record_digest, validate_training, write_json
+@@ -238 +238 @@ def score_trial(run, suite, output, expected_sources, device, provenance, transf
+-    predictor = LocalPredictor(run, device, LoadOptions(temperature=1.0))
++    predictor = LocalPredictor(run, device, LoadOptions(temperature=1.0), context=read_manifest(suite).get("context", CONTEXT))
+@@ -262,0 +263 @@ def score_trial(run, suite, output, expected_sources, device, provenance, transf
++            predictor.context = read_manifest(transfer_suite).get("context", CONTEXT)
+diff --git a/modal_app.py b/modal_app.py
+index cb1c1d0..b69ed39 100644
+--- a/modal_app.py
++++ b/modal_app.py
+@@ -118 +118 @@ def run_locked_test(trial_path, name, suites, git_commit, redo_interrupted=False
+-    from kev.suite import digest, load_split, read_json, write_json
++    from kev.suite import CONTEXT, digest, load_split, read_json, read_manifest, write_json
+@@ -147,0 +148 @@ def run_locked_test(trial_path, name, suites, git_commit, redo_interrupted=False
++            predictor.context = read_manifest(Path("/root") / suite).get("context", CONTEXT)

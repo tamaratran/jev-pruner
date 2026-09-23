@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { convert, keptLines, repositoryFor, selectedOutputLines } from '../training/prepare.mjs';
-import { parseDrops } from '../training/review.mjs';
+import { annotate, parseDrops } from '../training/review.mjs';
+import { audit } from '../training/audit.mjs';
 
 function source(overrides: Record<string, unknown> = {}): string {
   return JSON.stringify({
@@ -68,6 +69,78 @@ describe('Kev training conversion', () => {
 });
 
 describe('policy review', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('uses Claude tool output and meters Anthropic token usage', async () => {
+    const request = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      model: 'claude-sonnet-5', stop_reason: 'tool_use',
+      content: [{ type: 'tool_use', name: 'record_review', input: {
+        drops: [{ id: 'c1', reason: 'Routine download progress.' }],
+      } }],
+      usage: { input_tokens: 1000, output_tokens: 100 },
+    })));
+    vi.stubGlobal('fetch', request);
+    const review = await annotate(convert(source(), 1)!, 'test-key', 0.1, 'attempt', 'anthropic');
+    expect(review.costUsd).toBeCloseTo(0.003);
+    expect(review.model).toBe('claude-sonnet-5');
+    expect(review.drops.map(drop => drop.id)).toEqual(['c1']);
+    const [url, options] = request.mock.calls[0]!;
+    expect(url).toBe('https://api.anthropic.com/v1/messages');
+    expect(options.headers['x-api-key']).toBe('test-key');
+    expect(JSON.parse(options.body).tool_choice.name).toBe('record_review');
+    expect(JSON.parse(options.body).tools[0].strict).toBe(true);
+    const payload = JSON.parse(JSON.parse(options.body).messages[0].content);
+    expect(Object.keys(payload.questions)).toEqual(['c1']);
+    expect(payload.state.chunks).toHaveLength(2);
+    expect(review.usage).toEqual({ inputTokens: 1000, outputTokens: 100 });
+  });
+
+  it('does not accept a truncated Claude review or retry its request', async () => {
+    const request = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      stop_reason: 'max_tokens',
+      content: [{ type: 'tool_use', name: 'record_review', input: { drops: [] } }],
+    })));
+    vi.stubGlobal('fetch', request);
+    await expect(annotate(convert(source(), 1)!, 'test-key', 0.1, 'attempt', 'anthropic'))
+      .rejects.toThrow('Incomplete annotation');
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not call a provider for records without candidate drops', async () => {
+    const request = vi.fn();
+    vi.stubGlobal('fetch', request);
+    const review = await annotate(convert(source({ _confidence: 'skeleton' }), 1)!,
+      'test-key', 0, 'attempt', 'anthropic');
+    expect(review.costUsd).toBe(0);
+    expect(review.drops).toEqual([]);
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it('vetoes warning, diff and final-status deletions even if the model approves them', async () => {
+    const request = vi.fn();
+    vi.stubGlobal('fetch', request);
+    for (const text of [
+      'DeprecationWarning: obsolete package API',
+      '[Command finished with exit code 0]',
+      'diff --git a/file b/file\n+changed configuration',
+      '  File "/usr/lib/module.py", line 42 in collect',
+      'fatal: no names found',
+      'name = "package"\nversion = "1.0"',
+      'padded[0]:\n [[1. 2. 3.]]',
+      '    selection_set:\n      FieldNode',
+      '    # A code comment describing a constraint',
+    ]) {
+      const record = convert(source(), 1)!;
+      record.state.chunks[0]!.text = text;
+      const review = await annotate(record, 'test-key', 0, 'attempt', 'anthropic');
+      expect(review.drops).toEqual([]);
+      const checked = audit(record, { ...review, drops: [{ id: 'c1', reason: 'Repetitive noise' }] });
+      expect(checked.drops).toEqual([]);
+      expect(checked.policyAudit.vetoes).toHaveLength(1);
+    }
+    expect(request).not.toHaveBeenCalled();
+  });
+
   it('requires a valid candidate ID and justification for every proposed drop', () => {
     expect(parseDrops('{"drops":[]}', ['c1'])).toEqual([]);
     expect(() => parseDrops('{"drops":[{"id":"c2","reason":"noise"}]}', ['c1'])).toThrow();
