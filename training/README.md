@@ -132,6 +132,8 @@ from Kev's permitted decision-v7 **training** partition.
 Freezing verifies review hashes and negative rationales; applies Kev's tokenizer
 admission with a 6,144-token state budget and no truncation; rejects states duplicated
 across partitions; and requires both retention classes in every external split.
+Raw reviews, unknown audit versions and labels that contradict audit vetoes are
+rejected. Supply the audited review file.
 It writes checksums, provenance, rejection counts, a manifest and a validated plan
 to a new directory. Never overwrite a frozen suite.
 
@@ -152,8 +154,9 @@ uv run modal run modal_app.py::study \
   --name pruner-v1-first --budget 30 --timeout 5400
 ```
 
-Use a new immutable study name for any subsequent attempt. Run one GPU job at a
-time. Inspect the launcher's printed compute bound and training throughput before
+Use a new immutable study name for any subsequent attempt. Run one training job at a
+time. Independent baseline evaluation can use another GPU; count both admission
+bounds against the same experiment allowance. Inspect the printed compute bound and training throughput before
 continuing; the launcher's admission bound excludes image builds, startup,
 annotation and persistent storage. Track those separately within the experiment's
 overall allowance.
@@ -163,6 +166,16 @@ adapters and pointer head: one epoch, cross-entropy, learning rate `1e-5`,
 batch one, accumulation eight, BF16 autocast, FP32 frozen weights.
 
 Pull artifacts with `uv run modal run modal_app.py::pull --name pruner-v1-first`.
+Score the pinned parent checkpoint without another training run:
+
+```bash
+uv run modal run modal_app.py::study \
+  --suite evals/external/pruner-v1 --plan '' \
+  --existing jaredpalmer/kev-0.8b@54f4f8777356cd5bbbb6c6919c657f26e6f2f6d8 \
+  --name pruner-v1-parent --budget 5 --timeout 2400
+uv run modal run modal_app.py::pull --name pruner-v1-parent
+```
+
 Fit temperature on calibration data, select model and retention threshold on
 development data, then read the locked test once. Compare against released Kev
 and deterministic retention rules at matched necessary-chunk deletion risk.
@@ -184,7 +197,14 @@ npx tsx training/rules.mts --input "$SUITE/development.jsonl" \
 ```
 
 Set `TRIAL` to the pulled trial directory and `CALIBRATED_TEMPERATURE` to the
-temperature in its calibration artifact. The report includes deletion-error
+temperature in its calibration artifact. Score each model with its own
+calibration temperature. The study writes that temperature to
+`calibration/temperature.json`; it does not replace the checkpoint's inherited
+serving temperature. For subsequent inference, set
+`KEV_TEMPERATURE="$CALIBRATED_TEMPERATURE"` explicitly or create a separate
+calibrated export, preserving the original study checkpoint and its hashes.
+
+The report includes deletion-error
 denominators, low-probability reliability bins, and repository, source,
 language, command, confidence and length slices. Token reduction is a conditional
 estimate over sampled chunks, not realized production savings: the production
