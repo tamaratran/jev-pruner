@@ -37,6 +37,7 @@ def inputs(tmp_path: Path) -> Iterator[Path]:
             "id": candidate["id"], "candidateHash": freeze.sha(raw),
             "drops": [{"id": "c1", "reason": "Test fixture: explicitly disposable progress."}],
             "method": "source-candidate-plus-model-policy-review", "model": "test-stub",
+            "policyAudit": {"version": "protected-evidence-v1", "vetoes": []},
         }
         for candidate, raw in zip(
             candidates, (tmp_path / "candidates.jsonl").read_text().splitlines(), strict=True
@@ -109,6 +110,22 @@ def test_freeze_rejects_unreviewed_negatives(inputs: Path, failure: str) -> None
 
 def test_context_rejection_cannot_silently_empty_a_partition(inputs: Path) -> None:
     with patch.object(freeze, "fits", return_value=False), pytest.raises(ValueError):
+        freeze.main()
+    assert not (inputs / "suite").exists()
+
+
+@pytest.mark.parametrize("failure", ["raw", "version", "veto"])
+def test_freeze_requires_audited_labels(inputs: Path, failure: str) -> None:
+    path = inputs / "reviews.jsonl"
+    reviews = read_jsonl(path)
+    if failure == "raw":
+        del reviews[0]["policyAudit"]
+    elif failure == "version":
+        reviews[0]["policyAudit"]["version"] = "unknown"
+    else:
+        reviews[0]["policyAudit"]["vetoes"] = [{"id": "c1", "reason": "protected"}]
+    write_jsonl(path, reviews)
+    with pytest.raises(ValueError):
         freeze.main()
     assert not (inputs / "suite").exists()
 

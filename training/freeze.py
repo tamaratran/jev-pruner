@@ -59,6 +59,11 @@ def main() -> None:
         if drops and (review["method"] != "source-candidate-plus-model-policy-review" or
                       not all(drop["reason"].strip() for drop in review["drops"])):
             raise ValueError("Negative labels need policy review and rationale")
+        audit = review.get("policyAudit")
+        if not isinstance(audit, dict) or audit.get("version") != "protected-evidence-v1":
+            raise ValueError("Reviews must pass the deterministic policy audit")
+        if drops.intersection(veto["id"] for veto in audit["vetoes"]):
+            raise ValueError("A vetoed chunk cannot receive a DROP label")
         split = partition(candidate["repository"])
         state_hash = sha(json.dumps(candidate["state"], sort_keys=True, ensure_ascii=False))
         if state_hash in state_splits and state_splits[state_hash] != split:
