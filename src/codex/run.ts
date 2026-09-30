@@ -44,9 +44,10 @@ if (args[0] !== '--' || args.length < 2) {
   child.on('close', async (code, signal) => {
     if (!streaming) {
       const output = Buffer.concat(buffers);
-      const displayed = code === 0 && !signal
+      const displayed = code !== null && !signal && !receivedSignal && !spawnFailed
         ? await pruneCodexOutput(output, [command, ...parameters].join(' '), {
           cwd: process.cwd(),
+          exitCode: code,
           sessionId: process.env.CODEX_THREAD_ID,
           apiKey: process.env.TYPESAFE_API_KEY,
           signal: controller.signal,

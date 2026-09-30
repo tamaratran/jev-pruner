@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
+import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { codexMessages } from '../src/codex/history.js';
@@ -137,6 +138,29 @@ describe('Codex output pruning', () => {
     expect(discard).not.toHaveBeenCalled();
   });
 
+  it('prunes progress around a failed test source excerpt and archives exact stdout', async () => {
+    const options = await fixture();
+    const section = [
+      '=== FAILURES ===',
+      '    def test_capture():',
+      ...Array.from({ length: 50 }, (_, index) => `        value_${index} = capture(${index})`),
+      '>       assert captured == "expected"',
+      "E       AssertionError: assert 'actual' == 'expected'",
+      'tests/test_capture.py:54: AssertionError',
+      '=== 1 failed, 399 passed in 1.0s ===',
+    ].join('\n');
+    const original = Buffer.from(`${output.toString()}\n${section}\n${output.toString()}`);
+    const pruned = await pruneCodexOutput(original, 'node diagnostic-collector.mjs', { ...options, exitCode: 1 });
+    expect(discard).toHaveBeenCalled();
+    expect(discard.mock.calls.every(([state]) => (state as { exitCode: number }).exitCode === 1)).toBe(true);
+    expect(pruned.length).toBeLessThan(original.length);
+    expect(pruned.toString()).toContain(section);
+    const archives = (await readdir(join(options.cwd, '.jev-pruner'))).filter(file => file.endsWith('.txt'));
+    expect(archives).toHaveLength(1);
+    expect(await readFile(join(options.cwd, '.jev-pruner', archives[0]!))).toEqual(original);
+    expect(pruned.toString()).toContain(`[fast-jev-output full output: ${join(options.cwd, '.jev-pruner', archives[0]!)}`);
+  });
+
   it('fails open for missing state, absent keys, structured output and secret-like content', async () => {
     const options = await fixture();
     for (const extra of [{ sessionId: undefined }, { apiKey: undefined }, { home: '/unavailable' }]) {
@@ -188,6 +212,90 @@ async function run(parameters: string[]) {
 }
 
 describe('Codex command wrapper', () => {
+  it.each([
+    { code: 0, mode: 'pruned' },
+    { code: 7, mode: 'pruned' },
+    { code: 23, mode: 'scoring failure' },
+    { code: 7, mode: 'archive failure' },
+    { code: 7, mode: 'reference' },
+  ])('preserves exit $code and stderr with $mode', async ({ code, mode }) => {
+    const options = await fixture();
+    const facts = [
+      'warning: dependency version differs',
+      'src/example.ts:4:2: error TS2322: Type string is not assignable to number.',
+      'Tests: 1 failed, 399 passed',
+      'Artifact path: dist/diagnostics.txt',
+      'The deployment region must remain eu-west-1.',
+    ];
+    if (mode === 'reference') facts.push(
+      '# Build instructions',
+      'export const region = "eu-west-1";',
+      '00000010: 48 89 c3 mov %rax,%rbx',
+    );
+    const original = Buffer.from(`${output.toString()}${facts.join('\n')}\n${output.toString()}`);
+    const input = join(options.cwd, 'stdout.txt');
+    const calls = join(options.cwd, 'states.jsonl');
+    const transport = join(options.cwd, 'fetch.mjs');
+    await writeFile(input, original);
+    if (mode === 'archive failure') await writeFile(join(options.cwd, '.jev-pruner'), 'occupied');
+    await writeFile(transport, `
+      import { appendFileSync } from 'node:fs';
+      globalThis.fetch = async (_url, init) => {
+        const { state, questions } = JSON.parse(init.body);
+        appendFileSync(${JSON.stringify(calls)}, JSON.stringify(state) + '\\n');
+        if (${JSON.stringify(mode)} === 'scoring failure') {
+          return new Response('unavailable', { status: 503 });
+        }
+        return new Response(JSON.stringify({
+          answers: Object.fromEntries(Object.keys(questions).map(id => [id, { noul: 0 }])),
+        }));
+      };
+    `);
+    const child = spawn(process.execPath, [
+      '--import', createRequire(import.meta.url).resolve('tsx'),
+      '--import', transport, resolve('src/codex/run.ts'), '--',
+      process.execPath, '-e', `
+        process.stdout.write(require('node:fs').readFileSync(process.argv[1]));
+        process.stderr.write(Buffer.from([0, 255, 10]));
+        process.exitCode = ${code};
+      `, input,
+    ], {
+      cwd: options.cwd,
+      env: { ...process.env, HOME: options.home, CODEX_THREAD_ID: sessionId, TYPESAFE_API_KEY: 'synthetic' },
+    });
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk));
+    child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
+    child.stdin.end();
+    const result = await new Promise((resolve, reject) => {
+      child.on('error', reject);
+      child.on('close', (code, signal) => resolve({ code, signal }));
+    });
+    expect(result).toEqual({ code, signal: null });
+    expect(Buffer.concat(stderr)).toEqual(Buffer.from([0, 255, 10]));
+    const displayed = Buffer.concat(stdout);
+    if (mode === 'archive failure' || mode === 'reference') {
+      await expect(readFile(calls)).rejects.toThrow();
+      if (mode === 'reference') await expect(readdir(join(options.cwd, '.jev-pruner'))).rejects.toThrow();
+    } else {
+      const states: { exitCode: number }[] = (await readFile(calls, 'utf8'))
+        .trim().split('\n').map(line => JSON.parse(line));
+      expect(states.length).toBeGreaterThan(0);
+      expect(states.every(state => state.exitCode === code)).toBe(true);
+      const archives = (await readdir(join(options.cwd, '.jev-pruner'))).filter(file => file.endsWith('.txt'));
+      expect(archives).toHaveLength(1);
+      expect(await readFile(join(options.cwd, '.jev-pruner', archives[0]!))).toEqual(original);
+      if (mode === 'pruned') {
+        expect(displayed.length).toBeLessThan(original.length);
+        expect(displayed.toString()).toContain('[fast-jev-output trimmed');
+        expect(displayed.toString()).toContain(`[fast-jev-output full output: ${join(options.cwd, '.jev-pruner', archives[0]!)}`);
+        for (const fact of facts) expect(displayed.toString().split('\n')).toContain(fact);
+      }
+    }
+    if (mode !== 'pruned') expect(displayed).toEqual(original);
+  });
+
   it('preserves literal arguments, binary stdout, stderr, and failure status', async () => {
     const argument = 'space $HOME "quote"; $(echo must-not-run)';
     const result = await run([process.execPath, '-e', `
@@ -224,7 +332,9 @@ describe('Codex command wrapper', () => {
     expect(result.stdout.equals(Buffer.alloc(512 * 1024, 'x'))).toBe(true);
   });
 
-  it.each(['SIGINT', 'SIGTERM'] as const)('propagates %s when cancelled after the command finishes', async termination => {
+  it.each([
+    ['SIGINT', 0], ['SIGTERM', 0], ['SIGINT', 7], ['SIGTERM', 7],
+  ] as const)('propagates %s when cancelled after exit %i', async (termination, code) => {
     const options = await fixture();
     const transport = join(options.cwd, 'waiting-fetch.mjs');
     await writeFile(transport, `
@@ -235,7 +345,7 @@ describe('Codex command wrapper', () => {
     `);
     const child = spawn(process.execPath, [
       '--import', 'tsx', '--import', transport, resolve('src/codex/run.ts'), '--',
-      process.execPath, '-e', 'process.stdout.write(("cache ".repeat(35) + "\\n").repeat(400))',
+      process.execPath, '-e', `process.stdout.write(("cache ".repeat(35) + "\\n").repeat(400)); process.exitCode = ${code}`,
     ], {
       env: {
         ...process.env, HOME: options.home,

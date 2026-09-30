@@ -32,12 +32,24 @@ const DIAGNOSTIC_PATTERN = new RegExp(
 );
 const RESULT_PATTERN = /^\s*(?:(?:Test Suites|Tests|Snapshots|Coverage|Results?|Summary|Exit code|Exit status)\s*:|(?:Build|Compilation|Tests?)\s+(?:succeeded|completed|finished|passed|failed)\b|(?:Artifact|Output file|Report|Coverage report)(?: path)?\s*[:=]\s*\S)/im;
 const PYTEST_RESULT_PATTERN = /^=+ .*\b\d+ (?:passed|failed|skipped|deselected|xfailed|xpassed|errors?|warnings?)\b.*=+\s*$/im;
+const PYTEST_DIAGNOSTIC_SECTION = /^={3,}\s+(?:FAILURES|ERRORS|warnings summary|short test summary info)\s+={3,}\s*$/;
 const TEST_PROGRESS_PATTERN = /^\S+::\S+\s+PASSED(?:\s+\[\s*\d+%\])?\s*$/i;
 const PROGRESS_PATTERN = /^\s*(?:\[[^\]\n]+\]\s*)?(?:INFO\s+)?(?:progress\b|cache(?:d)?\b|download(?:ing)?\b|compil(?:ing|ed)\b)/i;
 const MAX_DISPOSABLE_KEEP_PROBABILITY = 0.1;
 
 export function isProtectedLine(text: string): boolean {
   return DIAGNOSTIC_PATTERN.test(text) || RESULT_PATTERN.test(text) || PYTEST_RESULT_PATTERN.test(text);
+}
+
+export function diagnosticSectionLines(lines: readonly string[]): Set<number> {
+  const keep = new Set<number>();
+  let inSection = false;
+  lines.forEach((line, index) => {
+    if (PYTEST_DIAGNOSTIC_SECTION.test(line)) inSection = true;
+    if (inSection) keep.add(index);
+    if (PYTEST_RESULT_PATTERN.test(line)) inSection = false;
+  });
+  return keep;
 }
 
 export function classifyInformation(text: string): InformationCategory {
