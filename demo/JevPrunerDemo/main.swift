@@ -9,16 +9,17 @@ enum Style {
     static let height = 720.0
     static let frameCount = Int(ceil((Timing.done + 1.25) * 30))
     static let duration = Double(frameCount) / 30
-    static let background = Color(red: 0.055, green: 0.055, blue: 0.07)
-    static let panel = Color(red: 0.09, green: 0.09, blue: 0.11)
-    static let text = Color(red: 0.91, green: 0.91, blue: 0.93)
-    static let dim = Color(red: 0.53, green: 0.54, blue: 0.60)
-    static let border = Color(red: 0.21, green: 0.22, blue: 0.26)
-    static let orange = Color(red: 0.87, green: 0.49, blue: 0.28)
-    static let cyan = Color(red: 0.40, green: 0.78, blue: 0.95)
-    static let green = Color(red: 0.30, green: 0.85, blue: 0.48)
-    static let red = Color(red: 0.96, green: 0.34, blue: 0.38)
-    static let amber = Color(red: 0.98, green: 0.72, blue: 0.30)
+    static let background = Color(red: 0.975, green: 0.966, blue: 0.943)
+    static let panel = Color(red: 0.945, green: 0.932, blue: 0.906)
+    static let surface = Color(red: 1.0, green: 0.995, blue: 0.978)
+    static let text = Color(red: 0.16, green: 0.21, blue: 0.22)
+    static let dim = Color(red: 0.38, green: 0.42, blue: 0.42)
+    static let border = Color(red: 0.82, green: 0.83, blue: 0.79)
+    static let orange = Color(red: 0.62, green: 0.31, blue: 0.19)
+    static let cyan = Color(red: 0.08, green: 0.42, blue: 0.39)
+    static let green = Color(red: 0.10, green: 0.39, blue: 0.29)
+    static let red = Color(red: 0.68, green: 0.24, blue: 0.20)
+    static let amber = Color(red: 0.58, green: 0.36, blue: 0.13)
     static func mono(_ size: Double) -> Font { .system(size: size, design: .monospaced) }
 }
 
@@ -122,15 +123,19 @@ struct DemoFrame: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 7) {
                 ForEach([Style.red, Style.amber, Style.green], id: \.self) { color in
-                    Circle().fill(color.opacity(0.85)).frame(width: 10, height: 10)
+                    Circle().fill(color.opacity(0.65)).frame(width: 9, height: 9)
                 }
-                Text("claude — storefront")
-                    .font(Style.mono(12)).foregroundStyle(Style.dim)
-                    .padding(.leading, 12)
+                HStack(spacing: 8) {
+                    Text("storefront")
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                    Text("/ terminal")
+                        .font(Style.mono(11)).foregroundStyle(Style.dim)
+                }
+                .padding(.leading, 14)
                 Spacer()
                 tokenMeter
             }
-            .padding(.horizontal, 20).frame(height: 48).background(Style.panel)
+            .padding(.horizontal, 24).frame(height: 60).background(Style.panel)
             Rectangle().fill(Style.border).frame(height: 1)
             VStack(alignment: .leading, spacing: 14) {
                 HStack(spacing: 10) {
@@ -138,10 +143,10 @@ struct DemoFrame: View {
                     Text("Install the dependencies.")
                     Spacer()
                 }
-                .font(Style.mono(17))
+                .font(.system(size: 16, weight: .medium, design: .rounded))
                 .frame(height: 35)
                 .padding(.horizontal, 12)
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Style.border))
+                .background(RoundedRectangle(cornerRadius: 8).fill(Style.surface))
                 HStack(spacing: 9) {
                     if time < Timing.installEnd {
                         Circle().trim(from: 0.1, to: 0.85)
@@ -151,14 +156,17 @@ struct DemoFrame: View {
                     } else {
                         Circle().fill(Style.green).frame(width: 9, height: 9)
                     }
-                    Text("Bash").bold()
-                    Text("(").foregroundStyle(Style.dim)
-                    Text("npm install")
-                    Text(")").foregroundStyle(Style.dim)
+                    Text("BASH")
+                        .font(Style.mono(10)).bold().foregroundStyle(Style.dim)
+                        .padding(.horizontal, 6).padding(.vertical, 4)
+                        .background(RoundedRectangle(cornerRadius: 4).fill(Style.panel))
+                    Text("npm install").font(Style.mono(16)).fontWeight(.semibold)
                     Spacer()
                     Text(time < Timing.installEnd ? "RUNNING" : done ? "DELIVERED" : "INTERCEPTED")
                         .font(Style.mono(10))
                         .foregroundStyle(done ? Style.green : Style.dim)
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .background(Capsule().fill(done ? Style.green.opacity(0.08) : Style.panel))
                 }
                 .font(Style.mono(16)).frame(height: 28)
                 output
@@ -168,29 +176,31 @@ struct DemoFrame: View {
                 status
                     .frame(height: 52, alignment: .leading)
             }
-            .padding(20)
+            .padding(24)
         }
         .frame(width: Style.width, height: Style.height)
         .background(Style.background)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Style.border))
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay(RoundedRectangle(cornerRadius: 16).stroke(Style.border))
     }
 
     private var tokenMeter: some View {
         let color = done ? Style.green : tokens > 0 ? Style.amber : Style.dim
         return HStack(spacing: 10) {
-            Text("Output tokens").font(Style.mono(12)).foregroundStyle(Style.dim)
+            Text("OUTPUT TOKENS").font(Style.mono(10)).foregroundStyle(Style.dim)
             ZStack(alignment: .leading) {
                 RoundedRectangle(cornerRadius: 3).fill(Style.border)
                 RoundedRectangle(cornerRadius: 3).fill(color)
-                    .frame(width: tokens == 0 ? 0 : max(3, 120 * Double(tokens) / Double(InstallExample.tokens(InstallExample.log))))
+                    .frame(width: tokens == 0 ? 0 : max(3, 100 * Double(tokens) / Double(InstallExample.tokens(InstallExample.log))))
             }
-            .frame(width: 120, height: 8)
+            .frame(width: 100, height: 4)
             Text("~" + tokens.formatted())
                 .font(Style.mono(18)).bold().monospacedDigit()
                 .foregroundStyle(color)
                 .frame(width: 78, alignment: .trailing)
         }
+        .padding(.horizontal, 12).padding(.vertical, 7)
+        .background(RoundedRectangle(cornerRadius: 9).fill(Style.surface))
     }
 
     private var output: some View {
@@ -223,10 +233,9 @@ struct DemoFrame: View {
             }
             if time >= Timing.scanStart && time <= Timing.scanEnd {
                 VStack(spacing: 0) {
-                    LinearGradient(colors: [.clear, Style.cyan.opacity(0.20)], startPoint: .top, endPoint: .bottom)
+                    LinearGradient(colors: [.clear, Style.cyan.opacity(0.10)], startPoint: .top, endPoint: .bottom)
                         .frame(height: 24)
-                    Rectangle().fill(Style.cyan).frame(height: 2)
-                        .shadow(color: Style.cyan.opacity(0.8), radius: 10)
+                    Rectangle().fill(Style.cyan.opacity(0.65)).frame(height: 1)
                 }
                 .offset(y: -24 + progress(time, from: Timing.scanStart, to: Timing.scanEnd) * 377)
             }
@@ -236,24 +245,28 @@ struct DemoFrame: View {
     private func line(_ row: OutputRow, scanned: Bool) -> some View {
         let color = row.keep ? Style.green : Style.red
         return HStack(spacing: 10) {
-            Text("⎿").foregroundStyle(Style.dim)
+            RoundedRectangle(cornerRadius: 1)
+                .fill(scanned ? color : Style.border)
+                .frame(width: 2, height: 15)
             Text(row.text).foregroundStyle(scanned && row.keep ? Style.text : Style.dim)
                 .lineLimit(1)
             Spacer(minLength: 0)
-            Text(scanned ? row.reason : "")
-                .font(Style.mono(10)).bold().foregroundStyle(color)
+            Text(row.reason)
+                .font(Style.mono(9)).bold().foregroundStyle(color)
+                .padding(.horizontal, 6).padding(.vertical, 3)
+                .background(Capsule().fill(color.opacity(0.08)))
+                .opacity(scanned ? 1 : 0)
         }
-        .font(Style.mono(12))
+        .font(Style.mono(13))
         .padding(.horizontal, 9)
         .frame(height: 27)
-        .background(RoundedRectangle(cornerRadius: 4).fill(scanned ? color.opacity(row.keep ? 0.10 : 0.07) : .clear))
-        .overlay(RoundedRectangle(cornerRadius: 4).stroke(scanned ? color.opacity(0.3) : .clear))
+        .background(RoundedRectangle(cornerRadius: 5).fill(scanned ? color.opacity(row.keep ? 0.06 : 0.035) : .clear))
     }
 
     private var archive: some View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 8) {
-                Image(systemName: "archivebox").foregroundStyle(Style.cyan)
+                Image(systemName: "archivebox.fill").foregroundStyle(Style.cyan)
                 Text("FULL OUTPUT SAVED").font(Style.mono(11)).bold()
                 Spacer()
                 Text("READ / GREP").font(Style.mono(10)).foregroundStyle(Style.cyan)
@@ -264,14 +277,16 @@ struct DemoFrame: View {
                 .font(.system(size: 13)).foregroundStyle(Style.dim)
         }
         .padding(16)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Style.cyan.opacity(0.045)))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Style.cyan.opacity(0.22)))
+        .background(RoundedRectangle(cornerRadius: 10).fill(Style.surface))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Style.border))
+        .shadow(color: Style.text.opacity(0.035), radius: 8, y: 2)
     }
 
     private var status: some View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 8) {
-                Text(done ? "✓" : "✻").foregroundStyle(done ? Style.green : Style.cyan)
+                Image(systemName: done ? "checkmark.circle.fill" : "circle.dotted")
+                    .font(.system(size: 12)).foregroundStyle(done ? Style.green : Style.cyan)
                 Text([
                     "Ready to run Bash.",
                     "Installing dependencies…",
