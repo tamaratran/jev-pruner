@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import { getApiKey, jevAsker, looksSecret, resolveHookConfig } from '../hooks/fast-jev-output.ts';
 
@@ -10,6 +11,13 @@ describe('hook configuration', () => {
       maxStateTokens: 25_000,
       model: 'jev-latest',
     });
+  });
+
+  it('documents the keepThreshold uncertainty safeguard in the plugin manifest', async () => {
+    const manifest = JSON.parse(await readFile(new URL('../.claude-plugin/plugin.json', import.meta.url), 'utf8'));
+    const description = manifest.userConfig.keepThreshold.description;
+    expect(description).toContain('always retains scores strictly above 0.1');
+    expect(description).toContain('regardless of this setting');
   });
 
   it('can turn off pruning of engine-saved output', () => {

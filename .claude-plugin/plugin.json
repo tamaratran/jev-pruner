@@ -49,7 +49,7 @@
     "keepThreshold": {
       "type": "number",
       "title": "Keep threshold",
-      "description": "Minimum Jev probability for a Bash output chunk to stay visible.",
+      "description": "Minimum Jev probability for a Bash output chunk to stay visible; the uncertainty safeguard always retains scores strictly above 0.1, regardless of this setting.",
       "default": 0.5
     },
     "maxStateTokens": {
