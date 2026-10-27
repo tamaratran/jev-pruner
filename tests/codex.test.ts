@@ -123,6 +123,18 @@ describe('Codex output pruning', () => {
     expect(pruned.subarray(0, 100)).toEqual(output.subarray(0, 100));
   });
 
+  it('allows a configured asker to prune without a direct provider API key', async () => {
+    const options = await fixture();
+    const ask = vi.fn(discard);
+    const pruned = await pruneCodexOutput(output, 'npm test', {
+      ...options,
+      apiKey: undefined,
+      asker: { ask },
+    });
+    expect(ask).toHaveBeenCalled();
+    expect(pruned).not.toBe(output);
+  });
+
   it('preserves original output on archive or Jev failures', async () => {
     const options = await fixture();
     const ask = vi.fn(async () => { throw new Error('unavailable'); });
@@ -139,7 +151,7 @@ describe('Codex output pruning', () => {
 
   it('fails open for missing state, absent keys, structured output and secret-like content', async () => {
     const options = await fixture();
-    for (const extra of [{ sessionId: undefined }, { apiKey: undefined }, { home: '/unavailable' }]) {
+    for (const extra of [{ sessionId: undefined }, { apiKey: undefined, asker: undefined }, { home: '/unavailable' }]) {
       expect(await pruneCodexOutput(output, 'npm test', { ...options, ...extra })).toBe(output);
     }
     for (const command of ['cat document.txt', 'printenv']) {

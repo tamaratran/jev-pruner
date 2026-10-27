@@ -23,7 +23,7 @@ export async function pruneCodexOutput(
   const apiKey = options.apiKey;
   const text = output.toString('utf8');
   if (!output.equals(Buffer.from(text)) || !exceedsOutputThreshold(text)
-      || !options.sessionId || !apiKey || looksSecret(command, text)) return output;
+      || !options.sessionId || (!apiKey && !options.asker) || looksSecret(command, text)) return output;
   try {
     const messages = codexMessages(
       await readTranscript(options.sessionId, options.home), options.sessionId,
@@ -45,6 +45,7 @@ export async function pruneCodexOutput(
           if (options.signal?.aborted) throw new Error('Command interrupted');
           await (archived ??= archive());
           if (options.asker) return options.asker.ask(state, questions);
+          if (!apiKey) throw new Error('Jev API key is unavailable');
           const request = buildJevRequest({ apiKey }, state, questions);
           const controller = new AbortController();
           const cancel = () => controller.abort();
